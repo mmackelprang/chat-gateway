@@ -1,0 +1,23 @@
+# Deploy home: /srv/chat-gateway on an always-on Docker host (homelab
+# conventions: .env off-repo mode 600, stateful dirs on the data disk,
+# SECRETS.md pointers, service registered in the homelab repo's docs).
+# LAN/tailnet only — Pub/Sub is outbound pull; never publish this through a
+# reverse proxy.
+services:
+  chat-gateway:
+    build: .
+    container_name: chat-gateway
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      CHAT_GATEWAY_REGISTRY: /config/registry.yaml
+      CHAT_GATEWAY_STATE_DIR: /data/state
+      CHAT_GATEWAY_INBOX_DIR: /data/inbox
+    ports:
+      - "8085:8085"
+    volumes:
+      - ./config:/config:ro
+      - /data/chat-gateway:/data
+      # tier 2: mount the SA key read-only and point
+      # GOOGLE_APPLICATION_CREDENTIALS at it in .env
+      # - /srv/chat-gateway/chat-gateway-sa.json:/secrets/sa.json:ro

@@ -1,0 +1,68 @@
+# Identity + app registry. Copy to registry.yaml (gitignored) and edit.
+#
+# RULES (CLAUDE.md):
+# - This file holds env-var NAMES, never secret values (webhook URLs embed
+#   key+token; API keys are credentials).
+# - The gateway owns transport + identity + routing. It never owns an
+#   application's message schema — apps send rendered payloads.
+#
+# identities: who a message can appear FROM.
+#   mode: webhook  -> tier 1, one-way; the URL's webhook was created in the
+#                     Chat UI with this display name + avatar.
+#   mode: app      -> tier 2, two-way; sent via the Chat API as the gateway's
+#                     Chat app (needs Google Cloud setup — docs/).
+#   space: the Chat space id ("spaces/XXXX") this identity posts into.
+#          Required for mode:app sends and for routing inbound replies back
+#          to the owning app(s); optional for webhook-only identities.
+#
+# apps: who may SEND. Each app authenticates with its own API key and may
+#   only use the identities listed for it.
+
+identities:
+  pm-familyworkspace:
+    display: "PM · familyworkspace"
+    channel: google_chat
+    mode: webhook
+    webhook_url_env: GOOGLE_CHAT_WEBHOOK_URL__FAMILYWORKSPACE__PM
+    space: ""            # spaces/XXXX — fill once the space exists
+
+  job-hunter:
+    display: "Job Hunter"
+    channel: google_chat
+    mode: webhook
+    webhook_url_env: GOOGLE_CHAT_WEBHOOK_URL__JOB_HUNTER
+    space: ""
+
+  aitrader-alerts:                 # phone-visible space — loud
+    display: "aitrader"
+    channel: google_chat
+    mode: webhook
+    webhook_url_env: GOOGLE_CHAT_WEBHOOK_URL__AITRADER_ALERTS
+    space: ""
+
+  aitrader-reports:                # quiet reports space
+    display: "aitrader reports"
+    channel: google_chat
+    mode: webhook
+    webhook_url_env: GOOGLE_CHAT_WEBHOOK_URL__AITRADER_REPORTS
+    space: ""
+
+apps:
+  aiteam-harness:
+    key_env: CHAT_GATEWAY_API_KEY__AITEAM_HARNESS
+    identities: [pm-familyworkspace]
+
+  job-hunter:
+    key_env: CHAT_GATEWAY_API_KEY__JOB_HUNTER
+    identities: [job-hunter]
+
+  # The aitrader consumer contract (docs/consumers/aitrader.md):
+  # notify + dead-man only; NO inbound control path — enforced, not omitted.
+  aitrader:
+    key_env: CHAT_GATEWAY_API_KEY__AITRADER
+    identities: [aitrader-alerts, aitrader-reports]
+    allow_inbound: false           # hard rule #6: no Chat input ever reaches this consumer
+    routes:                        # (severity -> identity) for /v1/notify
+      alert: aitrader-alerts
+      warning: aitrader-reports
+      info: aitrader-reports
