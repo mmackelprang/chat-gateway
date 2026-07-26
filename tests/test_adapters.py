@@ -123,9 +123,13 @@ def test_normalize_event():
         "event_type": "MESSAGE",
         "space": "spaces/AAA",
         "thread_key": "review-PC-12",
+        "thread_name": "spaces/AAA/threads/T",
+        "message_id": None,
         "sender_display": "Mark",
         "sender_email": "mark@mackelprang.com",
         "text": "approved — ship it",
+        "action": None,
+        "dedupe_key": None,
     }
 
 

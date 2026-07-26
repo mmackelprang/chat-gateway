@@ -45,7 +45,11 @@ class FakePuller:
     """Test/dev double: preloaded events, records acks."""
 
     def __init__(self, events: Iterable[dict] = ()):
-        self._events = [( f"ack-{i}", e) for i, e in enumerate(events)]
+        self._events = []
+        for i, e in enumerate(events):
+            e = dict(e)  # never mutate a caller's event
+            e.setdefault("_pubsub_message_id", f"m-{i}")
+            self._events.append((f"ack-{i}", e))
         self.acked: list[str] = []
 
     def pull(self, max_messages: int = 10) -> list[tuple[str, dict]]:
@@ -78,11 +82,14 @@ class PubSubPuller:
         data = self._post("pull", {"maxMessages": max_messages})
         out = []
         for received in data.get("receivedMessages", []):
-            raw = received.get("message", {}).get("data", "")
+            msg = received.get("message", {})
+            raw = msg.get("data", "")
             try:
                 event = json.loads(base64.b64decode(raw).decode("utf-8")) if raw else {}
             except (ValueError, UnicodeDecodeError):
                 event = {"_undecodable": True}
+            if msg.get("messageId"):
+                event["_pubsub_message_id"] = msg["messageId"]  # at-least-once dedupe key
             out.append((received.get("ackId", ""), event))
         return out
 
@@ -92,30 +99,63 @@ class PubSubPuller:
 
 
 def normalize_event(event: dict) -> dict:
-    """Extract the routable core of a Chat event; keep the raw for the app."""
+    """Extract the routable core of a Chat event; the raw rides along."""
     message = event.get("message") or {}
     thread = message.get("thread") or {}
-    sender = message.get("sender") or {}
+    sender = (event.get("user") or message.get("sender") or {})
     space = (event.get("space") or message.get("space") or {}).get("name", "")
+    action = None
+    if event.get("type") == "CARD_CLICKED" or event.get("action"):
+        act = event.get("action") or {}
+        params = {p.get("key"): p.get("value") for p in act.get("parameters") or [] if p.get("key")}
+        for name, spec in ((event.get("common") or {}).get("formInputs") or {}).items():
+            values = ((spec.get("stringInputs") or {}).get("value")) or []
+            params.setdefault(name, values[0] if len(values) == 1 else values)
+        action = {"id": act.get("actionMethodName") or act.get("function") or "", "params": params}
     return {
         "event_type": event.get("type", "MESSAGE"),
         "space": space,
         "thread_key": thread.get("threadKey") or None,
+        "thread_name": thread.get("name") or None,
+        "message_id": message.get("name") or None,
         "sender_display": sender.get("displayName", ""),
         "sender_email": sender.get("email"),
         "text": message.get("text", ""),
+        "action": action,
+        "dedupe_key": event.get("_pubsub_message_id") or None,
     }
 
 
+NOT_AUTHORIZED_TEXT = "⛔ Not authorized for this action."
+
+
 def dispatch(event: dict, registry: Registry, inbox: Inbox,
+             forwarder=None, reply_fn=None,
              now: dt.datetime | None = None) -> list[str]:
-    """Route one decoded Chat event into per-app inboxes. Returns app ids."""
+    """Route one decoded Chat event. Per app: authorization allowlist check
+    (jobhunt R4 — unauthorized users get an in-thread refusal and are never
+    forwarded), then inbox + optional callback push (tenant opt-in).
+    Returns the app ids that actually received the event."""
     core = normalize_event(event)
-    apps = registry.apps_for_space(core["space"]) or [UNROUTED]
+    candidates = registry.apps_for_space(core["space"]) or [UNROUTED]
     now = now or dt.datetime.now(dt.timezone.utc)
-    for app_id in apps:
-        inbox.put(InboundReply(app=app_id, received_at=now, raw=event, **core))
-    return apps
+    delivered = []
+    for app_id in candidates:
+        reply = InboundReply(app=app_id, received_at=now, raw=event, **core)
+        app = registry.apps.get(app_id)
+        if app is not None:
+            if not app.allow_inbound:
+                continue  # opted-out tenant: nothing crosses, ever (hard rule #6)
+            sender = (core["sender_email"] or "").lower()
+            if app.allowed_users and sender not in app.allowed_users:
+                if reply_fn and core["space"]:
+                    reply_fn(core["space"], core["thread_name"], NOT_AUTHORIZED_TEXT)
+                continue
+        inbox.put(reply)
+        if app is not None and app.resolved_callback_url() and forwarder is not None:
+            forwarder.enqueue(app, reply)
+        delivered.append(app_id)
+    return delivered
 
 
 class SubscriberLoop:
@@ -123,11 +163,13 @@ class SubscriberLoop:
     not a hardcoded OK (the claude-mem pilot lesson, aiteam plan F18 gate 2)."""
 
     def __init__(self, puller: Puller, registry: Registry, inbox: Inbox,
-                 interval_seconds: float = 5.0):
+                 interval_seconds: float = 5.0, forwarder=None, reply_fn=None):
         self._puller = puller
         self._registry = registry
         self._inbox = inbox
         self._interval = interval_seconds
+        self.forwarder = forwarder
+        self.reply_fn = reply_fn
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.last_poll_at: dt.datetime | None = None
@@ -137,7 +179,8 @@ class SubscriberLoop:
         batch = self._puller.pull()
         acks = []
         for ack_id, event in batch:
-            dispatch(event, self._registry, self._inbox)
+            dispatch(event, self._registry, self._inbox,
+                     forwarder=self.forwarder, reply_fn=self.reply_fn)
             self.events_seen += 1
             if ack_id:
                 acks.append(ack_id)
@@ -149,6 +192,8 @@ class SubscriberLoop:
         while not self._stop.is_set():
             try:
                 self.poll_once()
+                if self.forwarder is not None:
+                    self.forwarder.process_due()
             except Exception as exc:  # noqa: BLE001 — the loop must survive
                 print(f"subscriber: poll error (will retry): {exc}", flush=True)
             self._stop.wait(self._interval)

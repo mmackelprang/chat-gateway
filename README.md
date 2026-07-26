@@ -83,8 +83,16 @@ curl -s localhost:8085/v1/messages \
 | `GET /healthz` | **Honest** health: per-identity env resolution, key status, queue depth, heartbeat + subscriber liveness — never a hardcoded OK |
 | `GET /docs` | OpenAPI UI |
 
-Consumer contracts live in [`docs/consumers/`](docs/consumers/) (first:
-[aitrader](docs/consumers/aitrader.md) — notify + dead-man, no-inbound).
+Two-way tenants can also register a **callback URL**: authorized card
+interactions and replies forward whole (action id + params, sender, space,
+message/thread ids, an at-least-once dedupe key), with short retries and a
+loud in-thread failure notice when the tenant is unreachable. Per-user
+authorization allowlists refuse anyone else in-thread. Opt-out
+(`allow_inbound: false`) is absolute and validated.
+
+Consumer contracts live in [`docs/consumers/`](docs/consumers/):
+[aitrader](docs/consumers/aitrader.md) (notify + dead-man, no-inbound) and
+[jobhunt](docs/consumers/jobhunt.md) (two-way cards + callbacks).
 
 ## Security model
 

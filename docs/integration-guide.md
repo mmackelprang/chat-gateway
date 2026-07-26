@@ -75,6 +75,27 @@ Per-source accounting: `enqueued → retrying* → delivered | failed` (plus
 curl -s "$GW/v1/deliveries?limit=20" -H "$AUTH"
 ```
 
+## Inbound interaction callbacks (tier 2, per-tenant opt-in)
+
+Set `callback_url` (+ `allow_inbound: true`) in your tenant config and the
+gateway POSTs each authorized event to it, whole:
+
+```json
+{"app":"jobhunt","space":"spaces/XXXX","thread_key":"digest-2026-07-24",
+ "thread_name":"spaces/XXXX/threads/T1","message_id":"spaces/XXXX/messages/M1",
+ "sender_display":"Mark","sender_email":"mark@mackelprang.com","text":"",
+ "action":{"id":"verdict","params":{"job_id":"job-123","verdict":"approve","nonce":"n-9"}},
+ "dedupe_key":"ps-42","event_type":"CARD_CLICKED","received_at":"...","raw":{...}}
+```
+
+Rules of the road: delivery is **at-least-once** (`dedupe_key` = the Pub/Sub
+message id — make your handler idempotent; self-contained button tokens
+help); selection-widget values arrive merged into `action.params`; users not
+on your `allowed_users` list are refused in-thread and never reach you; if
+your callback is down, retries span ~10s and then the gateway posts your
+`unreachable_message` into the thread — the user always sees a tap that
+didn't land. Return any 2xx quickly; do your work async.
+
 ## Inbound replies — `GET /v1/inbox` (tier 2, opt-in)
 
 Polling returns and clears your app's replies (each carries `space`,

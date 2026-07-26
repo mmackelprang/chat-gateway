@@ -86,3 +86,18 @@ class ChatApiAdapter:
             status="delivered", channel=identity.channel, identity=identity.name,
             mode="app", thread_key=message.thread_key,
         )
+
+    def send_text(self, space: str, thread_name: str | None, text: str) -> None:
+        """Bare in-thread text (authorization refusals, R7 failure notices).
+        Matches the forwarder's ReplyFn signature."""
+        body: dict = {"text": text}
+        params = {}
+        if thread_name:
+            body["thread"] = {"name": thread_name}
+            params["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+        resp = self._client.post(
+            f"{CHAT_API}/{space}/messages", json=body, params=params,
+            headers={"Authorization": f"Bearer {self._tokens()}"},
+        )
+        if resp.status_code != 200:
+            raise ChatApiError(f"in-thread reply failed: HTTP {resp.status_code}")

@@ -28,14 +28,18 @@ agentic applications; aiteam's harness is the first consumer, not the owner.
    keys, queue depth, monitor/subscriber liveness) — never a hardcoded OK.
    This rule exists because a sibling system's hardcoded health check hid
    11 days of silent capture failure (aiteam plan F18 gate 2).
-6. **No inbound control path — ever.** The gateway has no mechanism that
-   turns a Chat message, reply, reaction, or button into a call against a
-   consumer system: inbound is passive polling only, and apps can set
-   `allow_inbound: false` to make even that a 403 (aitrader does — its
-   contract treats a two-way path as a security hole in a real-money
-   system). Do not add reply-forwarding webhooks, "acknowledge to clear"
-   actions, or any consumer-callback feature without explicit user sign-off
-   naming this rule.
+6. **Inbound crosses to a consumer only by that consumer's explicit
+   registry opt-in — and opt-out is absolute.** Two opt-in paths exist:
+   passive inbox polling, and per-tenant `callback_url` push (added
+   2026-07-24 for jobhunt's R3, at the user's direction). `allow_inbound:
+   false` disables *every* inbound path — inbox is a 403, events are never
+   forwarded, and `callback_url` on such an app is a registry validation
+   error (aitrader is locked out this way; its contract treats any two-way
+   path as a security hole in a real-money system). The gateway never
+   interprets an interaction into consumer semantics — it forwards whole
+   events with a dedupe key; what an Approve *means* is enforced by the
+   consumer's own write-path (jobhunt R4). Do not widen any tenant's
+   inbound surface without explicit user sign-off naming this rule.
 
 ## Layout
 
@@ -60,9 +64,13 @@ integration guide. Tests: `python3 -m pytest` (offline, 20 passing).
   all pending the Google Cloud setup (docs/google-cloud-setup.md) and first
   live round-trip.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
-  gateway transport, aiteam Stage 6), `aitrader` (contract in
-  docs/consumers/aitrader.md — notify + dead-man, `allow_inbound: false`),
-  `job-hunter` (planned).
+  gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
+  — notify + dead-man, `allow_inbound: false`), `jobhunt`
+  (docs/consumers/jobhunt.md — the first two-way tenant: whole-event
+  callback forwarding with per-user authorization, structured reasons via
+  selection widgets, fail-loudly-in-thread; note: modal dialogs are
+  impossible over Pub/Sub transport — selection widgets are the supported
+  path).
 - Deploy target: `/srv/chat-gateway/` on the appserver (homelab conventions:
   off-repo `.env` mode 600, SECRETS.md pointers, service doc + DASHBOARDS +
   Homepage registration).

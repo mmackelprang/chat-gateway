@@ -79,11 +79,18 @@ def main(argv: list[str] | None = None) -> int:
         from .heartbeat import HeartbeatStore
         from .service import create_app
 
+        log = DeliveryLog(audit_dir=Path(state_dir) / "deliveries")
         if subscriber is not None:
+            from .forwarder import CallbackForwarder
+
+            chat_adapter = adapters.get("app")
+            reply_fn = chat_adapter.send_text if chat_adapter is not None else None
+            subscriber.forwarder = CallbackForwarder(log, reply_fn)
+            subscriber.reply_fn = reply_fn
             subscriber.start()
         app = create_app(
             registry, inbox, adapters, subscriber,
-            delivery_log=DeliveryLog(audit_dir=Path(state_dir) / "deliveries"),
+            delivery_log=log,
             heartbeats=HeartbeatStore(Path(state_dir) / "heartbeats.json"),
         )
         app.state.dispatcher.start()

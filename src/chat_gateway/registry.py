@@ -57,9 +57,18 @@ class App:
     identities: list[str] = field(default_factory=list)
     allow_inbound: bool = True
     routes: dict[str, str] = field(default_factory=dict)  # severity -> identity (/v1/notify)
+    callback_url: str = ""            # inbound push (tenant opt-in; requires allow_inbound)
+    allowed_users: list[str] = field(default_factory=list)  # emails; empty = no restriction
+    unreachable_message: str = ""     # in-thread text when the callback is down (R7)
 
     def key_configured(self) -> bool:
         return bool(os.environ.get(self.key_env))
+
+    def resolved_callback_url(self) -> str:
+        url = self.callback_url
+        if url.startswith("${") and url.endswith("}"):
+            url = os.environ.get(url[2:-1], "")
+        return url
 
 
 @dataclass
@@ -124,10 +133,24 @@ class Registry:
 
 
 def load_registry(path: str | Path) -> Registry:
-    try:
-        data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    except OSError as exc:
-        raise RegistryError(f"cannot read registry: {exc}") from exc
+    """Load from one YAML file, or a DIRECTORY of per-tenant files (jobhunt
+    R1: one config file per tenant) — every ``*.yaml`` in the directory is
+    merged; duplicate identity/app names across files are an error."""
+    p = Path(path)
+    if p.is_dir():
+        data: dict = {"identities": {}, "apps": {}}
+        for f in sorted(p.glob("*.yaml")):
+            part = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            for section in ("identities", "apps"):
+                for name, spec in (part.get(section) or {}).items():
+                    if name in data[section]:
+                        raise RegistryError(f"{f.name}: duplicate {section[:-1]} {name!r}")
+                    data[section][name] = spec
+    else:
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8"))
+        except OSError as exc:
+            raise RegistryError(f"cannot read registry: {exc}") from exc
     if not isinstance(data, dict) or "identities" not in data or "apps" not in data:
         raise RegistryError(f"{path}: registry needs top-level 'identities' and 'apps' maps")
 
@@ -160,7 +183,15 @@ def load_registry(path: str | Path) -> Registry:
         app = App(app_id=app_id, key_env=spec["key_env"],
                   identities=list(spec.get("identities") or []),
                   allow_inbound=bool(spec.get("allow_inbound", True)),
-                  routes=dict(spec.get("routes") or {}))
+                  routes=dict(spec.get("routes") or {}),
+                  callback_url=str(spec.get("callback_url") or ""),
+                  allowed_users=[str(u).lower() for u in (spec.get("allowed_users") or [])],
+                  unreachable_message=str(spec.get("unreachable_message") or ""))
+        if app.callback_url and not app.allow_inbound:
+            raise RegistryError(
+                f"app {app_id!r}: callback_url requires allow_inbound: true — "
+                "an opted-out tenant gets NO inbound path (hard rule #6)"
+            )
         for name in app.identities:
             if name not in identities:
                 raise RegistryError(f"app {app_id!r} references unknown identity {name!r}")

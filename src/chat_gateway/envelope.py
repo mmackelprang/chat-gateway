@@ -42,9 +42,13 @@ class OutboundMessage(BaseModel):
     @field_validator("cards")
     @classmethod
     def _cards_shape(cls, v: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        import json as _json
+
         for i, card in enumerate(v):
             if "card" not in card:
                 raise ValueError(f"cards[{i}] must be a cardsV2 entry (dict with 'card', usually 'cardId')")
+        if v and len(_json.dumps(v)) > 30_000:
+            raise ValueError("cards payload exceeds 30KB (Chat's message limit) — trim the card")
         return v
 
 
@@ -58,15 +62,20 @@ class DeliveryResult(BaseModel):
 
 
 class InboundReply(BaseModel):
-    """A human's reply, normalized from a Chat event and routed to the owning
-    app(s). `raw` keeps the full event for anything the normalization loses."""
+    """A human's reply or card interaction, normalized from a Chat event and
+    routed to the owning app(s) — forwarded WHOLE (jobhunt R3): the `raw`
+    event rides along for anything normalization loses."""
 
     app: str
     space: str
     thread_key: str | None = None
+    thread_name: str | None = None   # spaces/X/threads/Y — for in-thread replies
+    message_id: str | None = None    # spaces/X/messages/Z
     sender_display: str = ""
     sender_email: str | None = None
     text: str = ""
+    action: dict[str, Any] | None = None  # CARD_CLICKED: {"id", "params"} incl. formInputs
+    dedupe_key: str | None = None    # Pub/Sub message id — at-least-once => idempotent callbacks
     received_at: dt.datetime
     event_type: str = "MESSAGE"
     raw: dict[str, Any] = Field(default_factory=dict)
