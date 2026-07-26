@@ -1,0 +1,30 @@
+# secrets — never commit
+.env
+.env.*
+!.env.example
+*.sa.json
+chat-gateway-sa*.json
+config/registry.yaml
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# runtime state
+inbox-data/
+*.log
+
+# terraform
+iac/terraform/.terraform/
+iac/terraform/*.tfstate*
+iac/terraform/*.tfvars
+!iac/terraform/example.tfvars
+
+# os / editor
+.DS_Store
+Thumbs.db
