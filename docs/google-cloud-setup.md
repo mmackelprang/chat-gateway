@@ -9,6 +9,11 @@ nothing requires being on the homelab network.
 
 - [`../iac/gcloud-setup.sh`](../iac/gcloud-setup.sh) — idempotent gcloud CLI
   script: project services, service account, topic, subscription, IAM, key.
+- [`../iac/gcloud-setup.ps1`](../iac/gcloud-setup.ps1) — the same steps for
+  **Windows**. Use this one there: under Git Bash, MSYS rewrites slash-bearing
+  args like `--role="roles/pubsub.publisher"` into Windows paths and silently
+  breaks the IAM bindings, and the bash script's `chmod 600` on the minted key
+  is a no-op on NTFS (the `.ps1` uses `icacls` to lock the key to its owner).
 - [`../iac/terraform/`](../iac/terraform/) — the same resources as Terraform
   (key creation deliberately left to gcloud so the private key never lands in
   TF state).
@@ -29,24 +34,42 @@ nothing requires being on the homelab network.
 gcloud projects create chat-gateway-prod --name="chat-gateway"
 gcloud config set project chat-gateway-prod
 ```
-Link a billing account if prompted (Chat API and Pub/Sub at this volume sit
-in the free tier, but some APIs refuse to enable without billing attached).
+Chat API and Pub/Sub at this volume sit in the free tier. Billing turned out
+**not** to be required for `chat-gateway-prod`: both `chat.googleapis.com` and
+`pubsub.googleapis.com` enabled successfully with `billingEnabled: false`
+(observed 2026-07-28). That is the result for this project, not a guarantee —
+if an `enable` call is rejected for billing, link a billing account and retry.
 
 ### 2–4. APIs, service account, Pub/Sub (scripted)
+
+> ✅ **Done for `chat-gateway-prod` as of 2026-07-28** — APIs, service account,
+> topic, subscription, both IAM bindings, and the SA key all exist. Both
+> scripts are idempotent, so re-running is a safe no-op; there is no need to
+> re-run them for this project.
+
+POSIX:
 ```bash
 cd iac && PROJECT_ID=chat-gateway-prod ./gcloud-setup.sh
+```
+Windows (PowerShell — see "What can be automated" for why):
+```powershell
+.\iac\gcloud-setup.ps1 -ProjectId chat-gateway-prod
 ```
 This enables `chat.googleapis.com` + `pubsub.googleapis.com`, creates the
 `chat-gateway` service account, the `chat-gateway-events` topic, the
 `chat-gateway-sub` pull subscription, grants Chat's publisher account write
 on the topic and the SA subscribe on the subscription, writes
-`chat-gateway-sa.json` (chmod 600), and prints the `.env` block to copy.
+`chat-gateway-sa.json` (owner-only: `chmod 600` on POSIX, `icacls` on
+Windows), and prints the `.env` block to copy.
 
-> ⚠ One VERIFY item (flagged in the script): the Google-side identity that
-> publishes Chat events (`chat-api-push@system.gserviceaccount.com`) is per
-> Google's docs at time of writing — confirm the exact principal on the
-> Chat API "Connection settings" page when you do step 5; the console names
-> it there if it differs.
+> ⚠ One VERIFY item, still open (flagged in both scripts): the Google-side
+> identity that publishes Chat events
+> (`chat-api-push@system.gserviceaccount.com`) is per Google's docs at time of
+> writing. The binding **applied cleanly on 2026-07-28 — and that proves
+> nothing**: GCP accepts IAM bindings to `*@system.gserviceaccount.com`
+> principals without validating that they exist. This stays LIVE-UNVERIFIED
+> until the principal is confirmed on the Chat API "Connection settings" page
+> (step 5) *and* a real event lands in the subscription.
 
 ### 5. Chat app configuration — console only
 Console → **APIs & Services → Google Chat API → Configuration**:
