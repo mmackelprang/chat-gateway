@@ -109,7 +109,9 @@ Consumer contracts live in [`docs/consumers/`](docs/consumers/):
 
 Step-by-step instructions + what can be scripted: **[docs/google-cloud-setup.md](docs/google-cloud-setup.md)**.
 Automation: [`iac/gcloud-setup.sh`](iac/gcloud-setup.sh) (idempotent gcloud
-script) or [`iac/terraform/`](iac/terraform/) — the one console-only part is
+script), [`iac/gcloud-setup.ps1`](iac/gcloud-setup.ps1) (same steps on Windows,
+where Git Bash mangles slash-bearing gcloud args and `chmod` cannot restrict
+the key), or [`iac/terraform/`](iac/terraform/) — the one console-only part is
 the Chat app's Configuration page (no API/Terraform surface for it).
 
 ## Deploy
