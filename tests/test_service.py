@@ -125,9 +125,11 @@ def test_healthz_reports_real_subscriber_counters(env, tmp_path):
     registry = load_registry(p)
     loop = SubscriberLoop(FakePuller(), registry, inbox)
     loop.events_seen, loop.unparseable_seen, loop.dispatch_errors = 9, 2, 3
+    loop.interactions_without_action_id = 5
     loop.last_poll_at = dt.datetime(2026, 7, 29, 12, 0, tzinfo=dt.timezone.utc)
 
     client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
     sub = client.get("/healthz").json()["subscriber"]
     assert sub == {"enabled": True, "last_poll_at": "2026-07-29T12:00:00+00:00",
-                   "events_seen": 9, "unparseable_seen": 2, "dispatch_errors": 3}
+                   "events_seen": 9, "unparseable_seen": 2, "dispatch_errors": 3,
+                   "interactions_without_action_id": 5}

@@ -212,7 +212,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                  "last_poll_at": subscriber.last_poll_at.isoformat() if subscriber.last_poll_at else None,
                  "events_seen": subscriber.events_seen,
                  "unparseable_seen": subscriber.unparseable_seen,
-                 "dispatch_errors": subscriber.dispatch_errors}
+                 "dispatch_errors": subscriber.dispatch_errors,
+                 # ADR-0001 D4: interactions that parsed but carried no
+                 # resolvable action identity. Non-zero means some producer's
+                 # cards are missing `__cg_action__` — or Google changed the
+                 # runtime under us. Rising counts here are one of the few
+                 # observables if topic-as-function routing ever breaks.
+                 "interactions_without_action_id":
+                     subscriber.interactions_without_action_id}
                 if subscriber is not None
                 else {"enabled": False, "note": "tier 2 not enabled (GATEWAY_ENABLE_PUBSUB=0)"}
             ),
