@@ -686,6 +686,55 @@ def test_a_real_function_name_is_still_accepted_from_the_native_slot():
         assert core["action"]["id_source"] == "google"
 
 
+def test_native_source_priority_is_identical_in_both_runtimes():
+    """ADR-0001 D2 lists ONE native order for both runtimes:
+    __action_method_name__, then the action object's own name, then
+    invokedFunction last. Two normalizers silently disagreeing is how the same
+    card starts yielding different action ids depending on which Google runtime
+    happens to deliver it — the exact parity CG-1 was written to guarantee.
+
+    Every candidate is populated with a distinct value, so the assertion is
+    about ORDER and cannot pass by coincidence.
+    """
+    addon = normalize_event({
+        "commonEventObject": {
+            "parameters": {"__action_method_name__": "from_reserved_key"},
+            "invokedFunction": "from_invoked_function"},
+        "chat": {"user": {"email": "m@example.com"},
+                 "buttonClickedPayload": {
+                     "space": {"name": "spaces/AAA"}, "message": {},
+                     "action": {"actionMethodName": "from_action_object"}}},
+    })
+    classic = normalize_event({
+        "type": "CARD_CLICKED", "space": {"name": "spaces/AAA"},
+        "user": {"email": "m@example.com"}, "message": {},
+        "action": {"actionMethodName": "from_action_object",
+                   "parameters": [{"key": "__action_method_name__",
+                                   "value": "from_reserved_key"}]},
+        "common": {"invokedFunction": "from_invoked_function"},
+    })
+    assert addon["action"]["id"] == classic["action"]["id"] == "from_reserved_key"
+
+    # ...and with the reserved key gone, the action object still outranks
+    # invokedFunction on BOTH sides. This is the pair that was reversed.
+    addon2 = normalize_event({
+        "commonEventObject": {"parameters": {},
+                              "invokedFunction": "from_invoked_function"},
+        "chat": {"user": {"email": "m@example.com"},
+                 "buttonClickedPayload": {
+                     "space": {"name": "spaces/AAA"}, "message": {},
+                     "action": {"actionMethodName": "from_action_object"}}},
+    })
+    classic2 = normalize_event({
+        "type": "CARD_CLICKED", "space": {"name": "spaces/AAA"},
+        "user": {"email": "m@example.com"}, "message": {},
+        "action": {"actionMethodName": "from_action_object"},
+        "common": {"invokedFunction": "from_invoked_function"},
+    })
+    assert addon2["action"]["id"] == classic2["action"]["id"] == "from_action_object"
+    assert addon2["action"]["id_source"] == classic2["action"]["id_source"] == "google"
+
+
 def test_missing_action_id_is_counted_and_still_forwarded(registry):
     """ADR-0001 D4. Both halves matter.
 

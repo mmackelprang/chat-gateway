@@ -427,9 +427,15 @@ def _normalize_addon(event: dict) -> dict:
         # invokedFunction was REMOVED from this runtime in 2025-05 and the real
         # 2026-07-29 capture carried none of these three; kept as tolerant
         # fallbacks so a card style we have not seen still resolves natively.
+        #
+        # Order is ADR-0001 D2's, and it is deliberately the SAME as the classic
+        # branch's: __action_method_name__, then the action object's own name,
+        # then invokedFunction last. The pre-CG-10 code had the last two
+        # reversed; that only ever mattered for a shape we have not seen, which
+        # is exactly the shape a tolerant fallback exists for.
         action_id, id_source = _resolve_action_id(
-            params, native_key, common.get("invokedFunction"),
-            (payload.get("action") or {}).get("actionMethodName"))
+            params, native_key, (payload.get("action") or {}).get("actionMethodName"),
+            common.get("invokedFunction"))
         action = {"id": action_id, "id_source": id_source, "params": params}
     return _shape(envelope_format="addon", event_type=event_type, space=space,
                   message=message, sender=sender, action=action,

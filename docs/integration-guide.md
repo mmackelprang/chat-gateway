@@ -97,7 +97,7 @@ delivered to you deliberately, because a parse-quality problem must not become
 a silent drop.
 
 The usual cause is a card that did not set the reserved `__cg_action__`
-parameter — see the card convention below. `action.id_source` tells you where
+parameter. `action.id_source` tells you where
 the value came from: `"cg_param"` (your `__cg_action__`), `"google"` (a native
 Chat action slot), or `null`. It is transport metadata, like `envelope_format`;
 you can ignore it, but a change in it means the runtime beneath you moved.

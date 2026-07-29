@@ -52,32 +52,9 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-10 → CG-13 → CG-14 → CG-7 → CG-4 → CG-5 → CG-8
+Remaining order: **CG-13 → CG-14 → CG-7 → CG-4 → CG-5 → CG-8
 → CG-12 → CG-11 → CG-19.** CG-15 … CG-18 are filed deferred and must not be
 executed. CG-9 stays blocked on a human.
-
----
-
-### CG-10 · Empty `action.id` on add-on interactions — `__cg_action__`  📋 queued *(was ⏸ blocked · ADR)*
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-10)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-12 |
-| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **D2** + **D4** — approved by the user 2026-07-29 |
-| **Depends on** | CG-3 (the pinning test it rewrites) |
-
-The real capture normalizes to `action: {"id": "", "params": {…}}` — the card's
-button routed via `action.function = "<a Pub/Sub topic path>"`, so the add-ons
-runtime sent no `__action_method_name__`, no `invokedFunction` and no
-`payload.action`, and `_normalize_addon` fell through `or ""` **silently** into
-an `InboundReply` that looks structurally valid.
-
-Now unblocked and the policy is settled. Implement ADR D2's resolution order
-(`parameters["__cg_action__"]` → Google-native sources → `None`), D2's mandatory
-guard discarding `^projects/[^/]+/topics/[^/]+$` values arriving from the native
-sources, and D4 (`None` not `""`, a `/healthz` counter, `id_source`, and the
-event **still forwarded** — a parse-quality problem must not become a silent
-drop).
 
 ---
 
@@ -86,7 +63,7 @@ drop).
 | | |
 |---|---|
 | **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **D3** |
-| **Depends on** | CG-10 (the reserved key must exist first) |
+| **Depends on** | CG-10 — **shipped** |
 | **Origin** | newly implied by the ADR, unqueued until now |
 
 Producers must not hardcode the topic path. The gateway publishes it per-app on
@@ -391,6 +368,36 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-10 · `__cg_action__` — action identity survives topic-as-function  ✅ shipped 2026-07-29 · PR-PLACEHOLDER
+
+Implements **ADR-0001 D2 + D4**. There was deliberately no Planner plan; the
+ADR was the spec.
+
+Resolution order: `params["__cg_action__"]` (app-declared, authoritative,
+popped) → Google-native sources → **`None`**, never `""`. Plus D2's mandatory
+guard: a native value shaped `^projects/[^/]+/topics/[^/]+$` is a routing
+artifact and is discarded — a classic-runtime hazard, because the same portable
+card echoes its routing target back in `action.function` where promoting it
+would yield a plausible-looking *wrong* action id, worse than an absent one.
+The guard deliberately does **not** apply to `__cg_action__`; reading a value an
+app declared would be the rule-#1 violation this design avoids.
+
+D4: unresolved identity is counted at
+`/healthz → subscriber.interactions_without_action_id`, rendered `interaction:?`
+by the existing forwarder title, and **still forwarded** — rule #6 says forward
+whole and let the tenant enforce, so a parse-quality problem must not become a
+silent drop. `id_source` (`cg_param` | `google` | `null`) is the drift detector
+ADR §11 trigger 3 depends on.
+
+Review caught a real one (HIGH): `_normalize_addon` checked `invokedFunction`
+*before* `payload.action.actionMethodName`, reversing D2's native order and
+contradicting this PR's own inline claim that both runtimes share one order —
+inherited from the pre-CG-10 code. Fixed, and pinned by a test that populates
+every candidate with a distinct value so it cannot pass by coincidence.
+
+CG-3's known-defect test was **rewritten, not deleted**, as CG-3 required.
+75 → 82 tests. Flags: none cleared.
 
 ### CG-3 · Land the real add-on interaction capture  ✅ shipped 2026-07-29 · [PR #10](https://github.com/mmackelprang/chat-gateway/pull/10)
 
