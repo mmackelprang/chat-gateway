@@ -14,10 +14,17 @@ surface, written off-site. The FakePuller below is what the tests drive.
 The 2026-07-29 live pull used an ad-hoc client, NOT PubSubPuller — this class
 is still unexercised against Google.
 
-⚠ SHAPE-VERIFIED 2026-07-29: the add-ons MESSAGE envelope is normalized against
-a REAL captured payload replayed offline (tests/fixtures/addon-message-event.json).
-Stronger than doc-derived, weaker than a live round-trip — the add-on
-CARD_CLICKED path remains fully unverified (queue item CG-3).
+⚠ SHAPE-VERIFIED 2026-07-29: the add-ons MESSAGE envelope AND the add-ons
+buttonClicked (CARD_CLICKED) envelope are both normalized against REAL captured
+payloads replayed offline (tests/fixtures/addon-message-event.json,
+tests/fixtures/addon-buttonclicked-event.json). Stronger than doc-derived,
+weaker than a live round-trip: our normalizer has still never processed an
+interaction live — both captures were pulled with an ad-hoc client, not
+PubSubPuller.
+
+The interaction capture found a DEFECT rather than confirming the mapping: the
+real event yields action.id == "" (see ADDON_ACTION_KEY below and queue item
+CG-10). Nothing about jobhunt R3/R4 is verified by it.
 """
 
 from __future__ import annotations
@@ -55,9 +62,16 @@ ADDON_PAYLOAD_TYPES = {
 # In the add-ons runtime Google passes the card's original action.function
 # under this reserved parameter key. commonEventObject.invokedFunction was
 # REMOVED from that runtime (add-ons release notes, 2025-05-12) but still
-# exists classic-side — which makes assuming it a silent way to get
-# action.id == "". Popped into action.id so the same card tapped under either
-# runtime yields the same InboundReply.
+# exists classic-side.
+#
+# ⚠ CONDITIONAL, as of the real 2026-07-29 capture. That event carried NO
+# __action_method_name__ — its button routed via
+# action.function = "<a Pub/Sub topic path>", and the runtime sent nothing in
+# this slot. So the "same card under either runtime yields the same
+# InboundReply" property this key was added for holds only when the key is
+# actually sent, which is not always. The fall-through is a silent "" — the
+# defect queue item CG-10 exists to fix. Do not read this constant as a
+# guarantee.
 ADDON_ACTION_KEY = "__action_method_name__"
 
 # A per-message capability URL: visiting it erases the user's prompt, makes
@@ -219,8 +233,9 @@ def _shape(*, envelope_format: str, event_type: str, space: str, message: dict,
 def _action_params(raw_params) -> dict:
     """Classic sends action.parameters as a LIST of {"key","value"}; the
     add-ons runtime sends commonEventObject.parameters as a flat string->string
-    MAP. Accept either — the add-on interaction shape is documented but not yet
-    capture-verified (CG-3)."""
+    MAP. Accept either. The map form is capture-confirmed (2026-07-29); the
+    list branch is still doc-derived and has never been seen from the add-ons
+    runtime."""
     if isinstance(raw_params, dict):
         return dict(raw_params)
     params: dict = {}
@@ -297,9 +312,10 @@ def _normalize_classic(event: dict) -> dict:
 def _normalize_addon(event: dict) -> dict:
     """Google Workspace Add-ons envelope: commonEventObject + chat.<x>Payload.
 
-    ⚠ The CARD_CLICKED path here is documentation-derived, NOT capture-
-    verified — no card button has been tapped against this deployment. Kept
-    deliberately tolerant until queue item CG-3 confirms it.
+    ⚠ The CARD_CLICKED path is now SHAPE-VERIFIED against a real 2026-07-29
+    capture — and that capture showed the action-id extraction below FAILING to
+    an empty string (queue item CG-10). Kept deliberately tolerant until CG-10
+    decides where action identity should live.
     """
     chat = event.get("chat") or {}
     common = event.get("commonEventObject") or {}

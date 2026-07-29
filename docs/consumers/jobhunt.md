@@ -19,12 +19,20 @@ its review UI) if the gateway is down or never ships (R9).
 | R7 | Fail loudly in-thread | callback retries are short (0s/3s/7s); on exhaustion the gateway posts the tenant's `unreachable_message` into the thread and logs `failed`. Tier-1-only deployments can't post the notice (no Chat app) — logged as `failed-silent`; full R7 requires tier 2 |
 | R8/R9 | Separability / migration | HTTP-only; tier-1 webhook identity works today; adopting tier 2 changes transport + adds the callback, nothing else |
 
-> **Runtime note (2026-07-29):** interactions are normalized identically under
-> both Google runtimes — under the Workspace Add-ons runtime the action id
-> arrives as the reserved `__action_method_name__` parameter and is lifted into
-> `action.id`, so jobhunt's handler needs no change. ⚠ This path is
-> documentation-derived and **not yet capture-verified** — no real card tap has
-> been observed (queue item CG-3). R3/R4 must not be called verified until it is.
+> **Runtime note (updated 2026-07-29, after a real capture).** Interactions were
+> designed to normalize identically under both Google runtimes: under the
+> Workspace Add-ons runtime the action id arrives as the reserved
+> `__action_method_name__` parameter and is lifted into `action.id`. A real card
+> tap has now been captured (`tests/fixtures/addon-buttonclicked-event.json`)
+> and it did **not** work that way — the runtime sent no such parameter and
+> `action.id` came through **empty**. `action.params` was correct, including a
+> selection widget's value merged in from `commonEventObject.formInputs`.
+>
+> **R3 and R4 are therefore still NOT verified**, and the reason is now a known
+> defect rather than an untested path: R3 requires the whole interaction plus an
+> idempotency key, and the action identity is missing. Queue item CG-10 tracks
+> it; the architecture decision that owns where action identity should live
+> (ADR-0001 D2) has since landed and approved `__cg_action__`.
 
 > **⚠ R3 deviation — one field is no longer forwarded whole (2026-07-29).**
 > R3 says events forward *whole*. As of this date exactly one field is blanked

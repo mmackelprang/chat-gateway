@@ -30,6 +30,19 @@ PLACEHOLDER = re.compile(r"<(SCRUBBED|REDACTED|FAKE)[^>]*>", re.I)
 PII = re.compile(
     r"mackelprang|(?:users|members)/(?!0)\d{10,}|googleusercontent\.com", re.I)
 
+# Tenant identifiers. A real Google domainId / customer id is an opaque
+# alphanumeric string with no structure to key off — unlike a user id, there is
+# no "never starts with 0" trick available. So the fixture side carries the
+# marker instead: the value must contain `example`, which RFC 2606 reserves and
+# a real Workspace tenant id cannot contain. Structural, not a path allowlist —
+# same reason as the zero-padded user ids above.
+#
+# These arrived with the 2026-07-29 buttonClicked capture, which carries
+# `chat.user.domainId` and `<space>.customer` (the latter TWICE — once under the
+# payload, once inside the message's echoed space object). Nothing in the
+# previous guard would have caught either.
+TENANT_KEY = re.compile(r"\.(domainId|customer)$")
+
 
 def _walk(node, path="$"):
     """Yield (json_path, value) for every string leaf."""
@@ -65,3 +78,24 @@ def test_fixture_contains_no_secrets(path):
             f"{path.name}{json_path} carries a real identity ({value[:40]}...) — "
             "anonymize it; this repo is public"
         )
+        if TENANT_KEY.search(json_path):
+            assert "example" in value.lower(), (
+                f"{path.name}{json_path} = {value!r} looks like a real Google "
+                "domain/customer id — fixtures must use an `example`-marked "
+                "synthetic value (RFC 2606); this repo is public"
+            )
+
+
+def test_guard_rejects_unmarked_tenant_identifiers(tmp_path):
+    """A guard that has never failed is a guard nobody has tested.
+
+    Both spellings, because the buttonClicked capture carries both and a scrub
+    that fixed only one would still ship a real tenant id.
+    """
+    for key, value in (("domainId", "29vd573"), ("customer", "customers/C029vd573")):
+        bad = tmp_path / f"bad-{key}.json"
+        bad.write_text(json.dumps({"chat": {"user": {key: value}}}), encoding="utf-8")
+        data = json.loads(bad.read_text(encoding="utf-8"))
+        offenders = [p for p, v in _walk(data)
+                     if TENANT_KEY.search(p) and "example" not in v.lower()]
+        assert offenders, f"guard failed to flag a real {key}"

@@ -1,0 +1,163 @@
+{
+  "commonEventObject": {
+    "userLocale": "en",
+    "hostApp": "CHAT",
+    "platform": "WEB",
+    "timeZone": {
+      "id": "America/New_York",
+      "offset": -14400000
+    },
+    "formInputs": {
+      "decision": {
+        "stringInputs": {
+          "value": [
+            "approve"
+          ]
+        }
+      }
+    },
+    "parameters": {
+      "probe": "topic-as-fn"
+    }
+  },
+  "chat": {
+    "user": {
+      "name": "users/000000000000000000001",
+      "displayName": "Test User",
+      "avatarUrl": "https://example.com/avatar.png",
+      "email": "agent-user@example.com",
+      "type": "HUMAN",
+      "domainId": "example1"
+    },
+    "eventTime": "2026-07-29T17:55:44.703463Z",
+    "buttonClickedPayload": {
+      "space": {
+        "name": "spaces/AAAAtestRoom",
+        "type": "ROOM",
+        "displayName": "Test Room",
+        "spaceThreadingState": "THREADED_MESSAGES",
+        "spaceType": "SPACE",
+        "spaceHistoryState": "HISTORY_ON",
+        "lastActiveTime": "2026-07-29T17:50:23.086351Z",
+        "membershipCount": {
+          "joinedDirectHumanUserCount": 1
+        },
+        "customer": "customers/Cexample1",
+        "spaceUri": "https://chat.google.com/room/AAAAtestRoom?cls=11"
+      },
+      "message": {
+        "name": "spaces/AAAAtestRoom/messages/MSG2.MSG2",
+        "sender": {
+          "name": "users/000000000000000000002",
+          "displayName": "Agent Comms",
+          "avatarUrl": "https://example.com/app-avatar.png",
+          "type": "BOT"
+        },
+        "createTime": "2026-07-29T17:50:23.086351Z",
+        "text": "probe 2: change the dropdown, then tap the button",
+        "thread": {
+          "name": "spaces/AAAAtestRoom/threads/MSG2",
+          "retentionSettings": {
+            "state": "PERMANENT"
+          }
+        },
+        "space": {
+          "name": "spaces/AAAAtestRoom",
+          "type": "ROOM",
+          "displayName": "Test Room",
+          "spaceThreadingState": "THREADED_MESSAGES",
+          "spaceType": "SPACE",
+          "spaceHistoryState": "HISTORY_ON",
+          "lastActiveTime": "2026-07-29T17:50:23.086351Z",
+          "membershipCount": {
+            "joinedDirectHumanUserCount": 1
+          },
+          "customer": "customers/Cexample1",
+          "spaceUri": "https://chat.google.com/room/AAAAtestRoom?cls=11"
+        },
+        "argumentText": "probe 2: change the dropdown, then tap the button",
+        "cardsV2": [
+          {
+            "cardId": "cg-probe-2",
+            "card": {
+              "header": {
+                "title": "chat-gateway",
+                "subtitle": "probe 2 - selection widget + topic-as-function"
+              },
+              "sections": [
+                {
+                  "widgets": [
+                    {
+                      "decoratedText": {
+                        "text": "<b>1.</b> Change the dropdown below.",
+                        "wrapText": true
+                      }
+                    },
+                    {
+                      "selectionInput": {
+                        "name": "decision",
+                        "label": "Decision",
+                        "type": "DROPDOWN",
+                        "items": [
+                          {
+                            "text": "(choose)",
+                            "value": "none",
+                            "selected": true
+                          },
+                          {
+                            "text": "Approve",
+                            "value": "approve"
+                          },
+                          {
+                            "text": "Reject",
+                            "value": "reject"
+                          }
+                        ],
+                        "onChangeAction": {
+                          "function": "cgSelectProbe"
+                        }
+                      }
+                    },
+                    {
+                      "decoratedText": {
+                        "text": "<b>2.</b> Then tap the button.",
+                        "wrapText": true
+                      }
+                    },
+                    {
+                      "buttonList": {
+                        "buttons": [
+                          {
+                            "text": "Topic-as-function probe",
+                            "onClick": {
+                              "action": {
+                                "function": "projects/chat-gateway-prod/topics/chat-gateway-events",
+                                "parameters": [
+                                  {
+                                    "key": "probe",
+                                    "value": "topic-as-fn"
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "retentionSettings": {
+          "state": "PERMANENT"
+        },
+        "messageHistoryState": "HISTORY_ON",
+        "formattedText": "probe 2: change the dropdown, then tap the button",
+        "markupSyntax": "MARKUP_SYNTAX_CHAT"
+      }
+    }
+  },
+  "_pubsub_message_id": "20751388131856523"
+}
