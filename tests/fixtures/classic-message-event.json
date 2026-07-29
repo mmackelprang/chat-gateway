@@ -1,0 +1,31 @@
+{
+  "type": "MESSAGE",
+  "eventTime": "2026-07-29T12:55:58.782511Z",
+  "space": {
+    "name": "spaces/AAAAtestSpace",
+    "type": "DM",
+    "singleUserBotDm": true
+  },
+  "user": {
+    "name": "users/000000000000000000001",
+    "displayName": "Test User",
+    "email": "agent-user@example.com",
+    "type": "HUMAN"
+  },
+  "message": {
+    "name": "spaces/AAAAtestSpace/messages/MSG1.MSG1",
+    "sender": {
+      "name": "users/000000000000000000001",
+      "displayName": "Test User",
+      "email": "agent-user@example.com",
+      "type": "HUMAN"
+    },
+    "createTime": "2026-07-29T12:55:58.782511Z",
+    "text": "Another test message.",
+    "thread": {
+      "name": "spaces/AAAAtestSpace/threads/MSG1"
+    },
+    "argumentText": "Another test message."
+  },
+  "configCompleteRedirectUrl": "https://chat.google.com/api/bot_config_complete?token=<SCRUBBED>"
+}
