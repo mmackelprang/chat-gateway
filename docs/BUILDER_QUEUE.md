@@ -369,7 +369,7 @@ _(nothing)_
 
 ## Recently shipped
 
-### CG-10 · `__cg_action__` — action identity survives topic-as-function  ✅ shipped 2026-07-29 · PR-PLACEHOLDER
+### CG-10 · `__cg_action__` — action identity survives topic-as-function  ✅ shipped 2026-07-29 · [PR #11](https://github.com/mmackelprang/chat-gateway/pull/11)
 
 Implements **ADR-0001 D2 + D4**. There was deliberately no Planner plan; the
 ADR was the spec.
