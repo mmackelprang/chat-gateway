@@ -112,6 +112,22 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   outbound. The whole `__cg_` prefix is reserved; unknown `__cg_*` keys pass
   through rather than being eaten. Unresolvable identity is `None`, never `""`,
   is counted at `/healthz`, and is still forwarded.
+  **Reframed 2026-07-29 after experiment E1 passed: this is a FALLBACK, not the
+  primary mechanism.** A classic (non-add-on) Chat app on Pub/Sub supplies
+  action identity *natively* — live-verified, an ordinary function name
+  `approve` arrived as `action.id: 'approve'`. Classic is the preferred
+  destination and a migration is underway; `__cg_action__` stays supported
+  because it is load-bearing on the runtime deployed **today**, and because it
+  still outranks the native slot, so one card behaves identically on both sides
+  of the migration. Same support-both posture as the two envelope formats — do
+  not rip it out.
+- **Card `parameters` has two shapes, and confusing them ships a broken card.**
+  Outbound, in the card you send, it is an **array** of `{key, value}` (Cards
+  v2). Inbound, in the add-ons event, it is a **map** under
+  `commonEventObject.parameters`. Both are first-hand from the 2026-07-29
+  capture, which echoes the card we sent alongside the event we received.
+  `_action_params` normalizes either; producers must write the array. Pinned by
+  `test_card_parameters_are_an_array_in_the_real_captured_card`.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
   gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`

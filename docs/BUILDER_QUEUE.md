@@ -52,30 +52,9 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-13 → CG-14 → CG-7 → CG-4 → CG-5 → CG-8
+Remaining order: **CG-14 → CG-7 → CG-4 → CG-5 → CG-8
 → CG-12 → CG-11 → CG-19.** CG-15 … CG-18 are filed deferred and must not be
 executed. CG-9 stays blocked on a human.
-
----
-
-### CG-13 · Publish `interaction_routing_target`; document the portable card convention  📋 queued
-
-| | |
-|---|---|
-| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **D3** |
-| **Depends on** | CG-10 — **shipped** |
-| **Origin** | newly implied by the ADR, unqueued until now |
-
-Producers must not hardcode the topic path. The gateway publishes it per-app on
-the authenticated `/v1/identities` response as `interaction_routing_target`,
-alongside the reserved-key name, and the integration guide documents the card
-convention that consumes it.
-
-**This is the item that keeps the bridge cheap to leave.** Because identity
-always rides in `__cg_action__` and the function slot always holds a
-gateway-published constant, migrating deployment models requires **zero producer
-card changes** — one config value moves. The user approved migration in
-principle if E1 later passes; honouring D3 is what makes that approval cheap.
 
 ---
 
@@ -128,6 +107,12 @@ event measured 1,926 bytes → ~2.8M events within Pub/Sub's 10 GiB/month), so
 cost is a non-issue. What matters is that exhaustion fails **closed** — and for a
 gateway delivering `aitrader` alerts, silent death at a quota boundary is exactly
 what rule 5 exists to prevent.
+
+**Added to scope by CG-13:** when `GATEWAY_ENABLE_PUBSUB=1` but
+`CHAT_GATEWAY_INTERACTION_ROUTING_TARGET` is unset, interactive cards cannot
+work at all and `/v1/identities` reports `interaction.enabled: false` — that
+belongs in `reasons` too. CG-13 deliberately did not touch `/healthz` to avoid
+colliding with Part E's rewrite of the whole endpoint body.
 
 Adds a typed `PubSubError` carrying status (and stops echoing `resp.text[:200]`,
 a pre-existing rule-#2 smell), failure counters on the loop, and a `reasons` list
@@ -368,6 +353,29 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-13 · Publish `interaction_routing_target`; the portable card convention  ✅ shipped 2026-07-29 · PR-PLACEHOLDER
+
+**ADR-0001 D3 — the item that keeps the bridge cheap to leave.** `GET
+/v1/identities` now returns `interaction.routing_target` (what a card puts in
+`onClick.action.function`) and `interaction.action_key`, and the integration
+guide documents the producer convention that consumes them, including *widgets
+for input, one button to submit*.
+
+Narrower than the ADR requires, deliberately: **opted-out tenants are never
+given a routing target.** Handing one to an `allow_inbound: false` app invites
+it to build cards whose interactions the gateway would discard; `aitrader` gets
+`enabled: false` and the reason names hard rule #6. An unset routing target
+likewise returns `enabled: false` with the reason rather than a half-answer — a
+producer that guesses ships cards whose taps fail in front of a user.
+
+UAT closed the loop the docs promise rather than asserting it: fetch the
+convention over real HTTP → build a card from **only** those values → have
+Google echo that card back under **both** runtimes → identical `action.id` and
+identical params, with the classic runtime's echoed topic path correctly
+discarded. Then the routing target was changed to an HTTPS URL and the same
+producer code produced a correct card — D3's "zero producer card changes on
+migration" demonstrated, not claimed. 82 → 86 tests.
 
 ### CG-10 · `__cg_action__` — action identity survives topic-as-function  ✅ shipped 2026-07-29 · [PR #11](https://github.com/mmackelprang/chat-gateway/pull/11)
 

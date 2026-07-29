@@ -11,7 +11,8 @@ import pytest
 from chat_gateway.adapters.chat_api import ChatApiAdapter, ChatApiError
 from chat_gateway.adapters.pubsub import (
     UNPARSEABLE, UNROUTED, FakePuller, SubscriberLoop, UnrecognizedEventError,
-    detect_envelope, dispatch, normalize_event, redact_capability_urls,
+    _action_params, detect_envelope, dispatch, normalize_event,
+    redact_capability_urls,
 )
 from chat_gateway.adapters.webhook import (
     WebhookAdapter, WebhookDeliveryError, build_params, build_payload,
@@ -770,3 +771,75 @@ def test_resolved_action_id_does_not_touch_the_counter(registry):
     loop = SubscriberLoop(FakePuller([event]), registry, inbox)
     loop.poll_once()
     assert loop.interactions_without_action_id == 0
+
+
+def test_card_parameters_are_an_array_in_the_real_captured_card():
+    """PINS THE OUTBOUND SHAPE against a real card that really worked.
+
+    `parameters` has two shapes and the asymmetry is a live tripwire:
+
+        the CARD you send      -> an ARRAY of {"key", "value"}   (Cards v2)
+        the EVENT you get back -> a MAP under commonEventObject  (add-ons)
+
+    docs/integration-guide.md's card convention originally showed the MAP shape
+    in the card, copied from an illustrative sketch. A producer following it
+    would have built a card that is not valid Cards v2 — failing at render or
+    tap time, in front of a user. Caught in review before it shipped.
+
+    The authority here is not documentation: this fixture is a card WE sent,
+    that Google accepted, that a human tapped, echoed back verbatim in the
+    interaction event. If the guide ever drifts from this shape again, this
+    fails.
+    """
+    cap = fixture("addon-buttonclicked-event.json")
+    card = cap["chat"]["buttonClickedPayload"]["message"]["cardsV2"][0]
+    buttons = [w["buttonList"]["buttons"]
+               for s in card["card"]["sections"] for w in s["widgets"]
+               if "buttonList" in w]
+    assert buttons, "fixture must still contain a button to pin"
+    sent = buttons[0][0]["onClick"]["action"]["parameters"]
+
+    assert isinstance(sent, list), (
+        "a CARD's action.parameters is an ARRAY of {key, value} — if this ever "
+        "becomes a dict, docs/integration-guide.md is wrong and so is this test"
+    )
+    assert all(set(p) == {"key", "value"} for p in sent)
+
+    # ...and the INBOUND side of the same event is the map form.
+    assert isinstance(cap["commonEventObject"]["parameters"], dict)
+
+    # Both shapes normalize identically, which is why a producer never has to
+    # think about the inbound one.
+    assert _action_params(sent) == _action_params(
+        cap["commonEventObject"]["parameters"]) == {"probe": "topic-as-fn"}
+
+
+def test_the_documented_card_convention_round_trips_on_both_runtimes():
+    """Builds a card EXACTLY as docs/integration-guide.md instructs — array
+    parameters, routing target in `function`, identity in `__cg_action__` — and
+    drives it through both normalizers. A doc that produces a card which
+    silently fails is worse than no doc, so the doc's literal shape is the
+    input here, not a convenient paraphrase of it."""
+    from chat_gateway.adapters.pubsub import CG_ACTION_KEY
+
+    routing_target = "projects/chat-gateway-prod/topics/chat-gateway-events"
+    card_params = [
+        {"key": CG_ACTION_KEY, "value": "verdict"},
+        {"key": "job_id", "value": "job-123"},
+    ]
+
+    classic = normalize_event({
+        "type": "CARD_CLICKED", "space": {"name": "spaces/JH"},
+        "user": {"email": "m@example.com"}, "message": {},
+        # classic echoes the card's own array form back, routing target included
+        "action": {"function": routing_target, "parameters": card_params},
+    })
+    addon = normalize_event({
+        # the add-ons runtime consumes `function` and flattens params to a map
+        "commonEventObject": {"parameters": {p["key"]: p["value"] for p in card_params}},
+        "chat": {"user": {"email": "m@example.com"},
+                 "buttonClickedPayload": {"space": {"name": "spaces/JH"}, "message": {}}},
+    })
+
+    assert classic["action"] == addon["action"] == {
+        "id": "verdict", "id_source": "cg_param", "params": {"job_id": "job-123"}}

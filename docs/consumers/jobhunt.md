@@ -42,6 +42,19 @@ its review UI) if the gateway is down or never ships (R9).
 > silently plausible. `action.id_source` reports `"cg_param"` | `"google"` |
 > `null`.
 >
+> **Card `parameters` is an ARRAY of `{key, value}` in the card you send**, and
+> a map in the event you receive. Write the array — the map shape is not valid
+> Cards v2. See the card convention in `docs/integration-guide.md`.
+>
+> **Fetch the wiring, do not hardcode it** (CG-13, ADR-0001 D3).
+> `GET /v1/identities` returns `interaction.routing_target` (what goes in a
+> card's `onClick.action.function`) and `interaction.action_key`. Because
+> identity always rides in the key and the function slot always holds a
+> gateway-published constant, the same jobhunt card works under every
+> deployment model the gateway could move to — a migration costs jobhunt
+> **zero card changes**. Hardcode the topic path and you have signed up to
+> re-render every card the day it moves.
+>
 > R3/R4 remain **live-unverified end to end**: the mapping is now correct on
 > real captured bytes, but no interaction has ever traversed `PubSubPuller` and
 > reached a jobhunt callback against Google.
