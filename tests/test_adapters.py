@@ -3,13 +3,15 @@
 import base64
 import datetime as dt
 import json
+from pathlib import Path
 
 import httpx
 import pytest
 
 from chat_gateway.adapters.chat_api import ChatApiAdapter, ChatApiError
 from chat_gateway.adapters.pubsub import (
-    UNROUTED, FakePuller, SubscriberLoop, dispatch, normalize_event,
+    UNPARSEABLE, UNROUTED, FakePuller, SubscriberLoop, UnrecognizedEventError,
+    detect_envelope, dispatch, normalize_event, redact_capability_urls,
 )
 from chat_gateway.adapters.webhook import (
     WebhookAdapter, WebhookDeliveryError, build_params, build_payload,
@@ -110,6 +112,13 @@ apps:
 """
 
 
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def fixture(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
 @pytest.fixture()
 def registry(tmp_path):
     p = tmp_path / "r.yaml"
@@ -130,6 +139,7 @@ def test_normalize_event():
         "text": "approved — ship it",
         "action": None,
         "dedupe_key": None,
+        "envelope_format": "classic",
     }
 
 
@@ -174,3 +184,192 @@ def test_pubsub_wire_decode(registry):
     batch = puller.pull()
     assert batch[0][0] == "a1" and batch[0][1]["type"] == "MESSAGE"
     puller.acknowledge(["a1"])
+
+
+# --- dual-format normalization (CG-1) ---------------------------------------
+
+
+def test_normalize_addon_message_from_real_capture():
+    """The 2026-07-29 live bug: this real payload used to normalize into an
+    empty husk with space="" and text="", which looked like a valid MESSAGE."""
+    core = normalize_event(fixture("addon-message-event.json"))
+    assert core == {
+        "event_type": "MESSAGE",
+        "space": "spaces/AAAAtestSpace",          # was "" — D2, routing dead
+        "thread_key": None,                        # add-ons echoes no threadKey
+        "thread_name": "spaces/AAAAtestSpace/threads/MSG1",
+        "message_id": "spaces/AAAAtestSpace/messages/MSG1.MSG1",
+        "sender_display": "Test User",
+        "sender_email": "agent-user@example.com",
+        "text": "Another test message.",           # was ""
+        "action": None,
+        "dedupe_key": None,
+        "envelope_format": "addon",
+    }
+
+
+def test_both_formats_agree_on_the_same_logical_event():
+    addon = normalize_event(fixture("addon-message-event.json"))
+    classic = normalize_event(fixture("classic-message-event.json"))
+    assert addon.pop("envelope_format") == "addon"
+    assert classic.pop("envelope_format") == "classic"
+    assert addon == classic
+
+
+def test_normalize_addon_card_clicked():
+    """⚠ Documentation-derived shape (CG-3 replaces this with a real capture).
+    The action id arrives as the reserved __action_method_name__ parameter —
+    commonEventObject.invokedFunction was removed from this runtime in 2025-05.
+    """
+    core = normalize_event(fixture("addon-card-clicked-event.json"))
+    assert core["event_type"] == "CARD_CLICKED"
+    assert core["space"] == "spaces/AAAAtestSpace"
+    assert core["action"] == {
+        "id": "verdict",
+        "params": {"job_id": "job-123", "verdict": "reject", "nonce": "n-9",
+                   "reject_reason": "wrong_seniority"},
+    }
+    # the reserved key must NOT leak through to the tenant
+    assert "__action_method_name__" not in core["action"]["params"]
+
+
+def test_action_id_parity_across_formats():
+    """Same card, same tap, same InboundReply — whichever runtime we sit behind."""
+    from test_callbacks import CARD_CLICK  # classic-format equivalent
+
+    classic = normalize_event(CARD_CLICK)
+    addon = normalize_event(fixture("addon-card-clicked-event.json"))
+    assert classic["action"]["id"] == addon["action"]["id"] == "verdict"
+    assert classic["action"]["params"] == addon["action"]["params"]
+
+
+def test_addon_action_parameters_tolerate_list_form():
+    """Defensive: we have never seen a real add-on interaction event. If Google
+    sends the legacy list-of-{key,value} shape, we must still parse it."""
+    event = fixture("addon-card-clicked-event.json")
+    event["commonEventObject"]["parameters"] = [
+        {"key": "__action_method_name__", "value": "verdict"},
+        {"key": "job_id", "value": "job-123"},
+    ]
+    core = normalize_event(event)
+    assert core["action"]["id"] == "verdict"
+    assert core["action"]["params"]["job_id"] == "job-123"
+
+
+@pytest.mark.parametrize("bad", [
+    {},
+    {"foo": 1},
+    {"space": {"name": "spaces/AAA"}, "message": {"text": "no type field"}},
+    {"type": ""},
+    {"chat": {}},                              # add-ons shell, no *Payload
+    {"chat": {"user": {}, "eventTime": "x"}},  # non-payload fields only
+    {"_undecodable": True},                    # pull() could not decode
+    [],
+    "not-an-object",
+])
+def test_unrecognized_envelope_raises(bad):
+    """Never a silent MESSAGE default — that is defect D1."""
+    with pytest.raises(UnrecognizedEventError):
+        normalize_event(bad)
+
+
+def test_detect_envelope_labels_both_formats():
+    assert detect_envelope(fixture("addon-message-event.json")) == "addon"
+    assert detect_envelope(fixture("classic-message-event.json")) == "classic"
+
+
+def test_addon_unknown_payload_type_is_named_not_defaulted():
+    """A payload type Google adds later must route, with an honest name."""
+    core = normalize_event({
+        "commonEventObject": {},
+        "chat": {"user": {"displayName": "T"},
+                 "somethingNewPayload": {"space": {"name": "spaces/AAAAtestSpace"}}},
+    })
+    assert core["event_type"] == "SOMETHING_NEW"   # never "MESSAGE"
+    assert core["space"] == "spaces/AAAAtestSpace"
+
+
+ADDON_REGISTRY_YAML = REGISTRY_YAML.replace('spaces/AAA"', 'spaces/AAAAtestSpace"')
+
+
+@pytest.fixture()
+def addon_registry(tmp_path):
+    p = tmp_path / "r.yaml"
+    p.write_text(ADDON_REGISTRY_YAML, encoding="utf-8")
+    return load_registry(p)
+
+
+def test_addon_event_routes_to_owning_app(addon_registry):
+    """D2 fixed at the routing layer, not just the parsing layer."""
+    inbox = Inbox()
+    assert dispatch(fixture("addon-message-event.json"), addon_registry, inbox) == [
+        "aiteam-harness"]
+    reply = inbox.poll("aiteam-harness")[0]
+    assert reply.text == "Another test message."
+    assert reply.envelope_format == "addon"
+
+
+def test_unparseable_is_audited_and_never_routed_to_a_tenant(registry):
+    """Hard rule #6 guard: a parse failure must not widen anyone's inbound
+    surface. It goes to _unrouted, labelled, and nowhere else."""
+    inbox = Inbox()
+    assert dispatch({"garbage": True}, registry, inbox) == [UNROUTED]
+    assert inbox.pending_counts() == {UNROUTED: 1}
+    audited = inbox.poll(UNROUTED)[0]
+    assert audited.event_type == UNPARSEABLE
+    assert audited.envelope_format == "unparseable"
+    assert audited.space == ""
+    assert audited.raw == {"garbage": True}      # nothing lost
+
+
+def test_dispatch_survives_a_non_dict_event(registry):
+    """dispatch() must be total. redact_capability_urls returns a non-dict
+    unchanged, so an unguarded raw= would make InboundReply raise INSIDE the
+    except handler — escaping poll_once and wedging the subscription in the
+    very poison-pill loop this path exists to prevent."""
+    inbox = Inbox()
+    for bad in ([], "not-an-object", 7):
+        assert dispatch(bad, registry, inbox) == [UNROUTED]
+    audited = inbox.poll(UNROUTED)
+    assert len(audited) == 3
+    assert {r.event_type for r in audited} == {UNPARSEABLE}
+    assert [r.raw for r in audited] == [{}, {}, {}]
+
+
+def test_poll_once_acks_unparseable_events(registry):
+    """Anti-poison-pill: garbage must not stall well-formed events behind it."""
+    inbox = Inbox()
+    puller = FakePuller([CHAT_EVENT, {"garbage": True}, CHAT_EVENT])
+    loop = SubscriberLoop(puller, registry, inbox)
+    assert loop.poll_once() == 3
+    assert puller.acked == ["ack-0", "ack-1", "ack-2"]   # ALL acked
+    assert loop.unparseable_seen == 1
+    assert len(inbox.poll("aiteam-harness")) == 2        # good ones delivered
+
+
+def test_dedupe_key_survives_both_formats():
+    for name in ("addon-message-event.json", "classic-message-event.json"):
+        event = {**fixture(name), "_pubsub_message_id": "ps-99"}
+        assert normalize_event(event)["dedupe_key"] == "ps-99"
+
+
+def test_capability_url_is_redacted_in_both_spellings():
+    """DEC-7: `raw` is audited to disk and POSTed whole to tenant callbacks.
+    That URL makes a private message public — it must not travel."""
+    for name, field in (("addon-message-event.json", "configCompleteRedirectUri"),
+                        ("classic-message-event.json", "configCompleteRedirectUrl")):
+        raw = redact_capability_urls(fixture(name))
+        flat = json.dumps(raw)
+        assert "bot_config_complete?token=" not in flat
+        assert flat.count("<redacted-by-gateway>") == 1
+        assert field in json.dumps(raw)          # key kept, value blanked
+
+
+def test_dispatch_stores_redacted_raw(addon_registry):
+    inbox = Inbox()
+    dispatch(fixture("addon-message-event.json"), addon_registry, inbox)
+    reply = inbox.poll("aiteam-harness")[0]
+    assert reply.raw["chat"]["messagePayload"]["configCompleteRedirectUri"] == \
+        "<redacted-by-gateway>"
+    # everything else survives — forwarded "whole" minus one capability field
+    assert reply.raw["chat"]["messagePayload"]["message"]["text"] == "Another test message."
