@@ -73,6 +73,14 @@ resource "google_project_service" "gsuiteaddons" {
   disable_on_destroy = false
 }
 
+# The Google Workspace Marketplace SDK. Without it the app never appears under
+# ⚙ → Apps & integrations → Add apps (docs/google-cloud-setup.md §6).
+# *Publishing* the app has no IaC surface and stays console-only.
+resource "google_project_service" "appsmarket" {
+  service            = "appsmarket-component.googleapis.com"
+  disable_on_destroy = false
+}
+
 # The Workspace Add-ons runtime publishes as a per-project service agent that
 # does not exist until it is created. Missing it = the 2026-07-29 field
 # failure: Chat reports "<app> is not responding", the add-ons metric logs
@@ -88,6 +96,10 @@ resource "google_project_service_identity" "gsuiteaddons" {
   depends_on = [google_project_service.gsuiteaddons]
 }
 
+# A freshly minted service agent can take a few seconds to become
+# IAM-resolvable, so a first `apply` may fail here with
+# "Error 400: ... does not exist". Re-running apply resolves it; the gcloud
+# scripts do not hit this because the identity call blocks until it returns.
 resource "google_pubsub_topic_iam_member" "addons_publishes" {
   topic  = google_pubsub_topic.events.name
   role   = "roles/pubsub.publisher"

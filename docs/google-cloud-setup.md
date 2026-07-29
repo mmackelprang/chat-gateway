@@ -42,10 +42,16 @@ if an `enable` call is rejected for billing, link a billing account and retry.
 
 ### 2–4. APIs, service account, Pub/Sub (scripted)
 
-> ✅ **Done for `chat-gateway-prod` as of 2026-07-28** — APIs, service account,
-> topic, subscription, both IAM bindings, and the SA key all exist. Both
-> scripts are idempotent, so re-running is a safe no-op; there is no need to
-> re-run them for this project.
+> ✅ **Provisioned for `chat-gateway-prod`** — steps 2–4 ran 2026-07-28: APIs,
+> service account, topic, subscription, the topic-publisher and
+> subscription-subscriber bindings, and the SA key.
+>
+> ⚠ **That run was incomplete.** It predated the Workspace Add-ons service
+> agent, which did not exist and was therefore never bound — the failure
+> documented below. The agent and its publisher binding were added by hand on
+> 2026-07-29 and are now part of all three IaC paths, so a re-run is a safe
+> no-op. The lesson worth keeping: **"the script exited 0" was not evidence the
+> project was complete.**
 
 POSIX:
 ```bash
@@ -90,8 +96,12 @@ Confirm by matching all four:
 | `gsuiteaddons.googleapis.com/errors` | code **13**, "Unspecified error invoking the add-on" |
 | `gcloud pubsub subscriptions pull chat-gateway-sub` | **zero** messages |
 
-Fix (now built into both setup scripts and the Terraform, so this is only
-needed for projects provisioned before 2026-07-29):
+> This is the remediation applied on 2026-07-29, immediately after which a real
+> event arrived. Per the caveat above that is strong correlation, not proof:
+> the diagnosis matched all four signals, but the variable was never isolated.
+
+Remediation (now built into both setup scripts and the Terraform, so this is
+only needed for projects provisioned before 2026-07-29):
 
 ```bash
 gcloud beta services identity create --service=gsuiteaddons.googleapis.com --project=<PROJECT_ID>

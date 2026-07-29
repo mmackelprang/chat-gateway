@@ -14,13 +14,23 @@ KEY_FILE="${KEY_FILE:-chat-gateway-sa.json}"
 # ⚠ VERIFY on the Chat API Configuration page when you wire the topic:
 # the principal Google Chat publishes events AS. Per current docs it is:
 CHAT_EVENTS_PUBLISHER="serviceAccount:chat-api-push@system.gserviceaccount.com"
+# NOTE: GCP accepts a binding to a *@system.gserviceaccount.com principal
+# WITHOUT validating that it exists, so a clean bind proves nothing. Nor is "a
+# real event landed in the subscription" sufficient: the Workspace Add-ons
+# service agent (bound further down) is also a publisher, so an arriving event
+# does not attribute itself to either principal. Stays ⚠ LIVE-UNVERIFIED until
+# the principal is confirmed on the Chat API "Connection settings" page.
 
 echo "== project: ${PROJECT_ID}"
 # gcloud projects create "${PROJECT_ID}" --name="chat-gateway"   # if not created yet
 gcloud config set project "${PROJECT_ID}" >/dev/null
 
-echo "== enabling APIs (chat, pubsub, workspace add-ons)"
-gcloud services enable chat.googleapis.com pubsub.googleapis.com gsuiteaddons.googleapis.com
+# appsmarket-component = the Google Workspace Marketplace SDK. Without it the
+# app never appears under ⚙ → Apps & integrations → Add apps (step 6), so the
+# API is enabled here; *publishing* the app remains console-only.
+echo "== enabling APIs (chat, pubsub, workspace add-ons, marketplace SDK)"
+gcloud services enable chat.googleapis.com pubsub.googleapis.com \
+  gsuiteaddons.googleapis.com appsmarket-component.googleapis.com
 
 echo "== service account: ${SA_EMAIL}"
 gcloud iam service-accounts describe "${SA_EMAIL}" >/dev/null 2>&1 || \
@@ -60,7 +70,7 @@ PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(proje
 : "${PROJECT_NUMBER:?could not resolve the project number for ${PROJECT_ID} — cannot bind the add-ons service agent}"
 ADDONS_PUBLISHER="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"
 
-echo "== grant the add-ons service agent publisher on the topic"
+echo "== grant the add-ons service agent publisher on the topic (${ADDONS_PUBLISHER})"
 gcloud pubsub topics add-iam-policy-binding "${TOPIC}" \
   --member="${ADDONS_PUBLISHER}" --role="roles/pubsub.publisher" >/dev/null
 

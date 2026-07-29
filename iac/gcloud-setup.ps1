@@ -66,9 +66,11 @@ $SaEmail = "$SaName@$ProjectId.iam.gserviceaccount.com"
 $ChatEventsPublisher = 'serviceAccount:chat-api-push@system.gserviceaccount.com'
 # NOTE: GCP accepts an IAM binding to a *@system.gserviceaccount.com principal
 # WITHOUT validating that it exists — a clean `add-iam-policy-binding` here
-# proves nothing. This stays ⚠ LIVE-UNVERIFIED until the principal is confirmed
-# on the Chat API "Connection settings" console page AND a real event lands in
-# the subscription.
+# proves nothing. Nor is "a real event landed in the subscription" sufficient:
+# the Workspace Add-ons service agent (bound further down) is also a publisher,
+# so an arriving event does not attribute itself to either principal. This
+# stays ⚠ LIVE-UNVERIFIED until the principal is confirmed on the Chat API
+# "Connection settings" console page.
 
 function Resolve-Gcloud {
     <#  Locate gcloud without assuming PATH or a hardcoded username.
@@ -158,8 +160,12 @@ Write-Host "== project: $ProjectId"
 # Invoke-Gcloud @('projects','create',$ProjectId,'--name=chat-gateway')   # if not created yet
 Invoke-Gcloud @('config', 'set', 'project', $ProjectId) -Quiet
 
-Write-Host '== enabling APIs (chat, pubsub, workspace add-ons)'
-Invoke-Gcloud @('services', 'enable', 'chat.googleapis.com', 'pubsub.googleapis.com', 'gsuiteaddons.googleapis.com')
+# appsmarket-component = the Google Workspace Marketplace SDK. Without it the
+# app never appears under Apps & integrations -> Add apps (step 6), so the API
+# is enabled here; *publishing* the app remains console-only.
+Write-Host '== enabling APIs (chat, pubsub, workspace add-ons, marketplace SDK)'
+Invoke-Gcloud @('services', 'enable', 'chat.googleapis.com', 'pubsub.googleapis.com',
+    'gsuiteaddons.googleapis.com', 'appsmarket-component.googleapis.com')
 
 Write-Host "== service account: $SaEmail"
 if (-not (Test-GcloudResource @('iam', 'service-accounts', 'describe', $SaEmail))) {
@@ -196,10 +202,14 @@ $code = 1   # pre-set: a launch failure must not leave this unassigned
 $prev = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 try {
-    $ProjectNumber = & $script:Gcloud @(
+    # Capture first, THEN read $LASTEXITCODE. Piping straight into
+    # Select-Object would short-circuit the pipeline and leave $LASTEXITCODE
+    # holding a stale value from the previous gcloud call.
+    $out = & $script:Gcloud @(
         'projects', 'describe', $ProjectId, '--format=value(projectNumber)'
-    ) | Select-Object -First 1
+    )
     $code = $LASTEXITCODE
+    $ProjectNumber = @($out)[0]
 }
 finally { $ErrorActionPreference = $prev }
 if ($code -ne 0) { throw "gcloud projects describe $ProjectId failed (exit $code)" }
