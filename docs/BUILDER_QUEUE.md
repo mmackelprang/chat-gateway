@@ -16,7 +16,7 @@ and #6 simultaneously.
 
 ## Queue
 
-### CG-1 · Dual-format Chat event envelope normalization  📋 queued  · P0
+### CG-1 · Dual-format Chat event envelope normalization  🔨 in flight  · P0
 
 | | |
 |---|---|
@@ -43,13 +43,13 @@ must pass (hard rule #6 — `aitrader` stays locked out).
 
 **Do not** clear any ⚠ LIVE-UNVERIFIED flag beyond what spec §8 authorizes.
 
-⚠ **Approval gate — check before claiming.** Spec §10 carries four open
-questions for the user. Two change the code: **DEC-3** (add `envelope_format`
-to the shared `InboundReply`) and **DEC-7** (redact `configCompleteRedirectUri`
-from forwarded/audited `raw`, a deliberate exception to jobhunt R3's "forward
-whole"). The plan assumes both approved and spells out exactly what to drop if
-either is declined. If the user has not answered, ask — do not guess, and do
-not silently ship a change to the shared envelope or to a tenant contract.
+✅ **Approval gate — CLEARED 2026-07-29.** The user approved all four of spec
+§10's open questions: **DEC-3** (add `envelope_format` to `InboundReply`),
+**§8** (the `⚠ SHAPE-VERIFIED` flag vocabulary, to be defined explicitly
+wherever the flag vocabulary is documented), **DEC-5** (fully anonymize the
+committed fixture — the repo is public), and **DEC-7** (redact
+`configCompleteRedirectUri`/`…Url`, a deliberate documented exception to
+jobhunt R3's "forward whole", recorded in `docs/consumers/jobhunt.md`).
 
 ---
 
