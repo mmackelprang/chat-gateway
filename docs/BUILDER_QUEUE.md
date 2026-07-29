@@ -392,7 +392,7 @@ _(nothing)_
 
 ## Recently shipped
 
-### CG-3 · Land the real add-on interaction capture  ✅ shipped 2026-07-29 · PR-PLACEHOLDER
+### CG-3 · Land the real add-on interaction capture  ✅ shipped 2026-07-29 · [PR #10](https://github.com/mmackelprang/chat-gateway/pull/10)
 
 The first genuine card interaction this project has ever received, landed as
 `tests/fixtures/addon-buttonclicked-event.json` behind an extended recursive
