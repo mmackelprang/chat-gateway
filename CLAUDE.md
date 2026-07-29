@@ -87,12 +87,20 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
     exist**, so a clean apply was never evidence either.
   - `PubSubPuller.pull()/acknowledge()` — still unexercised; the live pull used
     an ad-hoc client, not our class.
-  - Add-on **CARD_CLICKED** — no interaction event has ever been captured.
+  - Add-on **CARD_CLICKED** — a real interaction WAS captured 2026-07-29 and is
+    now ⚠ SHAPE-VERIFIED (tests/fixtures/addon-buttonclicked-event.json). It
+    found a defect rather than confirming the mapping: `action.id` normalizes to
+    "" because the card's routing pattern consumed the function slot. Params
+    (including selection-widget values) are correct. Not a live-round-trip clear
+    — the capture was pulled with an ad-hoc client. jobhunt R3/R4 remain
+    unverified; see queue item CG-10.
   - Chat API **send** and webhook **send** (including the threadKey
     param-vs-body question) — unchanged, still unverified.
-  - The add-on **MESSAGE** shape is ⚠ SHAPE-VERIFIED 2026-07-29 (real captured
-    bytes replayed offline, `tests/fixtures/addon-message-event.json`). That is
-    not a live-round-trip clear and does not remove any flag above.
+  - The add-on **MESSAGE** and **buttonClicked** shapes are ⚠ SHAPE-VERIFIED
+    2026-07-29 (real captured bytes replayed offline,
+    `tests/fixtures/addon-message-event.json`,
+    `tests/fixtures/addon-buttonclicked-event.json`). That is not a
+    live-round-trip clear and does not remove any flag above.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
   gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`

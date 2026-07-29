@@ -217,9 +217,14 @@ def test_both_formats_agree_on_the_same_logical_event():
 
 
 def test_normalize_addon_card_clicked():
-    """⚠ Documentation-derived shape (CG-3 replaces this with a real capture).
-    The action id arrives as the reserved __action_method_name__ parameter —
-    commonEventObject.invokedFunction was removed from this runtime in 2025-05.
+    """CONSTRUCTED fixture — a shape we have NOT observed.
+
+    The real 2026-07-29 capture (addon-buttonclicked-event.json) contained no
+    `__action_method_name__` at all. This fixture is kept as tolerance coverage
+    for a card style we have not seen — one whose action.function is an
+    ordinary function name rather than a topic path — not as a statement about
+    what the add-ons runtime sends. Do not "fix" it to match the real capture;
+    they cover different things.
     """
     core = normalize_event(fixture("addon-card-clicked-event.json"))
     assert core["event_type"] == "CARD_CLICKED"
@@ -234,7 +239,14 @@ def test_normalize_addon_card_clicked():
 
 
 def test_action_id_parity_across_formats():
-    """Same card, same tap, same InboundReply — whichever runtime we sit behind."""
+    """Parity holds GIVEN the add-ons runtime supplies __action_method_name__.
+
+    That condition was previously implicit and read as a guarantee. The real
+    2026-07-29 capture did not satisfy it — the add-on side yielded
+    action.id == "" — so this asserts a conditional property of a constructed
+    fixture, not an observed one. See test_real_button_click_action_id_is_
+    empty_KNOWN_DEFECT and queue item CG-10.
+    """
     from test_callbacks import CARD_CLICK  # classic-format equivalent
 
     classic = normalize_event(CARD_CLICK)
@@ -244,8 +256,10 @@ def test_action_id_parity_across_formats():
 
 
 def test_addon_action_parameters_tolerate_list_form():
-    """Defensive: we have never seen a real add-on interaction event. If Google
-    sends the legacy list-of-{key,value} shape, we must still parse it."""
+    """Defensive. The one real add-on interaction we have captured sent
+    `parameters` as a flat MAP (2026-07-29), so this list branch has still
+    never been seen in the wild. Kept because Google's classic runtime does
+    send the list form and _action_params is shared."""
     event = fixture("addon-card-clicked-event.json")
     event["commonEventObject"]["parameters"] = [
         {"key": "__action_method_name__", "value": "verdict"},
@@ -530,3 +544,64 @@ def test_dispatch_stores_redacted_raw(addon_registry):
         "<redacted-by-gateway>"
     # everything else survives — forwarded "whole" minus one capability field
     assert reply.raw["chat"]["messagePayload"]["message"]["text"] == "Another test message."
+
+
+# --- the real add-on interaction capture (CG-3) ------------------------------
+
+
+def test_normalize_real_addon_button_click():
+    """REAL capture, 2026-07-29 — the first genuine card interaction this
+    project has ever received. Pins what Google ACTUALLY sends, as opposed to
+    what the constructed fixture assumes.
+
+    Note `text`: on an interaction it is the CARD's message text, not anything
+    the user typed. A consumer reading it as user intent will be wrong.
+    """
+    core = normalize_event(fixture("addon-buttonclicked-event.json"))
+    assert core["event_type"] == "CARD_CLICKED"
+    assert core["envelope_format"] == "addon"
+    assert core["space"] == "spaces/AAAAtestRoom"
+    assert core["thread_name"] == "spaces/AAAAtestRoom/threads/MSG2"
+    assert core["message_id"] == "spaces/AAAAtestRoom/messages/MSG2.MSG2"
+    assert core["sender_display"] == "Test User"          # the tapper, not the app
+    assert core["sender_email"] == "agent-user@example.com"
+    assert core["text"] == "probe 2: change the dropdown, then tap the button"
+    assert core["dedupe_key"] == "20751388131856523"
+
+
+def test_real_button_click_merges_selection_widget_value_into_params():
+    """The selection-widget truth, on real data.
+
+    A selectionInput's *value* arrives in commonEventObject.formInputs and is
+    harvested at button-submit time, merged alongside the button's own action
+    parameters. This is what makes jobhunt R6's structured reject reason work —
+    and it is NOT the same as a widget being an interaction trigger, which was
+    disproven the same day (onChangeAction fails exactly like a button:
+    gsuiteaddons code 13).
+
+    Also confirms `parameters` really does arrive as a flat map in this runtime;
+    the list-form tolerance in _action_params remains untested against reality.
+    """
+    core = normalize_event(fixture("addon-buttonclicked-event.json"))
+    assert core["action"]["params"] == {"probe": "topic-as-fn", "decision": "approve"}
+
+
+def test_real_button_click_action_id_is_empty_KNOWN_DEFECT():
+    """PINS A DEFECT. This is not desired behaviour — see queue item CG-10.
+
+    The card's button routed via
+    `action.function = "projects/chat-gateway-prod/topics/chat-gateway-events"`,
+    so the add-ons runtime sent NO `__action_method_name__` parameter, no
+    `invokedFunction`, and no `payload.action`. _normalize_addon consults
+    exactly those three sources, finds none, and falls through `or ""` to an
+    empty string — silently, into an InboundReply that looks structurally valid
+    and would be forwarded to a tenant callback as though it carried an action
+    identity. That is the silent-failure class CG-1 existed to eliminate, one
+    layer further in.
+
+    When CG-10 lands this test MUST be rewritten, not deleted: the fixture is
+    real, and the behaviour it pins is precisely the behaviour that has to
+    change.
+    """
+    core = normalize_event(fixture("addon-buttonclicked-event.json"))
+    assert core["action"]["id"] == ""

@@ -47,51 +47,14 @@ every inbound path; nothing in this queue widens any tenant's inbound surface.
 ## Queue
 
 **Order is the user's, set 2026-07-29**, with one Builder-side correction:
-CG-3 is promoted above CG-10 because CG-10 *depends* on it (CG-10 rewrites the
+CG-3 was promoted above CG-10 because CG-10 *depends* on it (CG-10 rewrites the
 pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
-outranks a preference; nothing else was resequenced.
+outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Resulting order: **CG-3 → CG-10 → CG-13 → CG-14 → CG-7 → CG-4 → CG-5 → CG-8
+Remaining order: **CG-10 → CG-13 → CG-14 → CG-7 → CG-4 → CG-5 → CG-8
 → CG-12 → CG-11 → CG-19.** CG-15 … CG-18 are filed deferred and must not be
 executed. CG-9 stays blocked on a human.
-
----
-
-### CG-3 · Land the real add-on interaction capture  📋 queued *(promoted: CG-10 depends on it)*
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-3)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-4 … DEC-7; supersedes the earlier [envelope spec §4.5, §8](superpowers/specs/2026-07-29-chat-event-envelope-normalization-design.md) |
-| **Plan** | [Part D](superpowers/plans/2026-07-29-live-verification-followups.md) (supersedes the earlier plan's Part C) |
-| **Depends on** | nothing |
-| **Was blocked by** | a human tapping a real card button — **done 2026-07-29** |
-
-Rescoped: the parser-tightening half moves to CG-10 (ADR-gated); this item lands
-the evidence. Source capture at
-`C:\Users\mark\AppData\Local\Temp\cg-fixture\addon-buttonclicked-event.json`.
-
-Note `addon-message-event.json` is **already landed** (CG-1, PR #5) and is
-byte-identical in structure to the temp copy of the same event — nothing to do
-for it.
-
-Same handling rules as CG-1: **recursive** scrub-and-verify as a **test**, not a
-script, and full anonymization — this repo is public and the capture carries a
-real numeric user id, an avatar token, a domain id, a customer id and an email.
-A path-guessing scrub already failed once today and briefly wrote a live token to
-disk; the guard is extended (`domainId`, `customer` — both new classes, the
-latter appearing **twice**) rather than the fixture hand-edited.
-
-**Does not replace the constructed fixture — both are kept.** Overwriting would
-destroy the add-on ↔ classic parity coverage and silently rewrite a broken value
-into an assertion of correctness. The constructed one is relabelled from "the
-shape Google sends" to "a shape we have not observed," and three test docstrings
-become conditional statements. Adds a test pinning `action.id == ""` as a named
-defect (CG-10 rewrites it).
-
-**Flags:** `buttonClickedPayload` joins ⚠ SHAPE-VERIFIED 2026-07-29. Nothing is
-cleared. **jobhunt R3/R4 stay unverified** — the capture found a defect rather
-than confirming the mapping.
 
 ---
 
@@ -428,6 +391,40 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-3 · Land the real add-on interaction capture  ✅ shipped 2026-07-29 · [PR #10](https://github.com/mmackelprang/chat-gateway/pull/10)
+
+The first genuine card interaction this project has ever received, landed as
+`tests/fixtures/addon-buttonclicked-event.json` behind an extended recursive
+scrub guard. Guard first, fixture second — the order is the point, because a
+path-guessing scrub had already failed once that day.
+
+Verified rather than asserted: run against the **raw** capture the extended
+guard flags **nine** leaves, and the three `TENANT` hits among them
+(`$.chat.user.domainId` and `…space.customer` **twice**, once under the payload
+and once inside the message's echoed space) are exactly the ones the previous
+guard missed. The landed fixture was diffed structurally against the raw
+capture — **78 leaves both sides, identical key/type tree, exactly 17 changed
+leaf values**, all identity/tenant/space names.
+
+The capture found a **defect**, not a confirmation: `action.id` normalizes to
+`""` because the card routed via a Pub/Sub topic path in `action.function`,
+consuming the slot Google would otherwise fill. Pinned as a named known-defect
+test that CG-10 rewrites. The constructed fixture is **kept** — three of its
+test docstrings were relabelled from "the shape Google sends" to "a shape we
+have not observed".
+
+Review caught a real one: the plan's own guard-regression test **re-derived**
+the guard's predicate instead of invoking it, so it would have passed even with
+the production assertion deleted. Rewritten to call the guard, extended to a
+list-nested `customer` and to a positive case, and **mutation-tested** —
+neutering the real assertion now fails the test; under the plan's version it
+did not.
+
+**Flags: nothing cleared.** `buttonClickedPayload` joins ⚠ SHAPE-VERIFIED
+2026-07-29. Both captures were pulled with an ad-hoc client, not
+`PubSubPuller`, which stays ⚠ LIVE-UNVERIFIED; jobhunt R3/R4 stay unverified.
+70 → 75 tests.
 
 ### CG-6 · Documentation gaps: local verification, webhook sender, tier trade-off  ✅ shipped 2026-07-29 · [PR #9](https://github.com/mmackelprang/chat-gateway/pull/9)
 
