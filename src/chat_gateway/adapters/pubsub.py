@@ -11,6 +11,13 @@ reserved app id "_unrouted" rather than dropped.
 
 ⚠ LIVE-UNVERIFIED: REST pull/acknowledge against the documented Pub/Sub v1
 surface, written off-site. The FakePuller below is what the tests drive.
+The 2026-07-29 live pull used an ad-hoc client, NOT PubSubPuller — this class
+is still unexercised against Google.
+
+⚠ SHAPE-VERIFIED 2026-07-29: the add-ons MESSAGE envelope is normalized against
+a REAL captured payload replayed offline (tests/fixtures/addon-message-event.json).
+Stronger than doc-derived, weaker than a live round-trip — the add-on
+CARD_CLICKED path remains fully unverified (queue item CG-3).
 """
 
 from __future__ import annotations
@@ -31,6 +38,44 @@ from ..registry import Registry
 PUBSUB_API = "https://pubsub.googleapis.com/v1"
 PUBSUB_SCOPE = "https://www.googleapis.com/auth/pubsub"
 UNROUTED = "_unrouted"
+UNPARSEABLE = "UNPARSEABLE"
+
+# chat.<key> -> normalized event_type. Google models these as a proto union
+# ("payload can be only one of the following") with exactly these six members,
+# and there is NO chat.type discriminator — the payload key IS the event type.
+ADDON_PAYLOAD_TYPES = {
+    "messagePayload": "MESSAGE",
+    "buttonClickedPayload": "CARD_CLICKED",
+    "addedToSpacePayload": "ADDED_TO_SPACE",
+    "removedFromSpacePayload": "REMOVED_FROM_SPACE",
+    "appCommandPayload": "APP_COMMAND",
+    "widgetUpdatedPayload": "WIDGET_UPDATED",
+}
+
+# In the add-ons runtime Google passes the card's original action.function
+# under this reserved parameter key. commonEventObject.invokedFunction was
+# REMOVED from that runtime (add-ons release notes, 2025-05-12) but still
+# exists classic-side — which makes assuming it a silent way to get
+# action.id == "". Popped into action.id so the same card tapped under either
+# runtime yields the same InboundReply.
+ADDON_ACTION_KEY = "__action_method_name__"
+
+# A per-message capability URL: visiting it erases the user's prompt, makes
+# their private message PUBLIC in the space, and re-delivers it. Google spells
+# it ...Uri in the add-ons envelope and ...Url in the classic one. Blanked from
+# `raw` before anything is written to the audit trail or POSTed to a tenant
+# callback (hard rule #2).
+REDACTED = "<redacted-by-gateway>"
+CAPABILITY_FIELDS = ("configCompleteRedirectUri", "configCompleteRedirectUrl")
+
+
+class UnrecognizedEventError(ValueError):
+    """The pulled bytes are not any Chat event envelope this gateway knows.
+
+    Raised, never defaulted. Before 2026-07-29 an unparsed event silently
+    normalized into a valid-looking empty MESSAGE — the exact class of silent
+    failure hard rule #5 exists to prevent.
+    """
 
 
 class Puller(Protocol):
@@ -98,22 +143,53 @@ class PubSubPuller:
             self._post("acknowledge", {"ackIds": ack_ids})
 
 
-def normalize_event(event: dict) -> dict:
-    """Extract the routable core of a Chat event; the raw rides along."""
-    message = event.get("message") or {}
+def detect_envelope(event) -> str:
+    """Structural detection -> 'addon' | 'classic'; raises otherwise.
+
+    Order matters: the add-ons shape is the more specific one (a classic event
+    has no 'chat' object). A flat dict carrying space/message but no 'type' is
+    deliberately UNRECOGNIZED rather than assumed classic — that assumption is
+    the bug this replaces.
+    """
+    if not isinstance(event, dict):
+        raise UnrecognizedEventError(f"event is {type(event).__name__}, not an object")
+    if event.get("_undecodable"):
+        raise UnrecognizedEventError("message data could not be base64/JSON decoded")
+    if isinstance(event.get("chat"), dict):
+        return "addon"
+    if isinstance(event.get("type"), str) and event["type"]:
+        return "classic"
+    # Field NAMES only, never values — payloads carry capability URLs (rule #2).
+    raise UnrecognizedEventError(
+        "unrecognized Chat envelope: no 'chat' object (Workspace Add-ons "
+        "runtime) and no non-empty 'type' string (classic); top-level keys: "
+        f"{sorted(k for k in event if not k.startswith('_'))[:10]}"
+    )
+
+
+def _derive_event_type(payload_key: str) -> str:
+    """'widgetUpdatedPayload' -> 'WIDGET_UPDATED'.
+
+    For payload types Google adds after this was written: named honestly from
+    the wire, never defaulted to MESSAGE.
+    """
+    stem = payload_key[: -len("Payload")] if payload_key.endswith("Payload") else payload_key
+    out: list[str] = []
+    for ch in stem:
+        if ch.isupper() and out:
+            out.append("_")
+        out.append(ch.upper())
+    return "".join(out) or "UNKNOWN"
+
+
+def _shape(*, envelope_format: str, event_type: str, space: str, message: dict,
+           sender: dict, action: dict | None, dedupe_key: str | None) -> dict:
+    """The ONE internal shape both formats normalize into. Keeping this
+    identical to v0.1 (plus the additive envelope_format) is what leaves
+    forwarder.py / inbox.py / registry.py untouched."""
     thread = message.get("thread") or {}
-    sender = (event.get("user") or message.get("sender") or {})
-    space = (event.get("space") or message.get("space") or {}).get("name", "")
-    action = None
-    if event.get("type") == "CARD_CLICKED" or event.get("action"):
-        act = event.get("action") or {}
-        params = {p.get("key"): p.get("value") for p in act.get("parameters") or [] if p.get("key")}
-        for name, spec in ((event.get("common") or {}).get("formInputs") or {}).items():
-            values = ((spec.get("stringInputs") or {}).get("value")) or []
-            params.setdefault(name, values[0] if len(values) == 1 else values)
-        action = {"id": act.get("actionMethodName") or act.get("function") or "", "params": params}
     return {
-        "event_type": event.get("type", "MESSAGE"),
+        "event_type": event_type,
         "space": space,
         "thread_key": thread.get("threadKey") or None,
         "thread_name": thread.get("name") or None,
@@ -122,8 +198,149 @@ def normalize_event(event: dict) -> dict:
         "sender_email": sender.get("email"),
         "text": message.get("text", ""),
         "action": action,
-        "dedupe_key": event.get("_pubsub_message_id") or None,
+        "dedupe_key": dedupe_key,
+        "envelope_format": envelope_format,
     }
+
+
+def _action_params(raw_params) -> dict:
+    """Classic sends action.parameters as a LIST of {"key","value"}; the
+    add-ons runtime sends commonEventObject.parameters as a flat string->string
+    MAP. Accept either — the add-on interaction shape is documented but not yet
+    capture-verified (CG-3)."""
+    if isinstance(raw_params, dict):
+        return dict(raw_params)
+    params: dict = {}
+    for p in raw_params or []:
+        if isinstance(p, dict) and p.get("key"):
+            params[p["key"]] = p.get("value")
+    return params
+
+
+def _merge_form_inputs(container, params: dict) -> None:
+    """formInputs nests identically in both runtimes —
+    {name: {stringInputs: {value: [...]}}} — only the parent differs.
+    (The extra [""] level in Google's samples is Apps Script only; over
+    Pub/Sub the flat form is what arrives.)"""
+    for name, spec in (container or {}).items():
+        values = ((spec or {}).get("stringInputs") or {}).get("value") or []
+        params.setdefault(name, values[0] if len(values) == 1 else values)
+
+
+def redact_capability_urls(event):
+    """Return a deep copy of `event` with capability URLs blanked.
+
+    `raw` is written to the JSONL audit trail and POSTed whole to tenant
+    callbacks, so an unredacted configCompleteRedirect* would hand every
+    opted-in tenant the ability to make a user's private message public.
+
+    Rule #1 check: this matches Google-owned field NAMES exactly — never
+    anything an application placed in the payload — so no app-domain
+    knowledge enters the gateway.
+    """
+    if isinstance(event, dict):
+        return {
+            k: (REDACTED if k in CAPABILITY_FIELDS and isinstance(v, str)
+                else redact_capability_urls(v))
+            for k, v in event.items()
+        }
+    if isinstance(event, list):
+        return [redact_capability_urls(v) for v in event]
+    return event
+
+
+def _normalize_classic(event: dict) -> dict:
+    """Classic Chat app envelope: flat type/space/message/user."""
+    message = event.get("message") or {}
+    sender = event.get("user") or message.get("sender") or {}
+    space = (event.get("space") or message.get("space") or {}).get("name", "")
+    common = event.get("common") or {}
+    action = None
+    if event.get("type") == "CARD_CLICKED" or event.get("action"):
+        act = event.get("action") or {}
+        params = _action_params(act.get("parameters"))
+        for k, v in _action_params(common.get("parameters")).items():
+            params.setdefault(k, v)
+        # CARD_CLICKED puts form values under common.formInputs, but
+        # SUBMIT_FORM (app home) uses commonEventObject.formInputs — the
+        # classic envelope is not internally uniform, so check both parents.
+        _merge_form_inputs(common.get("formInputs"), params)
+        _merge_form_inputs((event.get("commonEventObject") or {}).get("formInputs"), params)
+        action = {
+            "id": act.get("actionMethodName") or act.get("function")
+                  or common.get("invokedFunction") or "",
+            "params": params,
+        }
+    return _shape(envelope_format="classic", event_type=event["type"],
+                  space=space, message=message, sender=sender, action=action,
+                  dedupe_key=event.get("_pubsub_message_id") or None)
+
+
+def _normalize_addon(event: dict) -> dict:
+    """Google Workspace Add-ons envelope: commonEventObject + chat.<x>Payload.
+
+    ⚠ The CARD_CLICKED path here is documentation-derived, NOT capture-
+    verified — no card button has been tapped against this deployment. Kept
+    deliberately tolerant until queue item CG-3 confirms it.
+    """
+    chat = event.get("chat") or {}
+    common = event.get("commonEventObject") or {}
+    # Prefer a known payload key (stable order); else take any *Payload
+    # deterministically, so a type Google adds later still routes.
+    payload_key = next((k for k in ADDON_PAYLOAD_TYPES if isinstance(chat.get(k), dict)), None)
+    if payload_key is None:
+        payload_key = next((k for k in sorted(chat)
+                            if k.endswith("Payload") and isinstance(chat[k], dict)), None)
+    if payload_key is None:
+        raise UnrecognizedEventError(
+            "add-ons envelope carries no '*Payload' object under 'chat' "
+            f"(keys: {sorted(chat)[:10]}) — nothing to route on"
+        )
+    payload = chat[payload_key]
+    event_type = ADDON_PAYLOAD_TYPES.get(payload_key) or _derive_event_type(payload_key)
+    message = payload.get("message") or {}
+    # widgetUpdatedPayload carries ONLY space, and chat.space is a documented
+    # non-payload sibling — three sources, and never assume message exists.
+    space = (payload.get("space") or chat.get("space")
+             or message.get("space") or {}).get("name", "")
+    sender = chat.get("user") or message.get("sender") or {}
+
+    params = _action_params(common.get("parameters"))
+    action_id = params.pop(ADDON_ACTION_KEY, "")
+    action = None
+    if event_type == "CARD_CLICKED" or action_id or common.get("formInputs"):
+        _merge_form_inputs(common.get("formInputs"), params)
+        action = {
+            "id": action_id
+                  # invokedFunction was removed from this runtime in 2025-05;
+                  # kept purely as a tolerant fallback until CG-3 confirms.
+                  or common.get("invokedFunction")
+                  or (payload.get("action") or {}).get("actionMethodName")
+                  or "",
+            "params": params,
+        }
+    return _shape(envelope_format="addon", event_type=event_type, space=space,
+                  message=message, sender=sender, action=action,
+                  dedupe_key=event.get("_pubsub_message_id") or None)
+
+
+def normalize_event(event: dict) -> dict:
+    """Extract the routable core of a Chat event; the raw rides along.
+
+    Supports BOTH Google runtimes, because both will coexist for years while
+    Google migrates and different consumers may sit behind different ones:
+
+      * Workspace Add-ons  — commonEventObject + chat.<x>Payload
+      * Classic Chat app   — flat type / space / message / user
+
+    Normalizing a transport envelope is transport's job (hard rule #1 forbids
+    owning an APPLICATION's schema, not recognizing Google's wire formats).
+
+    Raises UnrecognizedEventError on anything else — never a silent MESSAGE.
+    """
+    if detect_envelope(event) == "addon":
+        return _normalize_addon(event)
+    return _normalize_classic(event)
 
 
 NOT_AUTHORIZED_TEXT = "⛔ Not authorized for this action."
