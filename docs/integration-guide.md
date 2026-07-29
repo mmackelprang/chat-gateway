@@ -84,9 +84,23 @@ gateway POSTs each authorized event to it, whole:
 {"app":"jobhunt","space":"spaces/XXXX","thread_key":"digest-2026-07-24",
  "thread_name":"spaces/XXXX/threads/T1","message_id":"spaces/XXXX/messages/M1",
  "sender_display":"Mark","sender_email":"mark@mackelprang.com","text":"",
- "action":{"id":"verdict","params":{"job_id":"job-123","verdict":"approve","nonce":"n-9"}},
+ "action":{"id":"verdict","id_source":"cg_param",
+           "params":{"job_id":"job-123","verdict":"approve","nonce":"n-9"}},
  "dedupe_key":"ps-42","event_type":"CARD_CLICKED","received_at":"...","raw":{...}}
 ```
+
+**`action.id` can be `null`, and you must handle that.** It means the gateway
+could not resolve an action identity from any source — not that the action was
+named empty string. It is never `""`; that ambiguity was a real defect, removed
+2026-07-29. Reject a `null` explicitly rather than guessing; the event is still
+delivered to you deliberately, because a parse-quality problem must not become
+a silent drop.
+
+The usual cause is a card that did not set the reserved `__cg_action__`
+parameter. `action.id_source` tells you where
+the value came from: `"cg_param"` (your `__cg_action__`), `"google"` (a native
+Chat action slot), or `null`. It is transport metadata, like `envelope_format`;
+you can ignore it, but a change in it means the runtime beneath you moved.
 
 Rules of the road: delivery is **at-least-once** (`dedupe_key` = the Pub/Sub
 message id — make your handler idempotent; self-contained button tokens

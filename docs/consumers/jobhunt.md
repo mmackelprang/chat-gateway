@@ -28,11 +28,23 @@ its review UI) if the gateway is down or never ships (R9).
 > `action.id` came through **empty**. `action.params` was correct, including a
 > selection widget's value merged in from `commonEventObject.formInputs`.
 >
-> **R3 and R4 are therefore still NOT verified**, and the reason is now a known
+> **R3 and R4 are therefore still NOT verified**, and the reason was a known
 > defect rather than an untested path: R3 requires the whole interaction plus an
-> idempotency key, and the action identity is missing. Queue item CG-10 tracks
-> it; the architecture decision that owns where action identity should live
-> (ADR-0001 D2) has since landed and approved `__cg_action__`.
+> idempotency key, and the action identity was missing.
+>
+> **Resolved 2026-07-29 (CG-10, ADR-0001 D2/D4) — with an action required of
+> jobhunt.** Action identity now rides in a gateway-reserved card parameter,
+> `__cg_action__`, which the gateway lifts into `action.id` and pops out of
+> `params`. **jobhunt's cards must set it**; a card that does not will deliver
+> with `action.id: null` (never `""`), be counted at
+> `/healthz → subscriber.interactions_without_action_id`, and still be
+> forwarded — so a missing identity is visible and rejectable rather than
+> silently plausible. `action.id_source` reports `"cg_param"` | `"google"` |
+> `null`.
+>
+> R3/R4 remain **live-unverified end to end**: the mapping is now correct on
+> real captured bytes, but no interaction has ever traversed `PubSubPuller` and
+> reached a jobhunt callback against Google.
 
 > **⚠ R3 deviation — one field is no longer forwarded whole (2026-07-29).**
 > R3 says events forward *whole*. As of this date exactly one field is blanked

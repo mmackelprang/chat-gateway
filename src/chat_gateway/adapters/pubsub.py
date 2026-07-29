@@ -32,6 +32,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import json
+import re
 import threading
 import time
 from typing import Iterable, Protocol
@@ -73,6 +74,44 @@ ADDON_PAYLOAD_TYPES = {
 # defect queue item CG-10 exists to fix. Do not read this constant as a
 # guarantee.
 ADDON_ACTION_KEY = "__action_method_name__"
+
+# --- gateway-reserved action identity (ADR-0001 D2, user-approved 2026-07-29) -
+#
+# Topic-as-function consumed Google's action-identity slot: under the add-ons
+# runtime `action.function` is the interaction's DESTINATION (documented as an
+# HTTPS URL), and a card click is not one of the four configurable triggers, so
+# a card that wants to reach us must put the Pub/Sub topic path there. Google
+# then sends no __action_method_name__, no invokedFunction and no
+# payload.action — the identity has nowhere to ride. Either the gateway
+# supplies a replacement slot or action.id is permanently dead under the
+# runtime we are actually deployed on.
+#
+# HARD RULE #1 CHECK, because this is the subtlest thing in this module.
+# Rule #1 forbids the gateway interpreting or owning an APPLICATION's schema.
+# The gateway defines this key's NAME and never reads its VALUE: no branch, no
+# enum of permitted ids, no validation that jobhunt sends "verdict". The value
+# is relocated from params to action.id and forwarded verbatim. That is
+# structurally identical to `thread_key` on the outbound side (a
+# gateway-defined field whose value is opaque to us), and to Google's own
+# __action_method_name__ — a reserved parameter key carrying action identity
+# out-of-band. No tenant's vocabulary appears anywhere in this file.
+#
+# The `__cg_` prefix is RESERVED for gateway transport metadata; apps must not
+# use it. Unknown `__cg_*` keys are passed THROUGH, not eaten: the gateway must
+# not silently discard what it does not understand.
+CG_RESERVED_PREFIX = "__cg_"
+CG_ACTION_KEY = "__cg_action__"
+
+# A Pub/Sub topic resource path, e.g. projects/p/topics/t.
+#
+# This guard is not optional. Under the classic runtime the SAME portable card
+# echoes its action.function straight back — and that value is the topic path,
+# a routing artifact. Promoting it to action.id would hand a tenant
+# `"projects/…/topics/…"` as an action name: a plausible-looking WRONG answer,
+# which is strictly worse than an absent one. Applies to Google-native sources
+# only; a value an app deliberately declared in __cg_action__ is the app's
+# business, and reading it would be the rule #1 violation this design avoids.
+TOPIC_PATH_RE = re.compile(r"^projects/[^/]+/topics/[^/]+$")
 
 # A per-message capability URL: visiting it erases the user's prompt, makes
 # their private message PUBLIC in the space, and re-delivers it. Google spells
@@ -245,6 +284,42 @@ def _action_params(raw_params) -> dict:
     return params
 
 
+def _resolve_action_id(params: dict, *native) -> tuple[str | None, str | None]:
+    """Where a card interaction's action identity comes from (ADR-0001 D2).
+
+    Order, highest first:
+
+      1. ``params["__cg_action__"]`` — app-declared, authoritative when present.
+         POPPED, exactly as ``__action_method_name__`` is, so a tenant never
+         sees gateway transport plumbing mixed in with its own parameters.
+      2. Google-native sources, in the order the caller passes them —
+         ``__action_method_name__``, ``action.actionMethodName`` /
+         ``action.function``, ``commonEventObject.invokedFunction``. A value
+         that is a Pub/Sub topic path is DISCARDED here (see TOPIC_PATH_RE):
+         it is a routing artifact, not an identity.
+      3. ``None`` — semantically ABSENT.
+
+    Never ``""``. A tenant receiving an empty string cannot distinguish "no
+    action" from "an action named empty string", and that ambiguity IS the
+    defect this function exists to remove — the silent-failure class CG-1
+    eliminated one layer further out.
+
+    Returns ``(id, id_source)``. ``id_source`` is transport metadata in the
+    same spirit as ``envelope_format``, and its real value is as a DETECTOR:
+    if Google ever starts populating ``__action_method_name__`` under the
+    topic-as-function pattern, ``id_source`` flips from ``"cg_param"`` to
+    ``"google"`` and we learn the runtime changed under us BEFORE it breaks
+    something. That converts a silent behaviour change into an observable.
+    """
+    declared = params.pop(CG_ACTION_KEY, None)
+    if isinstance(declared, str) and declared:
+        return declared, "cg_param"
+    for value in native:
+        if isinstance(value, str) and value and not TOPIC_PATH_RE.match(value):
+            return value, "google"
+    return None, None
+
+
 def _merge_form_inputs(container, params: dict) -> None:
     """formInputs nests identically in both runtimes —
     {name: {stringInputs: {value: [...]}}} — only the parent differs.
@@ -293,17 +368,21 @@ def _normalize_classic(event: dict) -> dict:
             params.setdefault(k, v)
         # Reserved add-ons key; popped here too so the two formats round-trip
         # to identical params if a classic event ever carries it (spec §4.5).
-        params.pop(ADDON_ACTION_KEY, None)
+        # It is now also USED as a native candidate rather than merely
+        # discarded — ADR-0001 D2 lists one native order for both runtimes.
+        native_key = params.pop(ADDON_ACTION_KEY, None)
         # CARD_CLICKED puts form values under common.formInputs, but
         # SUBMIT_FORM (app home) uses commonEventObject.formInputs — the
         # classic envelope is not internally uniform, so check both parents.
         _merge_form_inputs(common.get("formInputs"), params)
         _merge_form_inputs((event.get("commonEventObject") or {}).get("formInputs"), params)
-        action = {
-            "id": act.get("actionMethodName") or act.get("function")
-                  or common.get("invokedFunction") or "",
-            "params": params,
-        }
+        # act.function is the classic runtime's echo of a portable card's
+        # routing target, so TOPIC_PATH_RE earns its keep on THIS branch in
+        # particular — see _resolve_action_id.
+        action_id, id_source = _resolve_action_id(
+            params, native_key, act.get("actionMethodName"), act.get("function"),
+            common.get("invokedFunction"))
+        action = {"id": action_id, "id_source": id_source, "params": params}
     return _shape(envelope_format="classic", event_type=event["type"],
                   space=space, message=message, sender=sender, action=action,
                   dedupe_key=event.get("_pubsub_message_id") or None)
@@ -340,19 +419,24 @@ def _normalize_addon(event: dict) -> dict:
     sender = chat.get("user") or message.get("sender") or {}
 
     params = _action_params(common.get("parameters"))
-    action_id = params.pop(ADDON_ACTION_KEY, "")
+    native_key = params.pop(ADDON_ACTION_KEY, None)
     action = None
-    if event_type == "CARD_CLICKED" or action_id or common.get("formInputs"):
+    if (event_type == "CARD_CLICKED" or native_key or CG_ACTION_KEY in params
+            or common.get("formInputs")):
         _merge_form_inputs(common.get("formInputs"), params)
-        action = {
-            "id": action_id
-                  # invokedFunction was removed from this runtime in 2025-05;
-                  # kept purely as a tolerant fallback until CG-3 confirms.
-                  or common.get("invokedFunction")
-                  or (payload.get("action") or {}).get("actionMethodName")
-                  or "",
-            "params": params,
-        }
+        # invokedFunction was REMOVED from this runtime in 2025-05 and the real
+        # 2026-07-29 capture carried none of these three; kept as tolerant
+        # fallbacks so a card style we have not seen still resolves natively.
+        #
+        # Order is ADR-0001 D2's, and it is deliberately the SAME as the classic
+        # branch's: __action_method_name__, then the action object's own name,
+        # then invokedFunction last. The pre-CG-10 code had the last two
+        # reversed; that only ever mattered for a shape we have not seen, which
+        # is exactly the shape a tolerant fallback exists for.
+        action_id, id_source = _resolve_action_id(
+            params, native_key, (payload.get("action") or {}).get("actionMethodName"),
+            common.get("invokedFunction"))
+        action = {"id": action_id, "id_source": id_source, "params": params}
     return _shape(envelope_format="addon", event_type=event_type, space=space,
                   message=message, sender=sender, action=action,
                   dedupe_key=event.get("_pubsub_message_id") or None)
@@ -390,7 +474,7 @@ def _unparseable_core(event) -> dict:
 def dispatch(event: dict, registry: Registry, inbox: Inbox,
              forwarder=None, reply_fn=None,
              now: dt.datetime | None = None,
-             on_unparseable=None) -> list[str]:
+             on_unparseable=None, on_missing_action_id=None) -> list[str]:
     """Route one decoded Chat event. Per app: authorization allowlist check
     (jobhunt R4 — unauthorized users get an in-thread refusal and are never
     forwarded), then inbox + optional callback push (tenant opt-in).
@@ -428,6 +512,22 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
         if on_unparseable is not None:
             on_unparseable(exc)
         return [UNROUTED]
+    if core["action"] is not None and core["action"]["id"] is None:
+        # ADR-0001 D4. The event is still FORWARDED: rule #6 says forward whole
+        # and let the tenant enforce, so a parse-quality problem must not become
+        # a silent drop. What changes is that the tenant can now reject
+        # explicitly instead of guessing, and that /healthz can see it.
+        #
+        # This is also the detector for topic-as-function breaking. If Google
+        # withdraws that undocumented routing the likely observable is nothing
+        # at all on our side; a rising count here is one of the few signals that
+        # something changed under us (ADR-0001 §8).
+        print(f"subscriber: interaction with NO resolvable action identity "
+              f"({core['event_type']}, {core['envelope_format']} envelope) — "
+              "forwarded with action.id=null; producer should set "
+              f"{CG_ACTION_KEY!r}", flush=True)
+        if on_missing_action_id is not None:
+            on_missing_action_id(core)
     candidates = registry.apps_for_space(core["space"]) or [UNROUTED]
     delivered = []
     for app_id in candidates:
@@ -469,9 +569,20 @@ class SubscriberLoop:
         # hunt from "could not parse". Folding them together would send an
         # operator looking for malformed events that do not exist (rule #5).
         self.dispatch_errors = 0
+        # ADR-0001 D4. An interaction that parsed fine but carried no
+        # resolvable action identity. Distinct from unparseable_seen (the event
+        # is valid and its params are usable) and from dispatch_errors (nothing
+        # failed). A non-zero value means some producer's cards are missing
+        # `__cg_action__` — or that Google changed the runtime underneath us.
+        self.interactions_without_action_id = 0
 
     def _count_unparseable(self, exc: Exception) -> None:
         self.unparseable_seen += 1
+
+    def _count_missing_action_id(self, core: dict) -> None:
+        # Counts only. The core is passed for future signal, never stored —
+        # it carries the user's text and their space (hard rule #2).
+        self.interactions_without_action_id += 1
 
     def poll_once(self) -> int:
         batch = self._puller.pull()
@@ -480,7 +591,8 @@ class SubscriberLoop:
             try:
                 dispatch(event, self._registry, self._inbox,
                          forwarder=self.forwarder, reply_fn=self.reply_fn,
-                         on_unparseable=self._count_unparseable)
+                         on_unparseable=self._count_unparseable,
+                         on_missing_action_id=self._count_missing_action_id)
             except Exception as exc:  # noqa: BLE001
                 # Parsing is not the only thing that can fail: reply_fn talks
                 # to Google, inbox/delivery-log writes touch disk, and pydantic

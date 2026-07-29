@@ -101,6 +101,17 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
     `tests/fixtures/addon-message-event.json`,
     `tests/fixtures/addon-buttonclicked-event.json`). That is not a
     live-round-trip clear and does not remove any flag above.
+- **`__cg_action__` — the one inbound-direction envelope field** (ADR-0001 D2,
+  user-approved 2026-07-29; shipped as CG-10). Under the add-ons runtime a
+  card's `action.function` is the interaction's *destination*, so a card that
+  routes to our Pub/Sub topic consumes Google's action-identity slot and none
+  arrives. Producers therefore declare identity in a gateway-reserved card
+  parameter; the gateway lifts it into `action.id` and pops it out of `params`.
+  Rule #1 holds because the gateway defines the key NAME and never reads the
+  VALUE — no branch, no permitted-id enum — exactly as `thread_key` works
+  outbound. The whole `__cg_` prefix is reserved; unknown `__cg_*` keys pass
+  through rather than being eaten. Unresolvable identity is `None`, never `""`,
+  is counted at `/healthz`, and is still forwarded.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
   gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`

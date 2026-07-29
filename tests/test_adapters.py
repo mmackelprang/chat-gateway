@@ -231,6 +231,7 @@ def test_normalize_addon_card_clicked():
     assert core["space"] == "spaces/AAAAtestSpace"
     assert core["action"] == {
         "id": "verdict",
+        "id_source": "google",          # native slot, not __cg_action__ (CG-10)
         "params": {"job_id": "job-123", "verdict": "reject", "nonce": "n-9",
                    "reject_reason": "wrong_seniority"},
     }
@@ -586,22 +587,186 @@ def test_real_button_click_merges_selection_widget_value_into_params():
     assert core["action"]["params"] == {"probe": "topic-as-fn", "decision": "approve"}
 
 
-def test_real_button_click_action_id_is_empty_KNOWN_DEFECT():
-    """PINS A DEFECT. This is not desired behaviour — see queue item CG-10.
+def test_real_button_click_action_id_is_absent_not_empty():
+    """REWRITTEN by CG-10 (it pinned `action.id == ""` as a named defect).
 
-    The card's button routed via
+    The defect was the ambiguity, not the missing value. This capture genuinely
+    carries no action identity — the card's button routed via
     `action.function = "projects/chat-gateway-prod/topics/chat-gateway-events"`,
-    so the add-ons runtime sent NO `__action_method_name__` parameter, no
-    `invokedFunction`, and no `payload.action`. _normalize_addon consults
-    exactly those three sources, finds none, and falls through `or ""` to an
-    empty string — silently, into an InboundReply that looks structurally valid
-    and would be forwarded to a tenant callback as though it carried an action
-    identity. That is the silent-failure class CG-1 existed to eliminate, one
-    layer further in.
+    so the add-ons runtime sent no `__action_method_name__`, no
+    `invokedFunction` and no `payload.action`. What was wrong is that the
+    gateway reported that as `""`, which a tenant cannot distinguish from an
+    action legitimately NAMED empty-string.
 
-    When CG-10 lands this test MUST be rewritten, not deleted: the fixture is
-    real, and the behaviour it pins is precisely the behaviour that has to
-    change.
+    Now it is `None` — semantically absent — with `id_source` also None, and
+    the event is still forwarded (ADR-0001 D4: a parse-quality problem must not
+    become a silent drop). Producers fix it by setting `__cg_action__`.
     """
     core = normalize_event(fixture("addon-buttonclicked-event.json"))
-    assert core["action"]["id"] == ""
+    assert core["action"]["id"] is None
+    assert core["action"]["id_source"] is None
+    assert core["action"]["params"] == {"probe": "topic-as-fn", "decision": "approve"}
+
+
+def test_cg_action_key_supplies_identity_and_is_popped():
+    """ADR-0001 D2, the bridge's whole point: the producer declares identity in
+    a gateway-reserved parameter, because topic-as-function ate Google's slot.
+
+    `id_source == "cg_param"` is the detector — if Google ever starts filling
+    the native slot again it flips to "google" and we find out before it
+    breaks something.
+    """
+    event = fixture("addon-buttonclicked-event.json")
+    event["commonEventObject"]["parameters"] = {
+        "__cg_action__": "verdict", "job_id": "job-123", "nonce": "n-9"}
+    core = normalize_event(event)
+    assert core["action"]["id"] == "verdict"
+    assert core["action"]["id_source"] == "cg_param"
+    # popped: a tenant never sees gateway transport plumbing in its own params
+    assert core["action"]["params"] == {
+        "job_id": "job-123", "nonce": "n-9", "decision": "approve"}
+
+
+def test_unknown_cg_prefixed_keys_pass_through_rather_than_being_eaten():
+    """ADR-0001 D2 reserves the whole `__cg_` prefix but only CONSUMES the keys
+    it understands. Silently discarding an unrecognized one would be the
+    gateway destroying data it does not understand — the same instinct that
+    made an unparsed event normalize into an empty MESSAGE."""
+    event = fixture("addon-buttonclicked-event.json")
+    event["commonEventObject"]["parameters"] = {
+        "__cg_action__": "verdict", "__cg_future__": "something-we-dont-know-yet"}
+    core = normalize_event(event)
+    assert core["action"]["id"] == "verdict"
+    assert core["action"]["params"]["__cg_future__"] == "something-we-dont-know-yet"
+
+
+def test_topic_path_from_a_native_source_is_never_promoted_to_action_id():
+    """ADR-0001 D2's mandatory guard, and it is a CLASSIC-runtime hazard.
+
+    A portable card sets action.function to the gateway-published routing
+    target. Under the add-ons runtime the runtime consumes it; under classic
+    the SAME card echoes it straight back in action.function, where the native
+    resolution order would promote it. `action.id == "projects/…/topics/…"` is
+    a plausible-looking WRONG answer, and a wrong answer is worse than an
+    absent one — a tenant would happily branch on it.
+    """
+    event = {
+        "type": "CARD_CLICKED",
+        "space": {"name": "spaces/JH"},
+        "user": {"displayName": "Mark", "email": "mark@example.com"},
+        "message": {"name": "spaces/JH/messages/M1"},
+        "action": {"function": "projects/chat-gateway-prod/topics/chat-gateway-events",
+                   "parameters": [{"key": "job_id", "value": "job-123"}]},
+    }
+    core = normalize_event(event)
+    assert core["action"]["id"] is None, "a topic path must never become an action id"
+    assert core["action"]["id_source"] is None
+    assert core["action"]["params"] == {"job_id": "job-123"}
+
+    # ...and the same card WITH the reserved key resolves, proving the guard
+    # discards only the artifact and not the interaction. This is D3's payoff:
+    # one card, both deployment models, zero producer changes.
+    event["action"]["parameters"].append({"key": "__cg_action__", "value": "verdict"})
+    core = normalize_event(event)
+    assert core["action"]["id"] == "verdict"
+    assert core["action"]["id_source"] == "cg_param"
+
+
+def test_a_real_function_name_is_still_accepted_from_the_native_slot():
+    """The guard must not be over-broad: an ordinary function name, and even a
+    project-shaped string that is NOT a topic path, still resolve natively."""
+    base = {
+        "type": "CARD_CLICKED", "space": {"name": "spaces/JH"},
+        "user": {"email": "mark@example.com"}, "message": {},
+    }
+    for fn in ("approve", "projects/p/subscriptions/s",
+               "projects/p/topics/t/extra", "projectsX/p/topics/t"):
+        core = normalize_event({**base, "action": {"function": fn}})
+        assert core["action"]["id"] == fn, f"{fn!r} should resolve natively"
+        assert core["action"]["id_source"] == "google"
+
+
+def test_native_source_priority_is_identical_in_both_runtimes():
+    """ADR-0001 D2 lists ONE native order for both runtimes:
+    __action_method_name__, then the action object's own name, then
+    invokedFunction last. Two normalizers silently disagreeing is how the same
+    card starts yielding different action ids depending on which Google runtime
+    happens to deliver it — the exact parity CG-1 was written to guarantee.
+
+    Every candidate is populated with a distinct value, so the assertion is
+    about ORDER and cannot pass by coincidence.
+    """
+    addon = normalize_event({
+        "commonEventObject": {
+            "parameters": {"__action_method_name__": "from_reserved_key"},
+            "invokedFunction": "from_invoked_function"},
+        "chat": {"user": {"email": "m@example.com"},
+                 "buttonClickedPayload": {
+                     "space": {"name": "spaces/AAA"}, "message": {},
+                     "action": {"actionMethodName": "from_action_object"}}},
+    })
+    classic = normalize_event({
+        "type": "CARD_CLICKED", "space": {"name": "spaces/AAA"},
+        "user": {"email": "m@example.com"}, "message": {},
+        "action": {"actionMethodName": "from_action_object",
+                   "parameters": [{"key": "__action_method_name__",
+                                   "value": "from_reserved_key"}]},
+        "common": {"invokedFunction": "from_invoked_function"},
+    })
+    assert addon["action"]["id"] == classic["action"]["id"] == "from_reserved_key"
+
+    # ...and with the reserved key gone, the action object still outranks
+    # invokedFunction on BOTH sides. This is the pair that was reversed.
+    addon2 = normalize_event({
+        "commonEventObject": {"parameters": {},
+                              "invokedFunction": "from_invoked_function"},
+        "chat": {"user": {"email": "m@example.com"},
+                 "buttonClickedPayload": {
+                     "space": {"name": "spaces/AAA"}, "message": {},
+                     "action": {"actionMethodName": "from_action_object"}}},
+    })
+    classic2 = normalize_event({
+        "type": "CARD_CLICKED", "space": {"name": "spaces/AAA"},
+        "user": {"email": "m@example.com"}, "message": {},
+        "action": {"actionMethodName": "from_action_object"},
+        "common": {"invokedFunction": "from_invoked_function"},
+    })
+    assert addon2["action"]["id"] == classic2["action"]["id"] == "from_action_object"
+    assert addon2["action"]["id_source"] == classic2["action"]["id_source"] == "google"
+
+
+def test_missing_action_id_is_counted_and_still_forwarded(registry):
+    """ADR-0001 D4. Both halves matter.
+
+    Counted, because if topic-as-function routing ever breaks the likely
+    observable on our side is nothing at all (ADR §8) — this is one of the few
+    signals. Still FORWARDED, because hard rule #6 says forward whole and let
+    the tenant enforce: a parse-quality problem must not silently become a drop.
+    """
+    inbox = Inbox()
+    event = {**fixture("addon-buttonclicked-event.json")}
+    event["chat"]["buttonClickedPayload"]["space"]["name"] = "spaces/AAA"
+    event["chat"]["buttonClickedPayload"]["message"]["space"]["name"] = "spaces/AAA"
+
+    loop = SubscriberLoop(FakePuller([event]), registry, inbox)
+    assert loop.poll_once() == 1
+    assert loop.interactions_without_action_id == 1
+    assert loop.unparseable_seen == 0 and loop.dispatch_errors == 0
+
+    delivered = inbox.poll("aiteam-harness")
+    assert len(delivered) == 1, "an unidentified action must still reach the tenant"
+    assert delivered[0].action["id"] is None
+    assert delivered[0].action["params"]["decision"] == "approve"
+
+
+def test_resolved_action_id_does_not_touch_the_counter(registry):
+    """The counter must mean what it says, or it is worse than nothing."""
+    inbox = Inbox()
+    event = {**fixture("addon-buttonclicked-event.json")}
+    event["chat"]["buttonClickedPayload"]["space"]["name"] = "spaces/AAA"
+    event["chat"]["buttonClickedPayload"]["message"]["space"]["name"] = "spaces/AAA"
+    event["commonEventObject"]["parameters"] = {"__cg_action__": "verdict"}
+
+    loop = SubscriberLoop(FakePuller([event]), registry, inbox)
+    loop.poll_once()
+    assert loop.interactions_without_action_id == 0
