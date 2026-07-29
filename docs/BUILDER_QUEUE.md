@@ -16,7 +16,7 @@ applies directly.
 
 ## Queue
 
-### CG-2 · Workspace Add-ons service agent grant + setup failure signature  📋 queued  · P1
+### CG-2 · Workspace Add-ons service agent grant + setup failure signature  🔨 in flight  · P1
 
 | | |
 |---|---|
