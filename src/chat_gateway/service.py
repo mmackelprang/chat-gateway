@@ -211,7 +211,8 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 {"enabled": True,
                  "last_poll_at": subscriber.last_poll_at.isoformat() if subscriber.last_poll_at else None,
                  "events_seen": subscriber.events_seen,
-                 "unparseable_seen": getattr(subscriber, "unparseable_seen", 0)}
+                 "unparseable_seen": subscriber.unparseable_seen,
+                 "dispatch_errors": subscriber.dispatch_errors}
                 if subscriber is not None
                 else {"enabled": False, "note": "tier 2 not enabled (GATEWAY_ENABLE_PUBSUB=0)"}
             ),

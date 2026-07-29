@@ -120,7 +120,10 @@ Two real differences worth knowing:
 An event the gateway cannot parse is never delivered to you: it is audited
 under the reserved `_unrouted` id with `event_type: "UNPARSEABLE"` and counted
 at `/healthz` → `subscriber.unparseable_seen`. It is never silently reshaped
-into an empty `MESSAGE`.
+into an empty `MESSAGE`. Its sibling `subscriber.dispatch_errors` counts the
+other failure: an event that parsed fine but could not be delivered (callback
+enqueue, in-thread reply, or audit write blew up) — it is acked and dropped
+rather than left to wedge the subscription.
 
 ## Inbound replies — `GET /v1/inbox` (tier 2, opt-in)
 

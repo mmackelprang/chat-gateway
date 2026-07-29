@@ -133,6 +133,11 @@ class PubSubPuller:
                 event = json.loads(base64.b64decode(raw).decode("utf-8")) if raw else {}
             except (ValueError, UnicodeDecodeError):
                 event = {"_undecodable": True}
+            if not isinstance(event, dict):
+                # Valid JSON, but not an event object. Same fate as bytes we
+                # could not decode: UNPARSEABLE, counted, acked — never a
+                # TypeError escaping pull() and stalling the whole batch.
+                event = {"_undecodable": True}
             if msg.get("messageId"):
                 event["_pubsub_message_id"] = msg["messageId"]  # at-least-once dedupe key
             out.append((received.get("ackId", ""), event))
@@ -381,8 +386,14 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
         # subscription in a poison-pill redelivery loop (the caller still
         # acks), and must never be silent either: audited under _unrouted,
         # counted for /healthz, and printed. Three signals, permanently.
+        # Our own error prints field NAMES only, so its message is safe to
+        # echo. `except Exception` is broader than that by design, and another
+        # exception's message could carry a payload VALUE — a capability URL,
+        # a user's text — so anything else is named by type alone (rule #2).
+        detail = f"{type(exc).__name__}: {exc}" if isinstance(
+            exc, UnrecognizedEventError) else type(exc).__name__
         print(f"subscriber: UNPARSEABLE event, audited under {UNROUTED}: "
-              f"{type(exc).__name__}: {exc}", flush=True)
+              f"{detail}", flush=True)
         inbox.put(InboundReply(app=UNROUTED, received_at=now, raw=raw,
                                **_unparseable_core(event)))
         if on_unparseable is not None:
@@ -425,6 +436,10 @@ class SubscriberLoop:
         self.last_poll_at: dt.datetime | None = None
         self.events_seen = 0
         self.unparseable_seen = 0   # honest health: silent discards must show
+        # Separate on purpose: "parsed fine, delivery blew up" is a different
+        # hunt from "could not parse". Folding them together would send an
+        # operator looking for malformed events that do not exist (rule #5).
+        self.dispatch_errors = 0
 
     def _count_unparseable(self, exc: Exception) -> None:
         self.unparseable_seen += 1
@@ -433,9 +448,24 @@ class SubscriberLoop:
         batch = self._puller.pull()
         acks = []
         for ack_id, event in batch:
-            dispatch(event, self._registry, self._inbox,
-                     forwarder=self.forwarder, reply_fn=self.reply_fn,
-                     on_unparseable=self._count_unparseable)
+            try:
+                dispatch(event, self._registry, self._inbox,
+                         forwarder=self.forwarder, reply_fn=self.reply_fn,
+                         on_unparseable=self._count_unparseable)
+            except Exception as exc:  # noqa: BLE001
+                # Parsing is not the only thing that can fail: reply_fn talks
+                # to Google, inbox/delivery-log writes touch disk, and pydantic
+                # validates. Any of those escaping would leave the whole batch
+                # un-acked and wedge the subscription in a redelivery loop —
+                # the outage this module exists to prevent. Count it, name it,
+                # ack it, keep going.
+                #
+                # TYPE NAME ONLY: a pydantic ValidationError embeds the
+                # offending input value in its message, and these events carry
+                # capability URLs (hard rule #2 — names, never values).
+                self.dispatch_errors += 1
+                print(f"subscriber: dispatch failed, event acked and dropped: "
+                      f"{type(exc).__name__}", flush=True)
             self.events_seen += 1
             if ack_id:
                 acks.append(ack_id)

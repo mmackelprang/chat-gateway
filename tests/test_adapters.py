@@ -347,6 +347,112 @@ def test_poll_once_acks_unparseable_events(registry):
     assert len(inbox.poll("aiteam-harness")) == 2        # good ones delivered
 
 
+GUARDED_REGISTRY_YAML = """
+identities:
+  guarded:
+    display: "Guarded"
+    mode: app
+    space: "spaces/AAA"
+apps:
+  guarded-app:
+    key_env: K
+    identities: [guarded]
+    allow_inbound: true
+    allowed_users: [mark@mackelprang.com]
+"""
+
+
+class ScriptedPuller:
+    """Hands out one preloaded batch per pull(), so a test can prove the loop
+    keeps polling real work after a failure (FakePuller drains in one call)."""
+
+    def __init__(self, batches):
+        self._batches = [
+            [(f"b{b}-ack-{i}", dict(e)) for i, e in enumerate(batch)]
+            for b, batch in enumerate(batches)
+        ]
+        self.acked: list[str] = []
+
+    def pull(self, max_messages: int = 10) -> list[tuple[str, dict]]:
+        return self._batches.pop(0) if self._batches else []
+
+    def acknowledge(self, ack_ids: list[str]) -> None:
+        self.acked.extend(ack_ids)
+
+
+def test_poll_once_acks_when_dispatch_raises(tmp_path):
+    """Poison-pill part two: parsing is not the only thing that can fail.
+
+    reply_fn is ChatApiAdapter.send_text in production and raises ChatApiError
+    on any non-200. Reached here down the REAL path — an authorization refusal
+    to a non-allowlisted sender — not by monkeypatching internals. If that
+    escapes poll_once, the whole batch goes un-acked and Pub/Sub redelivers it
+    forever: a total inbound outage.
+    """
+    p = tmp_path / "guarded.yaml"
+    p.write_text(GUARDED_REGISTRY_YAML, encoding="utf-8")
+    reg = load_registry(p)
+    inbox = Inbox()
+
+    def boom(space, thread_name, text):
+        raise ChatApiError("chat send HTTP 403")   # what the live adapter raises
+
+    stranger = {**CHAT_EVENT, "user": {"displayName": "Eve", "email": "eve@example.com"}}
+    puller = ScriptedPuller([[CHAT_EVENT, stranger, CHAT_EVENT], [CHAT_EVENT]])
+    loop = SubscriberLoop(puller, reg, inbox, reply_fn=boom)
+
+    assert loop.poll_once() == 3                       # did not propagate
+    assert puller.acked == ["b0-ack-0", "b0-ack-1", "b0-ack-2"]   # ALL of them
+    assert loop.dispatch_errors == 1
+    assert loop.unparseable_seen == 0                  # separate concerns, separate counters
+    assert loop.events_seen == 3
+    # the event AFTER the failing one was still processed
+    assert len(inbox.poll("guarded-app")) == 2
+
+    # ...and the loop is still alive for the next batch
+    assert loop.poll_once() == 1
+    assert puller.acked[-1] == "b1-ack-0"
+    assert loop.dispatch_errors == 1 and loop.events_seen == 4
+    assert len(inbox.poll("guarded-app")) == 1
+
+
+def test_pull_survives_valid_but_non_object_json(registry):
+    """Valid JSON that is not an object ([], "x", 7, null) used to make pull()
+    raise TypeError on the messageId assignment — before a single ack id was
+    collected, wedging the batch one layer above dispatch()."""
+    from chat_gateway.adapters.pubsub import PubSubPuller
+
+    bodies = [b"[]", b'"x"', b"7", b"null"]
+    encoded = [base64.b64encode(b).decode() for b in bodies]
+
+    acked: list[list[str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(":pull"):
+            return httpx.Response(200, json={"receivedMessages": [
+                {"ackId": f"a{i}", "message": {"data": d, "messageId": f"m{i}"}}
+                for i, d in enumerate(encoded)]})
+        acked.append(json.loads(request.content)["ackIds"])
+        return httpx.Response(200, json={})
+
+    puller = PubSubPuller("projects/p/subscriptions/s", lambda: "tok",
+                          client=mock_client(handler))
+    batch = puller.pull()                                  # must not raise
+    assert [a for a, _ in batch] == ["a0", "a1", "a2", "a3"]
+    for _, event in batch:
+        with pytest.raises(UnrecognizedEventError):
+            normalize_event(event)
+
+    # ...and each one takes the existing UNPARSEABLE path: audited, acked,
+    # never attributed to a registered app (hard rule #6).
+    inbox = Inbox()
+    loop = SubscriberLoop(puller, registry, inbox)
+    assert loop.poll_once() == 4
+    assert acked == [["a0", "a1", "a2", "a3"]]
+    assert loop.unparseable_seen == 4 and loop.dispatch_errors == 0
+    assert {r.event_type for r in inbox.poll(UNROUTED)} == {UNPARSEABLE}
+
+
 def test_dedupe_key_survives_both_formats():
     for name in ("addon-message-event.json", "classic-message-event.json"):
         event = {**fixture(name), "_pubsub_message_id": "ps-99"}
