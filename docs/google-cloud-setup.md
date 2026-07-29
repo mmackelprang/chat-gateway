@@ -123,6 +123,15 @@ gcloud pubsub topics add-iam-policy-binding <TOPIC> \
 > ```bash
 > gcloud pubsub subscriptions pull chat-gateway-sub --limit=5 --auto-ack
 > ```
+>
+> The consequence is architectural, not just diagnostic: **no automated health
+> check in this project may be built on that metric.** It is why `/healthz`
+> reports billing/quota as a *declared* env value (`GATEWAY_GCP_BILLING`) rather
+> than detecting it live — detection would mean trusting exactly the telemetry
+> that read zero while a message was demonstrably flowing, on top of extra
+> scopes and extra API calls. Quota exhaustion is caught the way every other
+> subscription failure is caught: the poll fails, and consecutive poll failures
+> degrade `/healthz`.
 
 ### 5. Chat app configuration — console only
 Console → **APIs & Services → Google Chat API → Configuration**:
@@ -146,18 +155,77 @@ Space → **⚙ → Apps & integrations → Webhooks → Add webhook** → name 
 the identity should appear (e.g. `PM · familyworkspace`, `aitrader`) + an
 avatar URL → copy the webhook URL.
 
+> **The name is not optional.** Messages posted through a webhook come back
+> from Google with `sender: null` — there is no sender object at all. Chat
+> renders the webhook's *configured display name* instead, so a webhook created
+> without one appears in the space as **"Unknown User"**. Name and avatar are
+> fixed at creation time and are the only identity a tier-1 message has.
+> (Observed 2026-07-29 against a real webhook.)
+
+> **⚠ The URL you copy is a credential.** It embeds `key` and `token` and is
+> sufficient to post into that space as that identity. Read §8a before you paste
+> it anywhere — including into a terminal or an AI-assistant prompt.
+
 ### Also easy to miss in steps 5–7
 
 - Steps 6 and 7 happen in **chat.google.com**, not the Cloud Console. Looking
   for them in the Console is a dead end.
-- The app will not appear under **⚙ → Apps & integrations → Add apps** until
-  the **Google Workspace Marketplace SDK**
-  (`appsmarket-component.googleapis.com`) is enabled *and* the app is
-  published. Enabling the Chat API alone is not enough.
+- **⚠ CORRECTED 2026-07-29 — this document was wrong, and the mistake was
+  expensive.** It used to say: *"The app will not appear under ⚙ → Apps &
+  integrations → Add apps until the Google Workspace Marketplace SDK
+  (`appsmarket-component.googleapis.com`) is enabled and the app is published."*
+  **That is false.** Installability comes from the **Chat API → Configuration →
+  Visibility** setting: list your own address (or a Google Group) there and you
+  can add the app to a space immediately. Marketplace publishing is required
+  only to reach people *beyond* that list — and on an add-ons deployment
+  Google states its settings are ignored for Chat outright:
+
+  > "To deploy and test an add-on in Chat, you must use the Chat API's
+  > Visibility setting. Any visibility or testing settings that you've
+  > configured in the Google Workspace Marketplace SDK **are ignored**."
+  > — <https://developers.google.com/workspace/add-ons/chat>
+
+  > "the Chat API lets you share your Chat app with specific people in your
+  > Google Workspace organization. The people that you specify **can add the
+  > Chat app to a space** and test its features before you publish it to the
+  > Marketplace."
+  > — <https://developers.google.com/workspace/chat/test-interactive-features>
+
+  This matters beyond a doc nit: the false prerequisite is **why this project
+  is on the Workspace Add-ons runtime at all**, and that runtime is the reason
+  card clicks need the undocumented topic-as-function routing pattern. See
+  [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) §5
+  option D and §14. Do not reinstate the claim; if you are choosing a runtime
+  for a new project, read that ADR first.
+
+  **Visibility has a scale limit** worth knowing before you rely on it: *"up to
+  five individuals, or one or more Google Groups"*, and dynamic groups are not
+  supported. Ample for a single-operator homelab.
+
+  *Known inconsistency, tracked as queue item **CG-19**:* all three IaC paths
+  (`iac/gcloud-setup.sh`, `iac/gcloud-setup.ps1`, `iac/terraform/main.tf`)
+  still enable `appsmarket-component.googleapis.com` and still carry a comment
+  repeating the claim above. Enabling the API is harmless; the comment is not,
+  and correcting it touches the IaC path so it ships separately.
 - Events arrive in the **Workspace Add-ons envelope** (`commonEventObject` +
   `chat.messagePayload`), not the classic flat format. The gateway parses both
   (`adapters/pubsub.py`), so no action is needed — but if you are eyeballing a
   raw pull, that is what you should expect to see.
+- **Which tier gives which identity** — both halves were observed live on
+  2026-07-29, so this is a measured trade-off, not a design note:
+
+  | | Tier 1 (named webhooks) | Tier 2 (Chat app) |
+  |---|---|---|
+  | Identities available | as many as you create webhooks | exactly one — the app |
+  | `sender` in Google's response | `null` | real: `{displayName: "Agent Comms", type: "BOT"}` |
+  | What Chat displays | the webhook's configured name + avatar | the app's configured name + avatar |
+  | Inbound events | none | Pub/Sub |
+
+  Neither tier dominates. Tier 1 buys per-agent names at the cost of any sender
+  identity in the response and any inbound path at all; tier 2 buys a real,
+  attributable sender and two-way traffic at the cost of collapsing every agent
+  into one name. Running both is the intended configuration, not a migration
+  step.
 
 ### 8. What to hand back (and how)
 Safe to paste in chat (non-secret): **project id, topic + subscription
@@ -170,3 +238,73 @@ host's `.env`, mode 600, with pointers in homelab `SECRETS.md`):
 Then set `GATEWAY_ENABLE_PUBSUB=1`, fill `CHAT_GATEWAY_PUBSUB_SUBSCRIPTION`,
 restart, and check `/healthz` — it reports real resolvability per identity
 and subscriber liveness, so a wrong env name shows up immediately.
+
+### 8a. Verifying locally — where the secrets go on *your* machine
+
+Step 8 covers the appserver. It used to say nothing about the laptop you verify
+from, and on **2026-07-29 that gap cost real credentials**: webhook URLs were
+pasted into an AI-assistant chat transcript in order to run a one-off send. A
+Chat webhook URL embeds `key` and `token` — it is a bearer credential for
+posting into that space as that identity. Every exposed webhook had to be
+deleted in Chat and recreated. There is no rotate-in-place.
+
+Do it this way instead.
+
+**1. Values go in `.env`, and nowhere else.**
+
+```bash
+cp .env.example .env      # .env is gitignored; .env.example never holds values
+```
+
+Paste each webhook URL into its `GOOGLE_CHAT_WEBHOOK_URL__<IDENTITY>` line, the
+service-account key path into `GOOGLE_APPLICATION_CREDENTIALS`, and stop there.
+
+**2. Drive verification through code that reads the environment.** Never through
+a command-line argument, a chat message, an assistant prompt, or anything that
+lands in shell history. Write a throwaway script — not a one-liner with the URL
+in it:
+
+```python
+# verify_webhook.py — NOT gitignored (only .env* and *.log are). Delete it when
+# you are done; see step 4.
+import os
+from pathlib import Path
+
+from chat_gateway.adapters.webhook import WebhookAdapter
+from chat_gateway.envelope import OutboundMessage
+from chat_gateway.registry import Identity
+
+# Minimal .env loader — stdlib only, no python-dotenv dependency.
+# Inline comments are stripped only at " #" (space-hash), never at a bare "#":
+# a credential may legitimately contain "#", and silently truncating one would
+# produce a wrong value that fails in a confusing way instead of an obvious one.
+for line in Path(".env").read_text(encoding="utf-8").splitlines():
+    if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    os.environ.setdefault(key.strip(), value.split(" #", 1)[0].strip())
+
+ENV_VAR = "GOOGLE_CHAT_WEBHOOK_URL__AITRADER_ALERTS"   # a NAME, never a value
+assert os.environ.get(ENV_VAR), f"{ENV_VAR} is not set — put it in .env"
+
+identity = Identity(name="probe", display="probe", mode="webhook",
+                    webhook_url_env=ENV_VAR)
+result = WebhookAdapter().send(
+    identity, OutboundMessage(identity="probe", text="local verification probe"))
+print(result)          # DeliveryResult names the identity, never the URL
+```
+
+`WebhookAdapter` already names the identity rather than the URL on failure (hard
+rule #2). Hold ad-hoc probes to the same standard: they take an env-var **name**,
+they never accept a URL as an argument, and they never print one.
+
+**3. If a value is exposed anyway, treat it as burned.**
+
+| Secret | Recovery |
+|---|---|
+| Webhook URL | Space → **⚙ → Apps & integrations → Webhooks → ⋮ → Delete**, then create a new webhook with the same name and avatar, then update `.env`. The old URL cannot be revoked any other way. |
+| `chat-gateway-sa.json` | `gcloud iam service-accounts keys delete <KEY_ID> --iam-account=chat-gateway@<PROJECT_ID>.iam.gserviceaccount.com`, then re-run the setup script to mint a new one. |
+| A per-app API key | `python -m chat_gateway mint-key`, update `.env` and the consuming app. |
+
+**4. Delete the throwaway script when you are done.** It contains no secret, but
+it is one edit away from containing one.

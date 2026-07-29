@@ -143,3 +143,16 @@ curl -s $GW/v1/inbox -H "$AUTH"
 curl -s $GW/v1/identities -H "$AUTH"    # what you may send as, with readiness
 curl -s $GW/healthz                     # honest health — no auth required
 ```
+
+### Which identity your message shows as
+
+- **Tier 1 (`mode: webhook`)** — the webhook's own configured display name and
+  avatar. Google returns `sender: null` for these sends; Chat substitutes the
+  webhook's name, and a webhook created without one renders as **"Unknown
+  User"**. One webhook per identity, as many as you like.
+- **Tier 2 (`mode: app`)** — the Chat app itself, one sender for every
+  identity routed through it (`Agent Comms` on this deployment, `type: BOT`).
+  Per-agent flavour has to ride in the message content — a card header, a
+  prefix — because the sender is fixed.
+
+Both verified live 2026-07-29.

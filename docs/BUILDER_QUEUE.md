@@ -1,8 +1,23 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-29 (Planner — CG-2 status swept to shipped; CG-3
-unblocked and rescoped; CG-4 … CG-12 queued from the first live Google Cloud
-verification)
+**Last updated:** 2026-07-29 (Builder — CG-6 shipped; the user's ADR decisions
+recorded below unblock CG-10, CG-11 and CG-12; CG-13 … CG-19 filed for the
+newly-implied ADR work, the four experiments, and one IaC follow-up)
+
+## User decisions on ADR-0001 (2026-07-29) — final, do not re-ask
+
+The ADR's §12 open questions are answered. Recorded here because they are what
+unblocks half this queue.
+
+| ADR ref | Decision |
+|---|---|
+| **D2** — `__cg_action__` as the gateway-reserved action-identity key | **APPROVED**, including the guard that discards topic-path-shaped values arriving from Google-native sources. Unblocks CG-10. |
+| **D6** — a third flag word | **NO.** `⚠ SHAPE-VERIFIED` stays the only addition; hard rule #3 caps the vocabulary. Routing fragility is recorded in prose + `/healthz`, never a new flag. |
+| **§8** — interaction dead-man | **APPROVED** at `every:7d`, cleared by any `CARD_CLICKED`. A genuinely quiet week raising a false alarm is accepted; the remediation is one tap. Filed as CG-14. |
+| **E1 / E2** — classic-deployment experiments | **DEFERRED.** Ship the bridge first. Do **not** create GCP projects or run experiments. Filed unexecuted as CG-15 … CG-18. |
+| **Migration to option D** | **APPROVED IN PRINCIPLE** if E1 later passes. Nothing to build now — but do not make the bridge harder to leave: D3's portable card convention exists to keep the exit cheap and must be honoured (CG-13). |
+| **DEC-1** (CG-4 threadKey) | Keep the body `thread.threadKey`, drop the query parameter. The `messageReplyOption` caveat is mandatory in the docstring. |
+| **CG-12** shape | **Option A** — a bare counter on `/healthz`. No space id, no app id, no content. Pure rule-5 visibility, zero rule-6 surface change; note in code that `/healthz` is unauthenticated. |
 
 This is the work list Builder clears, one PR per item. Planner appends; the
 user sets priority. Builder claims the topmost `📋 queued` item whose
@@ -31,89 +46,19 @@ every inbound path; nothing in this queue widens any tenant's inbound surface.
 
 ## Queue
 
-### CG-6 · Documentation gaps: local verification, webhook sender, tier trade-off  📋 queued
+**Order is the user's, set 2026-07-29**, with one Builder-side correction:
+CG-3 is promoted above CG-10 because CG-10 *depends* on it (CG-10 rewrites the
+pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
+CG-10's behaviour change can be tested against). A declared dependency
+outranks a preference; nothing else was resequenced.
 
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-6)](superpowers/specs/2026-07-29-live-verification-followups-design.md) |
-| **Plan** | [Part A](superpowers/plans/2026-07-29-live-verification-followups.md) |
-| **Depends on** | nothing |
-| **Touches** | `docs/google-cloud-setup.md`, `docs/integration-guide.md`, `.env.example` — no source, no tests |
-
-**First because it is the credential-exposure fix.** Step 8 documents where
-secrets go on the appserver and says nothing about the machine you verify from.
-On 2026-07-29 that gap cost real credentials: webhook URLs were pasted into an
-AI-assistant chat transcript to run a one-off send, and every one had to be
-deleted in Chat and recreated. A webhook URL embeds `key`+`token` — it is a
-bearer credential for posting into that space as that identity.
-
-Adds an explicit local `.env` flow (values in `.env` only; probes take an
-env-var **name**, never a URL; burn-and-recreate table), documents that Google
-returns `sender: null` for webhook sends so a nameless webhook renders as
-**"Unknown User"**, and records the tier trade-off both halves of which were
-observed today: tier 1 gives many named identities and no sender; tier 2 gives a
-real sender (`Agent Comms`, `type: BOT`) and exactly one identity.
+Resulting order: **CG-3 → CG-10 → CG-13 → CG-14 → CG-7 → CG-4 → CG-5 → CG-8
+→ CG-12 → CG-11 → CG-19.** CG-15 … CG-18 are filed deferred and must not be
+executed. CG-9 stays blocked on a human.
 
 ---
 
-### CG-4 · Clear `webhook.py`'s flag, drop the redundant threadKey mechanism  📋 queued
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-4)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-1, DEC-2 |
-| **Plan** | [Part B](superpowers/plans/2026-07-29-live-verification-followups.md) |
-| **Depends on** | nothing |
-
-Verified live through the **real** `WebhookAdapter`: plain text → `delivered`;
-Cards v2 passed through → `delivered` and rendering confirmed by the user. The
-threading experiment (two messages per variant, distinct thread keys,
-`thread.name` from Google's response as the objective signal) found both
-mechanisms sufficient — query param only → THREADED, body only → THREADED, both
-→ THREADED.
-
-**Planner recommends keeping the body `thread.threadKey` and dropping the query
-parameter**, because `chat_api.py` already threads via the body, so both
-adapters end up expressing threading identically; because the body form is the
-`spaces.messages.create` shape rather than a webhook-only affordance; and,
-weakly, because it splices one less parameter into a URL that embeds
-`key`+`token`. **DEC-1 is an open question for the user** (spec §8) — confirm
-before shipping.
-
-⚠ **The caveat is mandatory in the code comment.** All three variants also sent
-`messageReplyOption` in the query. The proven statement is exactly *"given
-`messageReplyOption` is present, either `threadKey` location suffices."* Whether
-`messageReplyOption` is required at all was **not** isolated. The docstring must
-not imply otherwise.
-
-Flag clears for the success path only; the non-200 and transport-error branches
-were never exercised and the docstring says so in prose (not a third flag word).
-
----
-
-### CG-5 · Split `chat_api.py`'s flag: `send()` clears, `send_text()` does not  📋 queued
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-5)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-3 |
-| **Plan** | [Part C](superpowers/plans/2026-07-29-live-verification-followups.md) |
-| **Depends on** | CG-4 (touches the same `CLAUDE.md` lines — sequence to avoid a conflict) |
-| **Touches** | docstrings only; the suite must stay at 70 |
-
-`ChatApiAdapter.send()` verified live through the real class and the real
-`GoogleServiceAccountTokens` provider: text and a Cards v2 card posted as the
-app, response carried `sender: {displayName: "Agent Comms", type: BOT}`. That
-clears the provider too.
-
-**`send_text()` keeps its flag.** Different request shape (`thread.name`, not
-`thread.threadKey`), never driven — and it is the method that tells a user their
-tap did not land (jobhunt R7) and the method that refuses an unauthorized user
-(R4). The flag moves from module scope to method scope; be precise about the
-split. `send()`'s own threading branch was not exercised either (the live posts
-were unthreaded).
-
----
-
-### CG-3 · Land the real add-on interaction capture  📋 queued *(was ⏸ blocked — the human tapped)*
+### CG-3 · Land the real add-on interaction capture  📋 queued *(promoted: CG-10 depends on it)*
 
 | | |
 |---|---|
@@ -150,6 +95,71 @@ than confirming the mapping.
 
 ---
 
+### CG-10 · Empty `action.id` on add-on interactions — `__cg_action__`  📋 queued *(was ⏸ blocked · ADR)*
+
+| | |
+|---|---|
+| **Spec** | [design §3 (CG-10)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-12 |
+| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **D2** + **D4** — approved by the user 2026-07-29 |
+| **Depends on** | CG-3 (the pinning test it rewrites) |
+
+The real capture normalizes to `action: {"id": "", "params": {…}}` — the card's
+button routed via `action.function = "<a Pub/Sub topic path>"`, so the add-ons
+runtime sent no `__action_method_name__`, no `invokedFunction` and no
+`payload.action`, and `_normalize_addon` fell through `or ""` **silently** into
+an `InboundReply` that looks structurally valid.
+
+Now unblocked and the policy is settled. Implement ADR D2's resolution order
+(`parameters["__cg_action__"]` → Google-native sources → `None`), D2's mandatory
+guard discarding `^projects/[^/]+/topics/[^/]+$` values arriving from the native
+sources, and D4 (`None` not `""`, a `/healthz` counter, `id_source`, and the
+event **still forwarded** — a parse-quality problem must not become a silent
+drop).
+
+---
+
+### CG-13 · Publish `interaction_routing_target`; document the portable card convention  📋 queued
+
+| | |
+|---|---|
+| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **D3** |
+| **Depends on** | CG-10 (the reserved key must exist first) |
+| **Origin** | newly implied by the ADR, unqueued until now |
+
+Producers must not hardcode the topic path. The gateway publishes it per-app on
+the authenticated `/v1/identities` response as `interaction_routing_target`,
+alongside the reserved-key name, and the integration guide documents the card
+convention that consumes it.
+
+**This is the item that keeps the bridge cheap to leave.** Because identity
+always rides in `__cg_action__` and the function slot always holds a
+gateway-published constant, migrating deployment models requires **zero producer
+card changes** — one config value moves. The user approved migration in
+principle if E1 later passes; honouring D3 is what makes that approval cheap.
+
+---
+
+### CG-14 · Interaction dead-man (`interaction-canary`)  📋 queued
+
+| | |
+|---|---|
+| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **§8** — approved by the user 2026-07-29 |
+| **Depends on** | nothing (reuses `HeartbeatStore` / `HeartbeatMonitor`) |
+| **Origin** | newly implied by the ADR, unqueued until now |
+
+If Google removes topic-as-function routing the observable is **nothing at
+all**: no event reaches the topic, no counter moves, no exception is raised,
+`/healthz` says `ok`. That is the hard-rule-#5 failure shape exactly, and
+adopting the bridge without a detector would rebuild it in a new place.
+
+Register a gateway-internal check on `every:7d`, cleared by **any**
+`CARD_CLICKED` arriving on the subscription. Accepted trade-off (user, final): a
+genuinely quiet week raises a false alarm whose remediation is one tap — and an
+alert that names the exact action needed to confirm or refute it is a good
+alert.
+
+---
+
 ### CG-7 · `/healthz`: subscriber liveness + quota exhaustion must affect `status`  📋 queued
 
 | | |
@@ -166,6 +176,13 @@ expression reads only identity env-resolution and app keys — the subscriber bl
 is reported but feeds nothing. That is the claude-mem failure shape hard rule #5
 was written after.
 
+Independently re-verified 2026-07-29 (user): `adapters/pubsub.py:486` sets
+`last_poll_at` only after `pull()` succeeds, `_run` (~line 495) swallows every
+exception, and `service.py:220–222`'s `degraded` expression never reads the
+subscriber block at all — while the docstring at `service.py:199` claims "real
+liveness". A revoked key, a deleted subscription, a wrong subscription name and
+quota exhaustion all fail this way and look identical.
+
 Billing is disabled on `chat-gateway-prod` and the free tier is enormous (a real
 event measured 1,926 bytes → ~2.8M events within Pub/Sub's 10 GiB/month), so
 cost is a non-issue. What matters is that exhaustion fails **closed** — and for a
@@ -176,7 +193,64 @@ Adds a typed `PubSubError` carrying status (and stops echoing `resp.text[:200]`,
 a pre-existing rule-#2 smell), failure counters on the loop, and a `reasons` list
 that `status` is computed from. Billing is **declared** via env, not detected —
 detection means more scopes and calls, and today `topic/send_request_count` read
-zero after a message had provably published.
+zero after a message had provably published (now recorded in
+`docs/google-cloud-setup.md` as disqualifying that metric for any health check).
+
+---
+
+### CG-4 · Clear `webhook.py`'s flag, drop the redundant threadKey mechanism  📋 queued
+
+| | |
+|---|---|
+| **Spec** | [design §3 (CG-4)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-1, DEC-2 |
+| **Plan** | [Part B](superpowers/plans/2026-07-29-live-verification-followups.md) |
+| **Depends on** | nothing |
+
+Verified live through the **real** `WebhookAdapter`: plain text → `delivered`;
+Cards v2 passed through → `delivered` and rendering confirmed by the user. The
+threading experiment (two messages per variant, distinct thread keys,
+`thread.name` from Google's response as the objective signal) found both
+mechanisms sufficient — query param only → THREADED, body only → THREADED, both
+→ THREADED.
+
+**DEC-1 is answered: keep the body `thread.threadKey`, drop the query
+parameter** (Planner's recommendation, user-approved 2026-07-29). Reasons:
+`chat_api.py` already threads via the body, so both adapters end up expressing
+threading identically; the body form is the `spaces.messages.create` shape
+rather than a webhook-only affordance; and, weakly, it splices one less
+parameter into a URL that embeds `key`+`token`.
+
+⚠ **The caveat is mandatory in the code comment.** All three variants also sent
+`messageReplyOption` in the query. The proven statement is exactly *"given
+`messageReplyOption` is present, either `threadKey` location suffices."* Whether
+`messageReplyOption` is required at all was **not** isolated. The docstring must
+not imply otherwise.
+
+Flag clears for the success path only; the non-200 and transport-error branches
+were never exercised and the docstring says so in prose (not a third flag word).
+
+---
+
+### CG-5 · Split `chat_api.py`'s flag: `send()` clears, `send_text()` does not  📋 queued
+
+| | |
+|---|---|
+| **Spec** | [design §3 (CG-5)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-3 |
+| **Plan** | [Part C](superpowers/plans/2026-07-29-live-verification-followups.md) |
+| **Depends on** | CG-4 (touches the same `CLAUDE.md` lines — sequence to avoid a conflict) |
+| **Touches** | docstrings only; the suite must stay at 70 |
+
+`ChatApiAdapter.send()` verified live through the real class and the real
+`GoogleServiceAccountTokens` provider: text and a Cards v2 card posted as the
+app, response carried `sender: {displayName: "Agent Comms", type: BOT}`. That
+clears the provider too.
+
+**`send_text()` keeps its flag.** Different request shape (`thread.name`, not
+`thread.threadKey`), never driven — and it is the method that tells a user their
+tap did not land (jobhunt R7) and the method that refuses an unauthorized user
+(R4). The flag moves from module scope to method scope; be precise about the
+split. `send()`'s own threading branch was not exercised either (the live posts
+were unthreaded).
 
 ---
 
@@ -203,15 +277,49 @@ eleven existing test references keep working.
 
 ---
 
-## Blocked
+### CG-12 · Forensic trace for spaces owned only by opted-out tenants  📋 queued *(was ⏸ blocked · user decision)*
 
-### CG-11 · Correct `CLAUDE.md`'s selection-widget claim  ⏸ blocked · ADR
+| | |
+|---|---|
+| **Spec** | [design §3 (CG-12)](superpowers/specs/2026-07-29-live-verification-followups-design.md) |
+| **Plan** | **not written** — the decision below settles it; mechanism note in the plan's blocked-items section |
+| **Decision** | **Option A**, user, 2026-07-29 — see the decisions table at the top |
+| **Origin** | deferred to Planner by CG-1's review |
+
+A space with registered owners who are **all** `allow_inbound: false` discards
+events with zero forensic trace: `candidates` is non-empty so the `_unrouted`
+fallback never fires, every candidate hits the authorization `continue`, and
+nothing is written anywhere — no inbox entry, no `_unrouted` record, no counter,
+nothing at `/healthz`. `aitrader`'s registry shape is exactly this.
+
+Hard rule #6 is satisfied. Rule #5's spirit is not.
+
+| | Stores | Rule-6 exposure |
+|---|---|---|
+| **A. Counter only** | one integer at `/healthz` — no space, no app id, no content | none |
+| **C. Counter + metadata record** | space, event type, timestamp, dedupe key | small but real |
+| **B. Counter + full audit record** | the whole redacted event under `_unrouted` | **material** — aitrader's traffic starts being persisted |
+
+**Decided: option A.** A bare counter on `/healthz` — no space id, no app id,
+no content. Pure rule-5 visibility with zero rule-6 surface change; `aitrader`'s
+traffic is still never persisted anywhere. The caveat the user asked to be
+carried into the code: **`/healthz` is currently unauthenticated**, which is
+precisely why option A stores nothing attributable.
+
+Mechanism (from the plan's blocked-items note): an additive
+`on_suppressed(app_id, reason)` callback on `dispatch`, mirroring the existing
+`on_unparseable`, with reasons `"opt_out"` and `"not_authorized"` — the
+counter is incremented from it and the arguments go no further.
+
+---
+
+### CG-11 · Correct `CLAUDE.md`'s selection-widget claim  📋 queued *(was ⏸ blocked · ADR)*
 
 | | |
 |---|---|
 | **Spec** | [design §3 (CG-11)](superpowers/specs/2026-07-29-live-verification-followups-design.md) |
-| **Plan** | [Part G](superpowers/plans/2026-07-29-live-verification-followups.md) — written; shipping gated |
-| **Blocked by** | the ADR under `docs/architecture/` landing on `main` |
+| **Plan** | [Part G](superpowers/plans/2026-07-29-live-verification-followups.md) |
+| **Unblocked by** | ADR-0001 merged to `main` as `22a8119`; adopt its §7 wording verbatim |
 
 `CLAUDE.md` says *"modal dialogs are impossible over Pub/Sub transport —
 selection widgets are the supported path."* **Proven wrong as written.** A
@@ -227,38 +335,70 @@ input, one button to submit.* The modal-dialog half was never tested and stays
 labelled as doc-derived inference — the old sentence's real sin was conflating
 the two under one confident dash.
 
-The facts are settled and independent of the ADR; only the **wording** needs
+The facts are settled and independent of the ADR; only the **wording** needed
 coordinating, because the ADR owns jobhunt's interaction model and `CLAUDE.md` is
-the constitution. Part G's first task is to read the ADR and adopt its wording —
-or stop and return to Planner if it contradicts this finding.
+the constitution. ADR-0001 §7 supplies the replacement wording and agrees with
+this finding on all three labels (proven false / capture-verified / doc-derived
+inference), so Part G adopts §7 rather than paraphrasing it.
 
 ---
 
-### CG-10 · Empty `action.id` on add-on interactions  ⏸ blocked · ADR
+### CG-19 · Correct the Marketplace-SDK comment in all three IaC paths  📋 queued · ⏸ merge gate
 
 | | |
 |---|---|
-| **Spec** | [design §3 (CG-10)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-12 |
-| **Plan** | **not written — deliberately.** Planner writes it when the ADR lands |
-| **Depends on** | CG-3 (the pinning test it rewrites) |
-| **Blocked by** | the ADR under `docs/architecture/` |
+| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) §5 option D, §14 |
+| **Depends on** | CG-6 (shipped — it corrected the same claim in the prose doc) |
+| **Origin** | filed by CG-6: correcting the doc left the IaC contradicting it |
+| **Merge gate** | **touches the IaC path — Builder must pause and report before merging**, per the session merge policy |
 
-The real capture normalizes to `action: {"id": "", "params": {…}}`. The card's
-button routed via `action.function = "<a Pub/Sub topic path>"`, so the add-ons
-runtime sent no `__action_method_name__`, no `invokedFunction`, and no
-`payload.action` — `_normalize_addon` consults exactly those three and falls
-through `or ""` to an empty string. **Silently**, into an `InboundReply` that
-looks structurally valid and would be forwarded to a tenant callback as though it
-carried an action identity. That is the silent-failure class CG-1 existed to
-eliminate, one layer further in.
+`iac/gcloud-setup.sh:28`, `iac/gcloud-setup.ps1:163` and
+`iac/terraform/main.tf:76` each enable `appsmarket-component.googleapis.com`
+under a comment repeating the claim CG-6 just corrected ("Without it the app
+never appears under…"). Enabling the API is harmless and can stay; the comment
+is the defect, because it is exactly the sentence that put this project on the
+add-ons runtime.
 
-**The *policy* — where action identity should live — is the ADR's call, not
-Planner's.** Queued here is the mechanical work only: detect, fail loudly or
-surface explicitly, test. A plan is not written because a plan must carry literal
-code and writing one now would mean inventing the policy or filling it with
-placeholders.
+Scope is comments only — no resource changes, no behaviour change. It is filed
+separately rather than folded into CG-6 because touching `iac/` requires a user
+pause, and CG-6 was the credential fix that had to ship first.
 
 ---
+
+## Deferred — filed, NOT to be executed
+
+The user's decision, 2026-07-29: **ship the bridge first.** Do not create GCP
+projects and do not run these. They are recorded so the ADR's experiment design
+is not lost, and so that a future PASS on CG-15 has somewhere to land.
+
+### CG-15 · E1 — does a classic Pub/Sub Chat app receive `CARD_CLICKED`?  ⏸ deferred · user
+
+Decides ADR option D, and therefore whether the topic-as-function bridge is
+temporary or permanent. **Scratch GCP project only — never `chat-gateway-prod`.**
+Full recipe: [ADR-0001 §10 E1](architecture/decisions/2026-07-29-tier2-interaction-model.md).
+~20 minutes of console time. If it ever returns PASS, ADR §11 trigger 1 fires and
+the migration is approved in principle already.
+
+### CG-16 · E2 — is the add-on toggle reversible?  ⏸ deferred · user
+
+Ride-along on CG-15, ~2 minutes. Gates nothing by design: ADR D7 routes around
+the reversibility question with a parallel project and a cutover.
+
+### CG-17 · E3 — do slash commands reach the topic?  ⏸ deferred · user
+
+Decides whether the bridge has a proven floor. Until it runs, ADR option B is
+"topic-as-function with no fallback" — which is why CG-14's dead-man matters
+more, not less, while this stays deferred.
+
+### CG-18 · E4 — does `onChangeAction` work with the topic path as its function?  ⏸ deferred · user
+
+UX nicety, last in the ADR's own ordering. Settles whether §7's two-tap
+choose-then-submit cost is permanent under the bridge.
+
+---
+
+
+## Blocked
 
 ### CG-9 · `ADDED_TO_SPACE` regression fixture  ⏸ blocked · needs a human
 
@@ -281,36 +421,6 @@ weeks from now — which is the whole reason the fixture README tracks provenanc
 
 ---
 
-### CG-12 · Forensic trace for spaces owned only by opted-out tenants  ⏸ blocked · user decision
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-12)](superpowers/specs/2026-07-29-live-verification-followups-design.md) |
-| **Plan** | **not written** — pending the decision |
-| **Blocked by** | a user decision, because it changes hard-rule-#6 semantics |
-| **Origin** | deferred to Planner by CG-1's review |
-
-A space with registered owners who are **all** `allow_inbound: false` discards
-events with zero forensic trace: `candidates` is non-empty so the `_unrouted`
-fallback never fires, every candidate hits the authorization `continue`, and
-nothing is written anywhere — no inbox entry, no `_unrouted` record, no counter,
-nothing at `/healthz`. `aitrader`'s registry shape is exactly this.
-
-Hard rule #6 is satisfied. Rule #5's spirit is not.
-
-| | Stores | Rule-6 exposure |
-|---|---|---|
-| **A. Counter only** | one integer at `/healthz` — no space, no app id, no content | none |
-| **C. Counter + metadata record** | space, event type, timestamp, dedupe key | small but real |
-| **B. Counter + full audit record** | the whole redacted event under `_unrouted` | **material** — aitrader's traffic starts being persisted |
-
-**Planner recommends A**, with C available if the user wants space-level
-attribution. B is not recommended. Caveat that applies to all three: `/healthz`
-is unauthenticated. Planner will not implement anything here without a decision
-that names hard rule #6.
-
----
-
 ## In flight
 
 _(nothing)_
@@ -318,6 +428,34 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-6 · Documentation gaps: local verification, webhook sender, tier trade-off  ✅ shipped 2026-07-29 · [PR #9](https://github.com/mmackelprang/chat-gateway/pull/9)
+
+The credential-exposure fix. Adds `docs/google-cloud-setup.md` **§8a** — an
+explicit local `.env` flow (values in `.env` only; probes take an env-var
+**name**, never a URL; a burn-and-recreate table, because a webhook URL cannot
+be rotated in place). Documents that Google returns `sender: null` for webhook
+sends, so a nameless webhook renders as **"Unknown User"**, and records the
+tier trade-off with both halves observed live: tier 1 gives many named
+identities and no sender, tier 2 gives a real sender (`Agent Comms`,
+`type: BOT`) and exactly one identity.
+
+**Also corrects a factual error ADR-0001 identified** — the claim that the
+Google Workspace Marketplace SDK gates installability. It does not:
+installability comes from the Chat API **Visibility** setting, and Google
+states the Marketplace SDK's visibility/testing settings are *ignored* for
+Chat. That error is why this project is on the add-ons runtime at all, so the
+correction cites the ADR and warns a future reader off repeating the choice.
+Also records that `pubsub.googleapis.com/topic/send_request_count` is
+disqualified as a health signal, which is *why* CG-7 declares billing rather
+than detecting it.
+
+Docs + `.env.example` only; suite unchanged at 70. Review found one real
+defect: the doc cited a queue item (**CG-19**) that did not exist — it does
+now, filed with an explicit merge gate because it touches the IaC path. The
+plan's `verify_webhook.py` snippet imported `python-dotenv`, which is not a
+project dependency; replaced with a stdlib loader and **executed** against a
+stub webhook to prove the example runs and that `print(result)` leaks no URL.
 
 ### CG-2 · Workspace Add-ons service agent grant + setup failure signature  ✅ shipped 2026-07-29 · [PR #6](https://github.com/mmackelprang/chat-gateway/pull/6)
 
