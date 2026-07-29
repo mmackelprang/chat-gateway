@@ -90,12 +90,29 @@ def test_guard_rejects_unmarked_tenant_identifiers(tmp_path):
     """A guard that has never failed is a guard nobody has tested.
 
     Both spellings, because the buttonClicked capture carries both and a scrub
-    that fixed only one would still ship a real tenant id.
+    that fixed only one would still ship a real tenant id. The second value is
+    nested inside a LIST, because the capture echoes its space object twice and
+    a rule that only matched top-level dict paths would sail past the copy.
+
+    This calls `test_fixture_contains_no_secrets` itself rather than re-deriving
+    its predicate. Re-deriving would pass even if the real assertion were
+    inverted, mistyped, or deleted — proving something about a copy of the guard
+    instead of the guard, which is how a scrub looks complete and is not.
     """
-    for key, value in (("domainId", "29vd573"), ("customer", "customers/C029vd573")):
+    cases = {
+        "domainId": {"chat": {"user": {"domainId": "29vd573"}}},
+        "customer": {"chat": {"spaces": [{"customer": "customers/C029vd573"}]}},
+    }
+    for key, payload in cases.items():
         bad = tmp_path / f"bad-{key}.json"
-        bad.write_text(json.dumps({"chat": {"user": {key: value}}}), encoding="utf-8")
-        data = json.loads(bad.read_text(encoding="utf-8"))
-        offenders = [p for p, v in _walk(data)
-                     if TENANT_KEY.search(p) and "example" not in v.lower()]
-        assert offenders, f"guard failed to flag a real {key}"
+        bad.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(AssertionError, match="domain/customer id"):
+            test_fixture_contains_no_secrets(bad)
+
+    # ...and it must still PASS once the value carries the RFC 2606 marker,
+    # so the guard is proven to discriminate rather than merely to reject.
+    ok = tmp_path / "ok.json"
+    ok.write_text(json.dumps({"chat": {"user": {"domainId": "example1"},
+                                       "spaces": [{"customer": "customers/Cexample1"}]}}),
+                  encoding="utf-8")
+    test_fixture_contains_no_secrets(ok)
