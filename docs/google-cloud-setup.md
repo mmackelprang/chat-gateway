@@ -42,10 +42,16 @@ if an `enable` call is rejected for billing, link a billing account and retry.
 
 ### 2–4. APIs, service account, Pub/Sub (scripted)
 
-> ✅ **Done for `chat-gateway-prod` as of 2026-07-28** — APIs, service account,
-> topic, subscription, both IAM bindings, and the SA key all exist. Both
-> scripts are idempotent, so re-running is a safe no-op; there is no need to
-> re-run them for this project.
+> ✅ **Provisioned for `chat-gateway-prod`** — steps 2–4 ran 2026-07-28: APIs,
+> service account, topic, subscription, the topic-publisher and
+> subscription-subscriber bindings, and the SA key.
+>
+> ⚠ **That run was incomplete.** It predated the Workspace Add-ons service
+> agent, which did not exist and was therefore never bound — the failure
+> documented below. The agent and its publisher binding were added by hand on
+> 2026-07-29 and are now part of all three IaC paths, so a re-run is a safe
+> no-op. The lesson worth keeping: **"the script exited 0" was not evidence the
+> project was complete.**
 
 POSIX:
 ```bash
@@ -55,21 +61,68 @@ Windows (PowerShell — see "What can be automated" for why):
 ```powershell
 .\iac\gcloud-setup.ps1 -ProjectId chat-gateway-prod
 ```
-This enables `chat.googleapis.com` + `pubsub.googleapis.com`, creates the
-`chat-gateway` service account, the `chat-gateway-events` topic, the
-`chat-gateway-sub` pull subscription, grants Chat's publisher account write
-on the topic and the SA subscribe on the subscription, writes
-`chat-gateway-sa.json` (owner-only: `chmod 600` on POSIX, `icacls` on
-Windows), and prints the `.env` block to copy.
+This enables `chat.googleapis.com` + `pubsub.googleapis.com` +
+`gsuiteaddons.googleapis.com`, creates the `chat-gateway` service account, the
+`chat-gateway-events` topic, the `chat-gateway-sub` pull subscription, grants
+**both** publisher principals write on the topic (see below) and the SA
+subscribe on the subscription, writes `chat-gateway-sa.json` (owner-only:
+`chmod 600` on POSIX, `icacls` on Windows), and prints the `.env` block to copy.
 
-> ⚠ One VERIFY item, still open (flagged in both scripts): the Google-side
-> identity that publishes Chat events
-> (`chat-api-push@system.gserviceaccount.com`) is per Google's docs at time of
-> writing. The binding **applied cleanly on 2026-07-28 — and that proves
-> nothing**: GCP accepts IAM bindings to `*@system.gserviceaccount.com`
-> principals without validating that they exist. This stays LIVE-UNVERIFIED
-> until the principal is confirmed on the Chat API "Connection settings" page
-> (step 5) *and* a real event lands in the subscription.
+> ⚠ **Publisher principals — what is and is not proven (updated 2026-07-29).**
+> Two principals are now granted `roles/pubsub.publisher` on the topic:
+> `chat-api-push@system.gserviceaccount.com` (per Google's docs) and the
+> Workspace Add-ons service agent
+> `service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`.
+> A real event **did** reach `chat-gateway-sub` on 2026-07-29, immediately
+> after the add-ons service agent was created and bound. But because both
+> principals are bound, **we cannot prove which one delivered it** — the
+> correlation is strong, the evidence is circumstantial. Do not record this as
+> a clean verification of either principal.
+>
+> Note also that GCP accepts IAM bindings to `*@system.gserviceaccount.com`
+> principals **without validating that they exist**, so a clean
+> `add-iam-policy-binding` was never evidence of anything on its own.
+
+### Failure signature: "\<app\> is not responding"
+
+If Chat replies **"\<app\> is not responding"** and nothing arrives in the
+subscription, this is almost certainly the missing add-ons service agent.
+Confirm by matching all four:
+
+| Signal | Value |
+|---|---|
+| In Chat | `<app> is not responding` |
+| `chat.googleapis.com/errors` | code **3**, "Can't post a reply" |
+| `gsuiteaddons.googleapis.com/errors` | code **13**, "Unspecified error invoking the add-on" |
+| `gcloud pubsub subscriptions pull chat-gateway-sub` | **zero** messages |
+
+> This is the remediation applied on 2026-07-29, immediately after which a real
+> event arrived. Per the caveat above that is strong correlation, not proof:
+> the diagnosis matched all four signals, but the variable was never isolated.
+
+Remediation (now built into both setup scripts and the Terraform, so this is
+only needed for projects provisioned before 2026-07-29):
+
+```bash
+gcloud beta services identity create --service=gsuiteaddons.googleapis.com --project=<PROJECT_ID>
+# -> service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com
+
+gcloud pubsub topics add-iam-policy-binding <TOPIC> \
+  --member="serviceAccount:service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com" \
+  --role="roles/pubsub.publisher"
+```
+
+(`gcloud beta` needs the beta component; gcloud offers to install it on first use.)
+
+> **Do not trust `pubsub.googleapis.com/topic/send_request_count`.** During
+> this diagnosis that Cloud Monitoring metric reported **zero** publishes even
+> after a message had demonstrably been published and pulled. It cost time and
+> pointed the wrong way. The only reliable signal is pulling the subscription
+> directly:
+>
+> ```bash
+> gcloud pubsub subscriptions pull chat-gateway-sub --limit=5 --auto-ack
+> ```
 
 ### 5. Chat app configuration — console only
 Console → **APIs & Services → Google Chat API → Configuration**:
@@ -92,6 +145,19 @@ For each project/app that gets a space: create the space in Chat, then
 Space → **⚙ → Apps & integrations → Webhooks → Add webhook** → name it as
 the identity should appear (e.g. `PM · familyworkspace`, `aitrader`) + an
 avatar URL → copy the webhook URL.
+
+### Also easy to miss in steps 5–7
+
+- Steps 6 and 7 happen in **chat.google.com**, not the Cloud Console. Looking
+  for them in the Console is a dead end.
+- The app will not appear under **⚙ → Apps & integrations → Add apps** until
+  the **Google Workspace Marketplace SDK**
+  (`appsmarket-component.googleapis.com`) is enabled *and* the app is
+  published. Enabling the Chat API alone is not enough.
+- Events arrive in the **Workspace Add-ons envelope** (`commonEventObject` +
+  `chat.messagePayload`), not the classic flat format. The gateway parses both
+  (`adapters/pubsub.py`), so no action is needed — but if you are eyeballing a
+  raw pull, that is what you should expect to see.
 
 ### 8. What to hand back (and how)
 Safe to paste in chat (non-secret): **project id, topic + subscription

@@ -1,6 +1,7 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-29 (Builder — CG-1 shipped, PR #5)
+**Last updated:** 2026-07-29 (Builder — CG-1 shipped PR #5; CG-2 open as PR #6,
+awaiting the user's merge call)
 
 This is the work list Builder clears, one PR per item. Planner appends; the
 user sets priority. Builder claims the topmost `📋 queued` item whose
@@ -9,39 +10,13 @@ dependencies are all met, ships it as a PR, and marks it `✅ shipped`.
 Status legend: `📋 queued` · `🔨 in flight` · `⏸ blocked` · `✅ shipped`
 
 Before claiming anything, read `CLAUDE.md` — the six hard rules govern every
-item here. CG-2 in particular touches the IaC/secret-handling path, so rule #2
-applies directly.
+item here.
 
 ---
 
 ## Queue
 
-### CG-2 · Workspace Add-ons service agent grant + setup failure signature  📋 queued  · P1
-
-| | |
-|---|---|
-| **Spec** | [`superpowers/specs/2026-07-29-chat-event-envelope-normalization-design.md`](superpowers/specs/2026-07-29-chat-event-envelope-normalization-design.md) §9 |
-| **Plan** | [`superpowers/plans/2026-07-29-chat-event-envelope-normalization.md`](superpowers/plans/2026-07-29-chat-event-envelope-normalization.md) — **Part B** |
-| **Depends on** | nothing (independent of CG-1; may ship in either order) |
-| **Blast radius** | `iac/gcloud-setup.sh`, `iac/gcloud-setup.ps1`, `iac/terraform/main.tf`, `docs/google-cloud-setup.md`. No `src/` changes. |
-
-The live failure that started all of this was caused by the Google Workspace
-Add-ons **service agent never being provisioned**. All three IaC paths grant
-publisher only to `chat-api-push@system.gserviceaccount.com`. Every fresh
-deployment hits the same wall.
-
-Also documents the failure signature so it costs the next person a minute
-instead of an hour, including the Cloud Monitoring metric that proved
-**useless** during diagnosis.
-
-**Note honestly in the change:** both principals are now bound, so we cannot
-prove which one delivered the event. The fix correlates strongly but the
-evidence is circumstantial — the doc must say so rather than claim a clean
-verification.
-
-**No unit tests are possible** for this item (cloud IAM). The merge gate is
-review + doc accuracy, not a green suite. Called out because the auto-merge
-policy's "tests pass" gate does not apply cleanly here.
+_(empty — CG-3 below is blocked on a human)_
 
 ---
 
@@ -75,6 +50,34 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-2 · Workspace Add-ons service agent grant + setup failure signature  🔨 PR open · [PR #6](https://github.com/mmackelprang/chat-gateway/pull/6)
+
+**Not merged — deliberately paused for the user.** It touches the IaC /
+secret-handling path, which falls under the user's "pause on sensitive" carve-out
+from the auto-merge policy. Gates are green (review clean after fixes; the
+Python suite is unaffected at 70 passing), but the merge call is the user's.
+
+Adds the Workspace Add-ons service agent + publisher binding at parity across
+`.sh` / `.ps1` / terraform, plus the failure signature: "\<app\> is not
+responding", `chat.googleapis.com/errors` code 3,
+`gsuiteaddons.googleapis.com/errors` code 13, zero messages in the
+subscription. Records that `pubsub.googleapis.com/topic/send_request_count`
+reported **zero** publishes after a message had provably published — the metric
+is useless for this diagnosis; pull the subscription instead.
+
+Review caught that the doc's pre-existing "✅ Done as of 2026-07-28" box had
+become actively misleading in light of the new text, and that
+`appsmarket-component.googleapis.com` was declared a prerequisite while no IaC
+path enabled it — this PR's own bug class. Both fixed.
+
+**Evidence is circumstantial, and the change says so.** Both publisher
+principals are now bound, so which one delivered the first event is unprovable.
+No ⚠ flag cleared.
+
+**Known gap:** `terraform validate` was **not** run — Terraform is not
+installed on the dev box. The `.tf` changes are reviewed-by-reading only, and
+that path has never been applied in this project.
 
 ### CG-1 · Dual-format Chat event envelope normalization  ✅ shipped 2026-07-29 · [PR #5](https://github.com/mmackelprang/chat-gateway/pull/5)
 
