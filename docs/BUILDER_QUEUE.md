@@ -1,6 +1,6 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-29 (Planner)
+**Last updated:** 2026-07-29 (Builder — CG-1 shipped, PR #5)
 
 This is the work list Builder clears, one PR per item. Planner appends; the
 user sets priority. Builder claims the topmost `📋 queued` item whose
@@ -9,49 +9,12 @@ dependencies are all met, ships it as a PR, and marks it `✅ shipped`.
 Status legend: `📋 queued` · `🔨 in flight` · `⏸ blocked` · `✅ shipped`
 
 Before claiming anything, read `CLAUDE.md` — the six hard rules govern every
-item here, and item CG-1 in particular is constrained by rules #1, #2, #3, #5
-and #6 simultaneously.
+item here. CG-2 in particular touches the IaC/secret-handling path, so rule #2
+applies directly.
 
 ---
 
 ## Queue
-
-### CG-1 · Dual-format Chat event envelope normalization  🔨 in flight  · P0
-
-| | |
-|---|---|
-| **Spec** | [`superpowers/specs/2026-07-29-chat-event-envelope-normalization-design.md`](superpowers/specs/2026-07-29-chat-event-envelope-normalization-design.md) |
-| **Plan** | [`superpowers/plans/2026-07-29-chat-event-envelope-normalization.md`](superpowers/plans/2026-07-29-chat-event-envelope-normalization.md) |
-| **Depends on** | nothing |
-| **Blast radius** | `adapters/pubsub.py`, `envelope.py` (one additive field), `service.py` (one healthz key), tests + fixtures, docs. `forwarder.py` / `inbox.py` / `registry.py` untouched. |
-
-Real bug, confirmed live on 2026-07-29: the first genuine Chat event arrived
-in a **Workspace Add-ons** envelope (`commonEventObject` + `chat.messagePayload`)
-and `normalize_event()` — written for the **classic** flat format — returned an
-empty husk. Three defects: it fails silently (looks like a valid empty
-MESSAGE), inbound routing is dead (`space` is `""`), and `CARD_CLICKED` is
-broken (jobhunt's whole R3/R4 interaction path).
-
-Ships a shape-detecting normalizer supporting **both** formats, fail-loudly on
-unrecognized envelopes without wedging the subscription, and a real captured
-payload as a test fixture.
-
-**Gates beyond the usual suite-green:** the recursive fixture secret-scan test
-must pass (hard rule #2 — a path-guess scrub already leaked a live token to
-disk once), and the "unparseable never routes to a registered tenant" test
-must pass (hard rule #6 — `aitrader` stays locked out).
-
-**Do not** clear any ⚠ LIVE-UNVERIFIED flag beyond what spec §8 authorizes.
-
-✅ **Approval gate — CLEARED 2026-07-29.** The user approved all four of spec
-§10's open questions: **DEC-3** (add `envelope_format` to `InboundReply`),
-**§8** (the `⚠ SHAPE-VERIFIED` flag vocabulary, to be defined explicitly
-wherever the flag vocabulary is documented), **DEC-5** (fully anonymize the
-committed fixture — the repo is public), and **DEC-7** (redact
-`configCompleteRedirectUri`/`…Url`, a deliberate documented exception to
-jobhunt R3's "forward whole", recorded in `docs/consumers/jobhunt.md`).
-
----
 
 ### CG-2 · Workspace Add-ons service agent grant + setup failure signature  📋 queued  · P1
 
@@ -113,4 +76,42 @@ _(nothing)_
 
 ## Recently shipped
 
-_(nothing yet — this queue was created 2026-07-29)_
+### CG-1 · Dual-format Chat event envelope normalization  ✅ shipped 2026-07-29 · [PR #5](https://github.com/mmackelprang/chat-gateway/pull/5)
+
+Shape-detecting normalizer for **both** Google runtimes (Workspace Add-ons and
+classic), raising instead of defaulting on anything unrecognized, with the real
+2026-07-29 capture locked in as an anonymized fixture behind a recursive
+secret-scan test. 37 → 70 tests.
+
+Approval gate cleared by the user before implementation: DEC-3
+(`envelope_format` on `InboundReply`), the `⚠ SHAPE-VERIFIED` flag vocabulary
+(now defined in CLAUDE.md hard rule #3), DEC-5 (full fixture anonymization) and
+DEC-7 (capability-URL redaction — a documented single-field exception to
+jobhunt R3, recorded in `docs/consumers/jobhunt.md`).
+
+Pre-merge review + UAT caught that the poison-pill protection was incomplete:
+`dispatch()` was guarded only around parsing, and `poll_once()` called it
+unguarded, so a `reply_fn` failure (Google 5xx on the authorization-refusal
+path), a disk-write failure, or an explicit JSON `null` would leave the whole
+batch un-acked and wedge inbound. `PubSubPuller.pull()` had the same wedge one
+layer higher on valid-but-non-object JSON. Both fixed, with `dispatch_errors`
+as a counter distinct from `unparseable_seen`.
+
+**Flags: nothing cleared beyond spec §8.** Events demonstrably reach
+`chat-gateway-sub`; the `chat-api-push@…` grant stays unproven (both principals
+bound — circumstantial); `PubSubPuller` stays LIVE-UNVERIFIED; add-on
+CARD_CLICKED stays unverified pending CG-3; both send paths untouched.
+
+**Two findings deferred to Planner** (surfaced, not silently dropped — both sit
+outside CG-1's blast radius and one changes rule-6 semantics):
+
+1. `_unrouted` is not a reserved app id. An app registered under that id with
+   `allow_inbound: true` would receive every unroutable and every `UNPARSEABLE`
+   event from *all* spaces, because the audit path and the `or [UNROUTED]`
+   fallback bypass the per-app authorization block by design. Pre-existing,
+   needs a misconfiguration, one-line guard in `load_registry` — but
+   `registry.py` was explicitly out of CG-1's blast radius.
+2. A space owned *only* by opted-out tenants discards events with **zero**
+   forensic trace: no inbox entry, no `_unrouted` record, no counter, nothing
+   at `/healthz`. Rule #6 is satisfied; rule #5's spirit is not. `aitrader`'s
+   registry shape is exactly this. Wants a decision, not a unilateral patch.
