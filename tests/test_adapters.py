@@ -453,6 +453,33 @@ def test_pull_survives_valid_but_non_object_json(registry):
     assert {r.event_type for r in inbox.poll(UNROUTED)} == {UNPARSEABLE}
 
 
+def test_classic_action_params_drop_reserved_action_key():
+    """Parity (spec §4.5): the add-ons runtime pops __action_method_name__ out
+    of params, so a classic event carrying it must not leak it to the tenant."""
+    event = {**CHAT_EVENT, "type": "CARD_CLICKED",
+             "action": {"actionMethodName": "verdict", "parameters": []},
+             "common": {"parameters": [{"key": "__action_method_name__", "value": "verdict"},
+                                       {"key": "job_id", "value": "job-123"}]}}
+    core = normalize_event(event)
+    assert core["action"]["id"] == "verdict"
+    assert core["action"]["params"] == {"job_id": "job-123"}
+
+
+def test_capability_field_redacted_even_when_not_a_string():
+    """Redaction keys off the FIELD NAME, never the value's type: a wrapped
+    object or list must not smuggle the capability URL past the guard."""
+    url = "https://chat.google.com/bot_config_complete?token=LIVE"
+    raw = redact_capability_urls({
+        "chat": {"messagePayload": {
+            "configCompleteRedirectUri": {"url": url, "nested": {"also": url}},
+            "configCompleteRedirectUrl": [url],
+        }},
+    })
+    flat = json.dumps(raw)
+    assert "bot_config_complete?token=" not in flat
+    assert flat.count("<redacted-by-gateway>") == 2
+
+
 def test_dedupe_key_survives_both_formats():
     for name in ("addon-message-event.json", "classic-message-event.json"):
         event = {**fixture(name), "_pubsub_message_id": "ps-99"}

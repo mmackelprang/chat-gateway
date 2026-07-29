@@ -24,12 +24,15 @@ PLACEHOLDER = re.compile(r"<(SCRUBBED|REDACTED|FAKE)[^>]*>", re.I)
 # Real identities that must never reach a public repo via a fixture.
 # A real Google user id is a long digit string that never starts with 0;
 # fixtures use zero-padded synthetic ids (users/000...001) precisely so this
-# guard can tell them apart without a path allowlist.
-PII = re.compile(r"mackelprang|users/(?!0)\d{10,}|googleusercontent\.com", re.I)
+# guard can tell them apart without a path allowlist. Chat spells the SAME id
+# two ways — `users/<id>` and `spaces/X/members/<id>` — and a membership
+# capture (CG-3) will carry the latter.
+PII = re.compile(
+    r"mackelprang|(?:users|members)/(?!0)\d{10,}|googleusercontent\.com", re.I)
 
 
 def _walk(node, path="$"):
-    """Yield (json_path, key, value) for every string leaf."""
+    """Yield (json_path, value) for every string leaf."""
     if isinstance(node, dict):
         for k, v in node.items():
             yield from _walk(v, f"{path}.{k}")
@@ -37,11 +40,11 @@ def _walk(node, path="$"):
         for i, v in enumerate(node):
             yield from _walk(v, f"{path}[{i}]")
     elif isinstance(node, str):
-        yield path, path.rsplit(".", 1)[-1], node
+        yield path, node
 
 
 def fixture_files():
-    files = sorted(FIXTURES.glob("*.json"))
+    files = sorted(FIXTURES.rglob("*.json"))   # rglob: subdirectories count too
     assert files, "no fixtures found — this guard must never pass vacuously"
     return files
 
@@ -49,8 +52,11 @@ def fixture_files():
 @pytest.mark.parametrize("path", fixture_files(), ids=lambda p: p.name)
 def test_fixture_contains_no_secrets(path):
     data = json.loads(path.read_text(encoding="utf-8"))
-    for json_path, key, value in _walk(data):
-        if SUSPECT_KEY.search(key) or SUSPECT_VALUE.search(value):
+    for json_path, value in _walk(data):
+        # Match the WHOLE path, not just the leaf key: a credential nested
+        # under a suspect key ({"token": {"value": "ya29..."}}) would otherwise
+        # be judged as the innocent key `value` and walk straight through.
+        if SUSPECT_KEY.search(json_path) or SUSPECT_VALUE.search(value):
             assert PLACEHOLDER.search(value), (
                 f"{path.name}{json_path} looks like a credential and is not "
                 f"scrubbed to a <SCRUBBED>/<REDACTED> placeholder"

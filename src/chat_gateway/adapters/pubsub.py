@@ -245,8 +245,10 @@ def redact_capability_urls(event):
     """
     if isinstance(event, dict):
         return {
-            k: (REDACTED if k in CAPABILITY_FIELDS and isinstance(v, str)
-                else redact_capability_urls(v))
+            # Key match alone decides — NOT the value's type. If the field ever
+            # arrives wrapped in an object or list, recursing into it would
+            # preserve the URL inside; blanking the whole node cannot.
+            k: (REDACTED if k in CAPABILITY_FIELDS else redact_capability_urls(v))
             for k, v in event.items()
         }
     if isinstance(event, list):
@@ -266,6 +268,9 @@ def _normalize_classic(event: dict) -> dict:
         params = _action_params(act.get("parameters"))
         for k, v in _action_params(common.get("parameters")).items():
             params.setdefault(k, v)
+        # Reserved add-ons key; popped here too so the two formats round-trip
+        # to identical params if a classic event ever carries it (spec §4.5).
+        params.pop(ADDON_ACTION_KEY, None)
         # CARD_CLICKED puts form values under common.formInputs, but
         # SUBMIT_FORM (app home) uses commonEventObject.formInputs — the
         # classic envelope is not internally uniform, so check both parents.
