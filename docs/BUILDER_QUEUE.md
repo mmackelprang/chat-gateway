@@ -31,7 +31,7 @@ every inbound path; nothing in this queue widens any tenant's inbound surface.
 
 ## Queue
 
-### CG-6 · Documentation gaps: local verification, webhook sender, tier trade-off  📋 queued
+### CG-6 · Documentation gaps: local verification, webhook sender, tier trade-off  🔨 in flight
 
 | | |
 |---|---|
