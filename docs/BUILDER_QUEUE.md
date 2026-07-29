@@ -429,7 +429,7 @@ _(nothing)_
 
 ## Recently shipped
 
-### CG-6 · Documentation gaps: local verification, webhook sender, tier trade-off  ✅ shipped 2026-07-29 · PR-PLACEHOLDER
+### CG-6 · Documentation gaps: local verification, webhook sender, tier trade-off  ✅ shipped 2026-07-29 · [PR #9](https://github.com/mmackelprang/chat-gateway/pull/9)
 
 The credential-exposure fix. Adds `docs/google-cloud-setup.md` **§8a** — an
 explicit local `.env` flow (values in `.env` only; probes take an env-var
