@@ -19,6 +19,9 @@ build/
 inbox-data/
 *.log
 
+# design-asset verification dumps (generate_avatars.py --verify)
+docs/assets/_verify/
+
 # terraform
 iac/terraform/.terraform/
 iac/terraform/*.tfstate*
