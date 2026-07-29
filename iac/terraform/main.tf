@@ -12,6 +12,8 @@
 terraform {
   required_providers {
     google = { source = "hashicorp/google", version = ">= 5.0" }
+    # google_project_service_identity is beta-only.
+    google-beta = { source = "hashicorp/google-beta", version = ">= 5.0" }
   }
 }
 
@@ -33,6 +35,10 @@ variable "chat_events_publisher" {
 }
 
 provider "google" {
+  project = var.project_id
+}
+
+provider "google-beta" {
   project = var.project_id
 }
 
@@ -60,6 +66,32 @@ resource "google_pubsub_topic_iam_member" "chat_publishes" {
   topic  = google_pubsub_topic.events.name
   role   = "roles/pubsub.publisher"
   member = var.chat_events_publisher
+}
+
+resource "google_project_service" "gsuiteaddons" {
+  service            = "gsuiteaddons.googleapis.com"
+  disable_on_destroy = false
+}
+
+# The Workspace Add-ons runtime publishes as a per-project service agent that
+# does not exist until it is created. Missing it = the 2026-07-29 field
+# failure: Chat reports "<app> is not responding", the add-ons metric logs
+# code 13, and nothing reaches the topic. Full signature in
+# docs/google-cloud-setup.md.
+#
+# Honest caveat: with both this principal and chat_events_publisher bound, we
+# cannot prove which one delivered the first event — strong correlation,
+# circumstantial evidence.
+resource "google_project_service_identity" "gsuiteaddons" {
+  provider   = google-beta
+  service    = "gsuiteaddons.googleapis.com"
+  depends_on = [google_project_service.gsuiteaddons]
+}
+
+resource "google_pubsub_topic_iam_member" "addons_publishes" {
+  topic  = google_pubsub_topic.events.name
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:${google_project_service_identity.gsuiteaddons.email}"
 }
 
 resource "google_pubsub_subscription" "gateway" {
