@@ -289,6 +289,30 @@ def test_addon_unknown_payload_type_is_named_not_defaulted():
     assert core["space"] == "spaces/AAAAtestSpace"
 
 
+@pytest.mark.parametrize("fmt,event", [
+    ("addon", {"chat": {"user": {"displayName": None},
+                        "messagePayload": {"space": {"name": None},
+                                           "message": {"text": None}}}}),
+    ("classic", {"type": "MESSAGE", "space": {"name": None},
+                 "user": {"displayName": None}, "message": {"text": None}}),
+])
+def test_explicit_json_null_normalizes_instead_of_dropping_the_event(fmt, event, registry):
+    """A .get() default only fires on an ABSENT key, so an explicit null on the
+    wire used to reach InboundReply's str-declared fields and raise. That raise
+    is caught now, but a caught event is an ACKED, DROPPED event — so the
+    normalizer coerces instead, and the message is actually delivered."""
+    core = normalize_event(event)
+    assert core["envelope_format"] == fmt
+    assert core["space"] == "" and core["text"] == "" and core["sender_display"] == ""
+
+    # ...and it survives the full dispatch path rather than being counted lost.
+    inbox = Inbox()
+    assert dispatch(event, registry, inbox) == [UNROUTED]      # null space => unroutable
+    audited = inbox.poll(UNROUTED)[0]
+    assert audited.event_type == "MESSAGE"                     # NOT "UNPARSEABLE"
+    assert audited.text == "" and audited.sender_display == ""
+
+
 ADDON_REGISTRY_YAML = REGISTRY_YAML.replace('spaces/AAA"', 'spaces/AAAAtestSpace"')
 
 

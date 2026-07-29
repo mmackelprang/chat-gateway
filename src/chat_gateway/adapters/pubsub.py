@@ -191,7 +191,15 @@ def _shape(*, envelope_format: str, event_type: str, space: str, message: dict,
            sender: dict, action: dict | None, dedupe_key: str | None) -> dict:
     """The ONE internal shape both formats normalize into. Keeping this
     identical to v0.1 (plus the additive envelope_format) is what leaves
-    forwarder.py / inbox.py / registry.py untouched."""
+    forwarder.py / inbox.py / registry.py untouched.
+
+    `or ""` rather than a .get() default on the str-declared fields: a .get()
+    default only fires when the key is ABSENT, so an explicit JSON null on the
+    wire would sail through as None and make InboundReply(**core) raise. That
+    raise is caught (the subscription still drains), but a caught event is an
+    ACKED, DROPPED event — normalizing the null is strictly better than losing
+    the message.
+    """
     thread = message.get("thread") or {}
     return {
         "event_type": event_type,
@@ -199,9 +207,9 @@ def _shape(*, envelope_format: str, event_type: str, space: str, message: dict,
         "thread_key": thread.get("threadKey") or None,
         "thread_name": thread.get("name") or None,
         "message_id": message.get("name") or None,
-        "sender_display": sender.get("displayName", ""),
+        "sender_display": sender.get("displayName") or "",
         "sender_email": sender.get("email"),
-        "text": message.get("text", ""),
+        "text": message.get("text") or "",
         "action": action,
         "dedupe_key": dedupe_key,
         "envelope_format": envelope_format,
@@ -260,7 +268,7 @@ def _normalize_classic(event: dict) -> dict:
     """Classic Chat app envelope: flat type/space/message/user."""
     message = event.get("message") or {}
     sender = event.get("user") or message.get("sender") or {}
-    space = (event.get("space") or message.get("space") or {}).get("name", "")
+    space = (event.get("space") or message.get("space") or {}).get("name") or ""
     common = event.get("common") or {}
     action = None
     if event.get("type") == "CARD_CLICKED" or event.get("action"):
@@ -312,7 +320,7 @@ def _normalize_addon(event: dict) -> dict:
     # widgetUpdatedPayload carries ONLY space, and chat.space is a documented
     # non-payload sibling — three sources, and never assume message exists.
     space = (payload.get("space") or chat.get("space")
-             or message.get("space") or {}).get("name", "")
+             or message.get("space") or {}).get("name") or ""
     sender = chat.get("user") or message.get("sender") or {}
 
     params = _action_params(common.get("parameters"))
