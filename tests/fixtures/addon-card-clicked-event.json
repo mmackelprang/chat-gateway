@@ -1,0 +1,42 @@
+{
+  "commonEventObject": {
+    "userLocale": "en",
+    "hostApp": "CHAT",
+    "platform": "WEB",
+    "parameters": {
+      "__action_method_name__": "verdict",
+      "job_id": "job-123",
+      "verdict": "reject",
+      "nonce": "n-9"
+    },
+    "formInputs": {
+      "reject_reason": {
+        "stringInputs": {
+          "value": ["wrong_seniority"]
+        }
+      }
+    }
+  },
+  "chat": {
+    "user": {
+      "name": "users/000000000000000000001",
+      "displayName": "Test User",
+      "email": "agent-user@example.com",
+      "type": "HUMAN"
+    },
+    "eventTime": "2026-07-29T13:10:00.000000Z",
+    "buttonClickedPayload": {
+      "space": {
+        "name": "spaces/AAAAtestSpace",
+        "type": "DM"
+      },
+      "message": {
+        "name": "spaces/AAAAtestSpace/messages/MSG1.MSG1",
+        "thread": {
+          "name": "spaces/AAAAtestSpace/threads/MSG1"
+        }
+      },
+      "isDialogEvent": false
+    }
+  }
+}

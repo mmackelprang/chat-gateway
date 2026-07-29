@@ -21,6 +21,10 @@ agentic applications; aiteam's harness is the first consumer, not the owner.
    transports with fakes for tests. Anything not yet exercised against real
    Google endpoints carries a ⚠ LIVE-UNVERIFIED docstring flag; remove the
    flag only after a real round-trip, and note the verification date.
+   One further flag word, and only one: **⚠ SHAPE-VERIFIED `<date>`** means
+   real captured bytes replayed offline — stronger than doc-derived, weaker
+   than a live round-trip. It never replaces LIVE-UNVERIFIED, it accompanies
+   it, and it clears nothing on its own.
 4. **Per-app auth + identity allowlists.** Every request maps to one app via
    its key; an app may only send as identities the registry grants it. No
    shared keys, no identity wildcards.
@@ -48,11 +52,19 @@ one concern each; `adapters/` — webhook (tier 1), chat_api + pubsub (tier 2);
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 37 passing.
+`python` is 3.13.7) — offline, 63 passing.
 
-## Current status (2026-07-28)
+## Current status (2026-07-29)
 
-- Core + all adapters + service + client built and tested offline (37
+- **First real Chat event received 2026-07-29.** It arrived in the Workspace
+  Add-ons envelope (`commonEventObject` + `chat.messagePayload`), which the
+  v0.1 parser — written for the classic flat format — silently normalized into
+  an empty MESSAGE husk. Fixed: `normalize_event` now detects and normalizes
+  BOTH envelope formats to one internal shape, and raises rather than
+  defaulting on anything it does not recognize. Unparseable events are audited
+  under `_unrouted` as `UNPARSEABLE`, counted at `/healthz`, and still acked so
+  they cannot wedge the subscription.
+- Core + all adapters + service + client built and tested offline (63
   tests), including the aitrader contract surface: /v1/notify (severity
   routing/rendering, dedupe windows, async dispatcher with retry backoff +
   per-source delivery log, titles-only logging) and /v1/heartbeat (dead-man
@@ -65,16 +77,22 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   `chat-gateway-events` topic, the `chat-gateway-sub` pull subscription, both
   IAM bindings, SA key minted to `iac/chat-gateway-sa.json` (gitignored,
   ACL-locked to its owner). **Provisioning is not verification** — see below.
-- ⚠ LIVE-UNVERIFIED (unchanged by the provisioning above): webhook send
-  (verify threadKey param-vs-body mechanics and drop the redundant one), Chat
-  API send, Pub/Sub pull/ack, and the
-  `chat-api-push@system.gserviceaccount.com` publisher grant in the IaC. The
-  publisher binding applied cleanly, but GCP accepts bindings to
-  `*@system.gserviceaccount.com` principals **without validating they exist**,
-  so a clean apply is not evidence. That flag clears only when the principal
-  is confirmed on the Chat API "Connection settings" console page AND a real
-  event lands in the subscription; the others clear only on a real round-trip.
-  Console steps 5–7 (docs/google-cloud-setup.md) are still outstanding.
+- ⚠ LIVE-UNVERIFIED (updated honestly):
+  - Events DO reach `chat-gateway-sub` — proven 2026-07-29.
+  - **Not** proven: which principal published them. Both
+    `chat-api-push@system.gserviceaccount.com` and the add-ons service agent
+    `service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com` are
+    now bound, so the evidence is circumstantial. GCP also accepts bindings to
+    `*@system.gserviceaccount.com` principals **without validating they
+    exist**, so a clean apply was never evidence either.
+  - `PubSubPuller.pull()/acknowledge()` — still unexercised; the live pull used
+    an ad-hoc client, not our class.
+  - Add-on **CARD_CLICKED** — no interaction event has ever been captured.
+  - Chat API **send** and webhook **send** (including the threadKey
+    param-vs-body question) — unchanged, still unverified.
+  - The add-on **MESSAGE** shape is ⚠ SHAPE-VERIFIED 2026-07-29 (real captured
+    bytes replayed offline, `tests/fixtures/addon-message-event.json`). That is
+    not a live-round-trip clear and does not remove any flag above.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
   gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`

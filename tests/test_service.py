@@ -111,3 +111,23 @@ def test_healthz_honest(env, monkeypatch):
     monkeypatch.delenv("SVC_HOOK_FW")
     body = client.get("/healthz").json()
     assert body["status"] == "degraded"
+
+
+def test_healthz_reports_real_subscriber_counters(env, tmp_path):
+    """Hard rule #5: the subscriber block must read the loop's REAL counters.
+    A defaulted getattr() would report a hardcoded 0 forever after a rename —
+    exactly the silent-health failure this rule exists to prevent."""
+    from chat_gateway.adapters.pubsub import FakePuller, SubscriberLoop
+
+    _, inbox, adapter = env
+    p = tmp_path / "r.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+    registry = load_registry(p)
+    loop = SubscriberLoop(FakePuller(), registry, inbox)
+    loop.events_seen, loop.unparseable_seen, loop.dispatch_errors = 9, 2, 3
+    loop.last_poll_at = dt.datetime(2026, 7, 29, 12, 0, tzinfo=dt.timezone.utc)
+
+    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+    sub = client.get("/healthz").json()["subscriber"]
+    assert sub == {"enabled": True, "last_poll_at": "2026-07-29T12:00:00+00:00",
+                   "events_seen": 9, "unparseable_seen": 2, "dispatch_errors": 3}

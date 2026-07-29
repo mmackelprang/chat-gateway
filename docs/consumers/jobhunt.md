@@ -19,6 +19,28 @@ its review UI) if the gateway is down or never ships (R9).
 | R7 | Fail loudly in-thread | callback retries are short (0s/3s/7s); on exhaustion the gateway posts the tenant's `unreachable_message` into the thread and logs `failed`. Tier-1-only deployments can't post the notice (no Chat app) — logged as `failed-silent`; full R7 requires tier 2 |
 | R8/R9 | Separability / migration | HTTP-only; tier-1 webhook identity works today; adopting tier 2 changes transport + adds the callback, nothing else |
 
+> **Runtime note (2026-07-29):** interactions are normalized identically under
+> both Google runtimes — under the Workspace Add-ons runtime the action id
+> arrives as the reserved `__action_method_name__` parameter and is lifted into
+> `action.id`, so jobhunt's handler needs no change. ⚠ This path is
+> documentation-derived and **not yet capture-verified** — no real card tap has
+> been observed (queue item CG-3). R3/R4 must not be called verified until it is.
+
+> **⚠ R3 deviation — one field is no longer forwarded whole (2026-07-29).**
+> R3 says events forward *whole*. As of this date exactly one field is blanked
+> to `<redacted-by-gateway>` before an event is audited or POSTed to your
+> callback: Google's `configCompleteRedirectUri` (add-ons runtime) and its
+> classic-runtime spelling `configCompleteRedirectUrl`. Everything else in
+> `raw` is untouched, and no normalized field is affected.
+>
+> Why: it is an unguessable, per-message, state-changing capability URL.
+> Visiting it makes the user's **private message public in the space** and
+> re-delivers it. Forwarding it would hand every opted-in tenant that ability,
+> which hard rule #2's "never log or echo them" covers in spirit even though
+> Google's docs never call it a credential. This is a deliberate, documented,
+> single-field exception taken on security grounds — recorded here rather than
+> left as an undisclosed gap between the contract and the implementation.
+
 ## Tenant config (one file in the registry directory)
 
 ```yaml

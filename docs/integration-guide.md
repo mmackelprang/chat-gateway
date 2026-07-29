@@ -96,6 +96,35 @@ your callback is down, retries span ~10s and then the gateway posts your
 `unreachable_message` into the thread — the user always sees a tap that
 didn't land. Return any 2xx quickly; do your work async.
 
+### Which Google runtime you are behind
+
+Google delivers Chat events in two envelope formats, depending on whether the
+Chat app is deployed on the **Workspace Add-ons** runtime (`commonEventObject`
++ `chat.<x>Payload`) or as a **classic Chat app** (flat `type`/`space`/
+`message`/`user`). Both are supported and normalize to the identical
+`InboundReply` — you should never need to care which you are behind.
+
+`envelope_format` (`classic` | `addon` | `unparseable`) tells you anyway, for
+debugging.
+
+Two real differences worth knowing:
+
+- **`thread_key` may be `null` under the add-ons runtime.** Google echoes it
+  only when the sender set one. Thread against `thread_name` if you need a
+  stable handle for inbound events.
+- **`raw.…configCompleteRedirectUri` / `…Url` arrives blanked** as
+  `<redacted-by-gateway>`. It is a per-message capability URL — visiting it
+  makes the user's private message public in the space — so the gateway does
+  not propagate it. Everything else in `raw` is untouched.
+
+An event the gateway cannot parse is never delivered to you: it is audited
+under the reserved `_unrouted` id with `event_type: "UNPARSEABLE"` and counted
+at `/healthz` → `subscriber.unparseable_seen`. It is never silently reshaped
+into an empty `MESSAGE`. Its sibling `subscriber.dispatch_errors` counts the
+other failure: an event that parsed fine but could not be delivered (callback
+enqueue, in-thread reply, or audit write blew up) — it is acked and dropped
+rather than left to wedge the subscription.
+
 ## Inbound replies — `GET /v1/inbox` (tier 2, opt-in)
 
 Polling returns and clears your app's replies (each carries `space`,
