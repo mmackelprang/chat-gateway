@@ -78,4 +78,7 @@ class InboundReply(BaseModel):
     dedupe_key: str | None = None    # Pub/Sub message id — at-least-once => idempotent callbacks
     received_at: dt.datetime
     event_type: str = "MESSAGE"
+    envelope_format: str = "classic"  # classic | addon | unparseable — which
+                                      # Google runtime produced this event;
+                                      # transport metadata, not app domain
     raw: dict[str, Any] = Field(default_factory=dict)

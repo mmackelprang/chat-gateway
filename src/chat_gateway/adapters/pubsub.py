@@ -346,19 +346,52 @@ def normalize_event(event: dict) -> dict:
 NOT_AUTHORIZED_TEXT = "⛔ Not authorized for this action."
 
 
+def _unparseable_core(event) -> dict:
+    dedupe = event.get("_pubsub_message_id") if isinstance(event, dict) else None
+    return _shape(envelope_format="unparseable", event_type=UNPARSEABLE,
+                  space="", message={}, sender={}, action=None,
+                  dedupe_key=dedupe or None)
+
+
 def dispatch(event: dict, registry: Registry, inbox: Inbox,
              forwarder=None, reply_fn=None,
-             now: dt.datetime | None = None) -> list[str]:
+             now: dt.datetime | None = None,
+             on_unparseable=None) -> list[str]:
     """Route one decoded Chat event. Per app: authorization allowlist check
     (jobhunt R4 — unauthorized users get an in-thread refusal and are never
     forwarded), then inbox + optional callback push (tenant opt-in).
-    Returns the app ids that actually received the event."""
-    core = normalize_event(event)
-    candidates = registry.apps_for_space(core["space"]) or [UNROUTED]
+    Returns the app ids that actually received the event.
+
+    An event we cannot parse is audited under `_unrouted` as UNPARSEABLE and
+    is NEVER attributed to a registered app: it has no space, so it cannot be
+    routed, and a parse failure must not widen anyone's inbound surface
+    (hard rule #6). `on_unparseable` lets the subscriber loop count it for
+    /healthz without re-parsing.
+    """
     now = now or dt.datetime.now(dt.timezone.utc)
+    # Non-dict events (a bare list, a string) redact to themselves, and
+    # InboundReply(raw=<non-dict>) would then raise INSIDE the except handler —
+    # escaping dispatch and poll_once, which is the exact poison-pill wedge
+    # this whole path exists to prevent. `{}` keeps dispatch total.
+    raw = redact_capability_urls(event) if isinstance(event, dict) else {}
+    try:
+        core = normalize_event(event)
+    except Exception as exc:  # noqa: BLE001
+        # Deliberately broad. A malformed event must never wedge the
+        # subscription in a poison-pill redelivery loop (the caller still
+        # acks), and must never be silent either: audited under _unrouted,
+        # counted for /healthz, and printed. Three signals, permanently.
+        print(f"subscriber: UNPARSEABLE event, audited under {UNROUTED}: "
+              f"{type(exc).__name__}: {exc}", flush=True)
+        inbox.put(InboundReply(app=UNROUTED, received_at=now, raw=raw,
+                               **_unparseable_core(event)))
+        if on_unparseable is not None:
+            on_unparseable(exc)
+        return [UNROUTED]
+    candidates = registry.apps_for_space(core["space"]) or [UNROUTED]
     delivered = []
     for app_id in candidates:
-        reply = InboundReply(app=app_id, received_at=now, raw=event, **core)
+        reply = InboundReply(app=app_id, received_at=now, raw=raw, **core)
         app = registry.apps.get(app_id)
         if app is not None:
             if not app.allow_inbound:
@@ -391,13 +424,18 @@ class SubscriberLoop:
         self._thread: threading.Thread | None = None
         self.last_poll_at: dt.datetime | None = None
         self.events_seen = 0
+        self.unparseable_seen = 0   # honest health: silent discards must show
+
+    def _count_unparseable(self, exc: Exception) -> None:
+        self.unparseable_seen += 1
 
     def poll_once(self) -> int:
         batch = self._puller.pull()
         acks = []
         for ack_id, event in batch:
             dispatch(event, self._registry, self._inbox,
-                     forwarder=self.forwarder, reply_fn=self.reply_fn)
+                     forwarder=self.forwarder, reply_fn=self.reply_fn,
+                     on_unparseable=self._count_unparseable)
             self.events_seen += 1
             if ack_id:
                 acks.append(ack_id)
