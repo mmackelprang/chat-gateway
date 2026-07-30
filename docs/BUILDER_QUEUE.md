@@ -1,6 +1,14 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-12 shipped**: suppressed inbound is
+**Last updated:** 2026-07-30 (Builder — **CG-28 shipped**: the jobhunt consumer
+handoff doc lands as a *sibling* of the contract doc, so CG-11's five prose
+locations were not touched; its live blocker is stated as "routing resolves,
+`callback_url` is the only missing value, and jobhunt has no receiver — so
+configuring it proves R7, not R3", and the 2026-07-30 dev-registry change is
+recorded as a dated observation rather than deployed state. Two findings filed
+for jobhunt from its review: `callback_url`'s port does not match
+`review_ui.py`'s default, and `/v1/notify` would 503 for `job-hunter` for want
+of a `routes` map. Previously: **CG-12 shipped**: suppressed inbound is
 now counted at `/healthz` and still recorded nowhere, per the user's option-A
 decision, and the "reached nobody" reading of the counters was refuted in review.
 **CG-25 shipped**: `send_text()` now has the transport-error guard `send()`
@@ -116,9 +124,9 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-27 → CG-28 → CG-11 → CG-20 →
+Remaining order: **CG-27 → CG-11 → CG-20 →
 CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24, CG-8, CG-22+CG-9,
-CG-25 and CG-12 have since shipped). **CG-29** was filed by Builder from CG-25's UAT and is
+CG-25, CG-12 and CG-28 have since shipped). **CG-29** was filed by Builder from CG-25's UAT and is
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
@@ -595,53 +603,6 @@ Every restatement of it in this repo has drifted within two PRs.
 
 ---
 
-### CG-28 · Consumer handoff doc — **jobhunt**  🔨 in flight
-
-| | |
-|---|---|
-| **Origin** | user request 2026-07-29, **lost to the outage that night**; re-filed 2026-07-30 |
-| **Depends on** | nothing (CG-11 owns the prose corrections it references) |
-| **Touches** | `docs/consumers/jobhunt.md` (or a sibling handoff doc) — docs only |
-
-Same origin and same direction as CG-27:
-`D:\prj\jobhunt\docs\chat-gateway-requirements.md` (R1–R9) is what jobhunt sent
-**to** the gateway; this is the answer back, per requirement.
-
-Must cover: **R1** multi-tenant dumb pipe (registry directory mode, per-app
-`callback_url`); **R3** whole-event forwarding with `dedupe_key` — Pub/Sub is
-at-least-once, so **jobhunt's callback must be idempotent**; **R4** per-user
-authorization via `allowed_users`, refusal posted in-thread; **R6** structured
-reject reasons via selection widgets; **R7** fail-loudly-in-thread via
-`unreachable_message` after 0s/3s/7s retries; **R9** migration continuity — no
-outbound rendering change.
-
-Must document the producer card convention from `GET /v1/identities`:
-`interaction.routing_target` goes in `onClick.action.function`,
-`interaction.action_key` is `__cg_action__`. Outbound `parameters` is **always**
-an array of `{key, value}`; the **inbound** shape is a property of the RUNTIME,
-not of the direction (classic → array, add-ons → map). Do **not** compress that
-to *"send an array, receive a map"* — it is wrong, and `CLAUDE.md` pins it with a
-test for exactly that reason.
-
-**Record the 2026-07-30 finding:** on the classic runtime a selection widget's
-`onChangeAction` fires with **no button on the card at all** — a widget *is* an
-interaction trigger, contrary to the older add-ons-derived claim. Landed as
-`tests/fixtures/classic-cardclicked-onchange-event.json` (CG-22+CG-9). **CG-11
-owns correcting the prose** in `CLAUDE.md` and ADR-0001 §7; this doc must not
-race it into a contradiction.
-
-**State the live blocker precisely, because it has already been described
-wrongly once.** Routing resolves today —
-`apps_for_space('spaces/AAQAgjGR7J4')` → `['job-hunter']` — and `callback_url`
-genuinely is the only missing registry value. But **jobhunt has no receiver**:
-`pipeline/review_ui.py` is its only HTTP listener and serves `/verdict`,
-`/recheck`, `/override`, `/applied`. Setting `callback_url` before the endpoint
-exists makes every tap post *"couldn't reach jobhunt"* in-thread — which is R7
-working, not R3 working. Also note modal dialogs are impossible over Pub/Sub
-transport; selection widgets are the supported path.
-
----
-
 ### CG-29 · `poll_once`'s type-name-only print swallows the detail CG-25 just created  📋 queued
 
 | | |
@@ -737,15 +698,86 @@ old one.)_
 
 ## In flight
 
-**CG-28** — consumer handoff doc for jobhunt. Claimed 2026-07-30 on branch
-`docs/cg28-jobhunt-handoff`, in its own `git worktree`. **CG-27 is being worked
-in parallel** by a second Builder in a separate worktree; the two touch disjoint
-files apart from this queue. Per the CG-25 concurrency incident: one worktree per
-Builder, never a shared working directory.
+_(nothing from this Builder — CG-28 shipped. **CG-27 was being worked in
+parallel** by a second Builder in its own worktree; per the CG-25 concurrency
+incident, one worktree per Builder and never a shared working directory.)_
 
 ---
 
 ## Recently shipped
+
+### CG-28 · Consumer handoff doc — **jobhunt**  ✅ shipped 2026-07-30 · PR-PENDING
+
+`docs/consumers/jobhunt-handoff.md` — the gateway's answer back to jobhunt's
+R1–R9. Landed as a **sibling** of `docs/consumers/jobhunt.md` rather than an
+edit to it, which is what kept CG-11 unraced: the contract doc stays the
+contract, and the only change to it is a five-line pointer block that touches
+nothing CG-11 owns. Docs only; suite unchanged at **136**.
+
+**The live blocker, stated the way the row demanded.** Routing already resolves
+— `apps_for_space('spaces/AAQAgjGR7J4')` → `['job-hunter']`, run against the
+live gitignored `config/registry.yaml` — and `callback_url` genuinely is the
+only missing registry value; the earlier claim that `space` was also missing was
+a check run against `registry.example.yaml`. But jobhunt has **no receiver**
+(`pipeline/review_ui.py` serves `/verdict`, `/recheck`, `/override`, `/applied`,
+verified read-only in that repo), so configuring `callback_url` today proves
+**R7**, not R3. The 2026-07-30 dev-registry configuration is written up as a
+**dated observation of a development box**, with `/srv/chat-gateway/` explicitly
+named as not having it — never as deployed state.
+
+**Two findings for jobhunt, filed in the doc rather than fixed here** — both are
+in another repo or belong to the operator:
+
+| Finding | Detail |
+|---|---|
+| `callback_url`'s port is not agreed | the contract doc and the dev registry say `8710`; `pipeline/review_ui.py` defaults to **`8763`** and is where the doc recommends the receiver live. A port mismatch is **indistinguishable from having no receiver** — both are a refused connection — so it is called out rather than silently "corrected" in someone else's config |
+| `/v1/notify` would 503 for `job-hunter` | notify routing is `(app, severity) → identity` from a `routes` map, and this app has none. R3/R4/R7 do not need it; the doc says what to ask for if the lane is wanted |
+
+**CG-11 was not raced, and the review is the reason that claim is trustworthy.**
+The first draft asserted that four documents still carried the "a selection
+widget is not an interaction trigger" wording. **Only ADR-0001 §7's body does.**
+`docs/integration-guide.md` is already runtime-scoped and already records that
+`onChangeAction` fires on classic (its only staleness is calling add-ons "the
+runtime deployed today"); `CLAUDE.md` and `jobhunt.md` R6 carry a *different*
+defect — the modal-dialog inference stated as settled fact. The bad list had
+been copied from CG-11's own row without re-checking each location, and it
+shipped a sentence telling consumers to distrust a correct section of the
+integration guide. Replaced with a per-location table. **CG-11's scope is
+unchanged**, and the four locations it owns are untouched by this PR.
+
+**One claim the review killed outright:** the doc said `thread_key` is "echoed
+back on inbound events", with a populated sample. **No capture has ever carried
+`thread.threadKey`** — it normalizes to `null` on every real event — so a
+jobhunt receiver correlating on it would have got nothing. Corrected, sample set
+to `null`, and `thread_name` named as the stable inbound handle. Three more
+present-tense registry assertions that could only have been read on the dev box
+were dated or scoped, and the R7 status row was softened because the *composed*
+R7 chain (tap → 3 failed callbacks → notice delivered) has never run live —
+CG-25's UAT drove it with the Chat API also down.
+
+**UAT was run, and it is what the doc's numbers come from** — 46 checks across
+two harnesses, all green, using the real classes: a real `ThreadingHTTPServer`
+receiver for the R3 happy path, genuinely closed ports for R7 and for the Chat
+API, and a real uvicorn server for the HTTP surface. It corrected the doc twice.
+`BACKOFF_S = (0, 3, 7)` is a sequence of **gaps**, so the three attempts fall at
+absolute **0s / 3s / 10s**, not 0/3/7 — and because `process_due()` only runs
+after a successful poll, at the loop's default 5s interval they actually land at
+**0s / 5s / 15s**, measured. Also confirmed end to end: `dedupe_key` is the
+Pub/Sub message id; `__cg_action__` is lifted into `action.id` and **popped**
+from params; `action.id` is `None` and counted, never `""`, when nothing
+resolves; `configCompleteRedirectUrl` arrives `<redacted-by-gateway>`; the R4
+refusal posts `⛔ Not authorized for this action.` into the tapped thread and
+increments only `suppressed_not_authorized`; the CG-25 line reads
+`in-thread notice also failed: in-thread reply failed: ConnectError`; the tier-1
+line reads `no reply_fn (tier 1) — in-thread notice impossible`; `/healthz`
+leaks no key, no webhook URL and no `allowed_users`; `/v1/inbox` is 403 for the
+opted-out tenant; and `callback_url` on an `allow_inbound: false` app is a
+registry validation error.
+
+**Flags: none cleared, none added, none reworded.** `CLAUDE.md`'s verification
+ledger is **linked, not restated** — the doc's §11 is a per-link table for
+jobhunt's own chain (parse / pull / reply / outbound / callback), the same shape
+the contract doc already carries, and it explicitly refuses to copy the residue.
 
 ### CG-12 · Suppressed inbound is COUNTED, and still recorded nowhere  ✅ shipped 2026-07-30 · [PR #23](https://github.com/mmackelprang/chat-gateway/pull/23)
 
