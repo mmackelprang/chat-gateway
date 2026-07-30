@@ -42,9 +42,18 @@ its review UI) if the gateway is down or never ships (R9).
 > silently plausible. `action.id_source` reports `"cg_param"` | `"google"` |
 > `null`.
 >
-> **Card `parameters` is an ARRAY of `{key, value}` in the card you send**, and
-> a map in the event you receive. Write the array — the map shape is not valid
-> Cards v2. See the card convention in `docs/integration-guide.md`.
+> **Card `parameters` is an ARRAY of `{key, value}` in the card you send** — on
+> every runtime, no exceptions. Write the array; a card built with a map is not
+> valid Cards v2 and you find out at render or tap time, in front of a user.
+>
+> The **inbound** shape is a property of the *runtime*, not of the direction:
+> classic delivers an **array** under `action.parameters` (symmetric with what
+> you sent), the add-ons runtime delivers a **map** under
+> `commonEventObject.parameters`. This line previously said "a map in the event
+> you receive" full stop, which is wrong and would have had you reading a raw
+> classic event and concluding the gateway was broken. You should not need any
+> of it — the gateway normalizes both into `action.params` — see the runtime
+> table in `docs/integration-guide.md`.
 >
 > **Fetch the wiring, do not hardcode it** (CG-13, ADR-0001 D3).
 > `GET /v1/identities` returns `interaction.routing_target` (what goes in a
