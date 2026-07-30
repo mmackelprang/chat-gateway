@@ -1,10 +1,13 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-25 shipped**: `send_text()` now has
-the transport-error guard `send()` always had, so jobhunt R7/R4's reply path
-fails *typed*. **CG-29 filed** from its UAT — the fix is a net win in the R7
-delivery log and a measured loss on one R4 console line; both are evidenced, not
-argued. Previously: CG-22 + CG-9 shipped as one PR — the three real classic
+**Last updated:** 2026-07-30 (Builder — **CG-12 shipped**: suppressed inbound is
+now counted at `/healthz` and still recorded nowhere, per the user's option-A
+decision, and the "reached nobody" reading of the counters was refuted in review.
+**CG-25 shipped**: `send_text()` now has the transport-error guard `send()`
+always had, so jobhunt R7/R4's reply path fails *typed*. **CG-29 filed** from its
+UAT — the fix is a net win in the R7 delivery log and a measured loss on one R4
+console line; both are evidenced, not argued. Previously: CG-22 + CG-9 shipped as
+one PR — the three real classic
 captures are landed, scrubbed and re-derived, and the guard gained the two rules
 that had never been proven to fire. CG-4, CG-5, CG-8, CG-24 also shipped; CG-14
 closed as obsolete. **CG-26 gained a finding** — see its row.)
@@ -113,9 +116,9 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-12 → CG-27 → CG-28 → CG-11 → CG-20 →
-CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24, CG-8, CG-22+CG-9 and
-CG-25 have since shipped). **CG-29** was filed by Builder from CG-25's UAT and is
+Remaining order: **CG-27 → CG-28 → CG-11 → CG-20 →
+CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24, CG-8, CG-22+CG-9,
+CG-25 and CG-12 have since shipped). **CG-29** was filed by Builder from CG-25's UAT and is
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
@@ -217,42 +220,6 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 > appeared to contain nothing but a closed row, CG-25 and CG-26, which
 > contradicted the order line at the top of this section. Content unchanged; only
 > the closing tag moved.
-
----
-
-### CG-12 · Forensic trace for spaces owned only by opted-out tenants  🔨 in flight *(was ⏸ blocked · user decision)*
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-12)](superpowers/specs/2026-07-29-live-verification-followups-design.md) |
-| **Plan** | **not written** — the decision below settles it; mechanism note in the plan's blocked-items section |
-| **Decision** | **Option A**, user, 2026-07-29 — see the decisions table at the top |
-| **Origin** | deferred to Planner by CG-1's review |
-
-A space with registered owners who are **all** `allow_inbound: false` discards
-events with zero forensic trace: `candidates` is non-empty so the `_unrouted`
-fallback never fires, every candidate hits the authorization `continue`, and
-nothing is written anywhere — no inbox entry, no `_unrouted` record, no counter,
-nothing at `/healthz`. `aitrader`'s registry shape is exactly this.
-
-Hard rule #6 is satisfied. Rule #5's spirit is not.
-
-| | Stores | Rule-6 exposure |
-|---|---|---|
-| **A. Counter only** | one integer at `/healthz` — no space, no app id, no content | none |
-| **C. Counter + metadata record** | space, event type, timestamp, dedupe key | small but real |
-| **B. Counter + full audit record** | the whole redacted event under `_unrouted` | **material** — aitrader's traffic starts being persisted |
-
-**Decided: option A.** A bare counter on `/healthz` — no space id, no app id,
-no content. Pure rule-5 visibility with zero rule-6 surface change; `aitrader`'s
-traffic is still never persisted anywhere. The caveat the user asked to be
-carried into the code: **`/healthz` is currently unauthenticated**, which is
-precisely why option A stores nothing attributable.
-
-Mechanism (from the plan's blocked-items note): an additive
-`on_suppressed(app_id, reason)` callback on `dispatch`, mirroring the existing
-`on_unparseable`, with reasons `"opt_out"` and `"not_authorized"` — the
-counter is incremented from it and the arguments go no further.
 
 ---
 
@@ -776,6 +743,97 @@ concurrency note in CG-25's shipped entry.)_
 ---
 
 ## Recently shipped
+
+### CG-12 · Suppressed inbound is COUNTED, and still recorded nowhere  ✅ shipped 2026-07-30 · PR-PENDING
+
+**Option A**, user decision 2026-07-29, implemented as decided — a bare counter
+at `/healthz`. Options B and C were not built and nothing was added "while we
+were there". `dispatch` gained an additive `on_suppressed(app_id, reason)`
+callback mirroring `on_unparseable`, fired at both suppression sites, feeding
+bare integers on `SubscriberLoop`. **No behaviour change:** the only `-` lines
+in the whole diff are `dispatch`'s signature and its one call site; `delivered`,
+`inbox.put`, `forwarder.enqueue` and `reply_fn` are byte-identical to `main`.
+
+**Two integers, not one, and the queue's decision row says "a bare counter"
+(singular) — so this is flagged rather than slipped in.** The linked spec
+sanctions it explicitly (design §3, CG-12: *"Counting authorization refusals
+separately is additive and rule-5-aligned"*), and option A's actual constraint
+is about what is **stored** — no space, no app id, no content — which two
+`int`s satisfy exactly. Merging them would make the endpoint *less* honest: one
+number cannot distinguish "five hundred people were refused" from "five hundred
+events landed in a space nobody serves", which are completely different
+investigations. Both reasons are first-class in the tests, deliberately —
+`not_authorized` became reachable in production for the first time on
+2026-07-30, when `job-hunter` gained `allowed_users`.
+
+**Review refuted one of this PR's own claims, and it had been written into five
+places.** The first draft said the counters mean the event *"reached nobody" /
+"goes nowhere" / "every owner opted out"*. **False.** `on_suppressed` fires per
+**candidate app**, independent of the others — so in a space co-owned by an
+opted-out app and an active one, `suppressed_opt_out` increments **for an event
+that was delivered**. An operator reading the original prose would have gone
+hunting for a lost event that was never lost. All five copies now lead with
+*candidate apps that declined an event*, and the all-owners-opted-out case is
+recorded as the **gap CG-12 was filed for**, not as the counter's definition.
+Pinned by `test_a_co_owner_still_receives_an_event_that_another_owner_declined`,
+which did not exist until review asked for it — every prior test had both owners
+opted out, so the suite could not tell the two meanings apart.
+
+**Deliberately NOT an input to `status`, at any magnitude, and the reasoning is
+in the code so nobody "fixes" it with a threshold.** Both are correct behaviour:
+`opt_out` is hard rule #6 doing its job, `not_authorized` is jobhunt's R4
+allowlist doing its job. Degrading on a working guarantee teaches an operator
+that `degraded` is the normal reading, which is the ignored-warning failure mode
+rule #5 was written after. Review stress-tested the obvious counter-argument — a
+misconfigured `allowed_users` locking out the legitimate user — and it does not
+hide: `reply_fn` is unconditionally wired whenever tier 2 is on (creds are
+required for Pub/Sub, and creds imply the Chat adapter), so every
+`not_authorized` suppression puts ⛔ in front of the affected human.
+
+**The unauthenticated caveat is carried in the code, as the user asked** — but
+the first draft's *reason* was wrong and was corrected: the app id is withheld
+**not because app ids are secret**. They are not, and `/healthz` says so itself
+("Names, never values") while `inbox.pending` already publishes observed inbound
+volume keyed by app id on the same open endpoint. The operative principle is
+narrower: **no observed-traffic attribution for a tenant that opted OUT** —
+those two only ever name apps that opted **in**. Recorded because a maintainer
+applying the original wording literally would have found `/healthz` "violating"
+it twice and concluded the comment was stale.
+
+**One residue accepted with eyes open rather than claimed away:** with exactly
+one `allow_inbound: false` tenant registered — today's deployment —
+`suppressed_opt_out` is a de-facto unauthenticated activity meter for that
+tenant **by inference**, though no field names it. Taken as **volume-only**, and
+marginal beside `events_seen`, which already publishes total inbound volume on
+the same endpoint. "Stores nothing attributable" is literally true; "zero rule-6
+exposure" was slightly stronger than the facts.
+
+**Flags cleared: none, as expected** — this is offline behaviour and no Google
+endpoint is contacted. `aitrader` stays `allow_inbound: false` and locked out of
+every inbound path; its traffic is still persisted nowhere.
+
+**UAT run against a real uvicorn server over real TCP**, not TestClient: five
+events through one poll (two into an all-owners-opted-out space, one refused,
+one authorized, one into a mixed-ownership space) gave `suppressed_opt_out: 3`,
+`suppressed_not_authorized: 1`, `events_seen: 5`, `status: "ok"`, `reasons: []`.
+Every space id, sender email, display name, dedupe key and action param was
+confirmed absent from the whole response body. Rule-6 guarantees re-verified
+unchanged: `/v1/inbox` still 403 for the opted-out tenant, the refused user
+still told in-thread, and the on-disk audit directory contains files **only** for
+the two apps that received something — no file exists for either declining app.
+
+Suite **124 → 135**.
+
+**A finding for CG-27, filed rather than fixed.** `docs/consumers/aitrader.md`
+non-goal 1 states *"the gateway design has NO callback/webhook-to-consumer
+mechanism at all — inbound (where enabled for other apps) is passive polling
+only."* That has been false since the per-tenant `callback_url` push path landed
+2026-07-24; hard rule #6 names **two** opt-in paths. aitrader's guarantee is
+unaffected — it is still `allow_inbound: false`, and `callback_url` on such an
+app is a registry validation error — but the doc grounds that guarantee in "no
+such mechanism exists" rather than "the mechanism exists and this app is locked
+out of it", which is the weaker and now-wrong argument. Pre-existing, out of
+this PR's scope, and CG-27 owns that file.
 
 ### CG-25 · `send_text()`'s transport-error guard — the untyped-failure hole  ✅ shipped 2026-07-30 · PR-PENDING
 

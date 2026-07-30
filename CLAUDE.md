@@ -251,14 +251,15 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   `suppressed_opt_out` is a de-facto unauthenticated activity meter for that
   tenant **by inference**, though no field names it. Taken as **volume-only**,
   and marginal beside `events_seen`, which already publishes total inbound
-  volume on the same endpoint. Two
-  integers rather than one because the reasons are different investigations —
-  `opt_out` is rule #6 working as designed, `not_authorized` is a real human
+  volume on the same endpoint.
+  Two integers rather than one because the reasons are different investigations
+  — `opt_out` is rule #6 working as designed, `not_authorized` is a real human
   refused (jobhunt R4, newly reachable in production since `job-hunter` gained
-  an `allowed_users` list). They count **suppressions, not events** (once per
-  candidate app) and deliberately do **not** colour `status`: a guarantee
-  working is not a fault, and degrading on one teaches an operator to ignore
-  `degraded`.
+  an `allowed_users` list). Each counts **candidate apps that declined an
+  event**, not events that went nowhere: an opted-out owner increments even when
+  a co-owner of the same space *received* that same event, and `events_seen` is
+  the event count. Deliberately **not** inputs to `status` — a guarantee working
+  is not a fault, and degrading on one teaches an operator to ignore `degraded`.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
   gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`
