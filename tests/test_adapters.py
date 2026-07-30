@@ -199,8 +199,13 @@ def test_pubsub_wire_decode(registry):
 # --- poll-failure visibility (CG-7) -----------------------------------------
 #
 # NOTE: the tests below drive PubSubPuller / SubscriberLoop with a MOCK
-# transport and a fake puller. That is not a live round-trip and clears
-# nothing: PubSubPuller stays ⚠ LIVE-UNVERIFIED (see the module docstring).
+# transport and a fake puller. That is not a live round-trip and clears nothing.
+#
+# Scoped precisely, because the blanket version of this comment went stale:
+# `pull()` and `acknowledge()` WERE cleared live on 2026-07-30 (CG-24). What
+# these tests exercise is `_post`'s NON-200 branch, which is still
+# ⚠ LIVE-UNVERIFIED — no Google error response has ever been observed. Driving a
+# 429 through MockTransport does not change that.
 
 
 def test_pubsub_error_carries_status_not_response_body():

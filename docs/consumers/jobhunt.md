@@ -72,7 +72,7 @@ its review UI) if the gateway is down or never ships (R9).
 > |---|---|
 > | the interaction parse | ⚠ SHAPE-VERIFIED on real captured bytes |
 > | **the reply transport** (`ChatApiAdapter.send_text`) | ✅ **verified live 2026-07-30, both branches** — in-thread and top-level. This is R4's authorization refusal and R7's failure notice: the gateway can now demonstrably tell a user their tap was refused or did not land (CG-5). |
-> | the inbound pull | see CG-24 |
+> | **the inbound pull** (`PubSubPuller`) | ✅ **verified live 2026-07-30** — `pull()` returned real events through our own class, and `acknowledge()` was proven *selectively*: one id acked while two others kept redelivering, which is what makes the dedupe key trustworthy (CG-24). |
 > | **an interaction reaching a jobhunt callback** | ❌ still never happened. No `callback_url` is configured for `job-hunter`, so nothing has traversed the full chain. |
 >
 > So the *last* link is the outstanding one, and it is outstanding for a
@@ -117,6 +117,19 @@ Encoded as deterministic tests (`tests/test_callbacks.py`): authorized tap →
 whole-event callback with dedupe key and structured reason; unauthorized tap
 → in-thread refusal only; callback down → visible in-thread failure after
 ~10s of retries; opted-out tenants receive nothing and can't even configure
-a callback. The phone-tap-to-verdict-in-seconds end-to-end run needs the
-tier-2 Google Cloud setup (LIVE-UNVERIFIED seams) — first smoke test once
-the Chat app + subscription exist.
+a callback.
+
+**The end-to-end run is no longer blocked on unverified seams or missing
+infrastructure — it is blocked on one config value.** The Chat app
+(classic, "Agent Comms") and the subscription **exist** on `chat-gateway-gw`, and
+as of 2026-07-30 every transport link in the chain is verified live: the inbound
+pull and its selective ack, and the in-thread reply both branches. What is
+missing is a `callback_url` for `job-hunter` — see the per-link table above.
+
+For what is still unverified, read `CLAUDE.md`'s **verification ledger** rather
+than a summary here. Deliberately a pointer and not a restatement: the sentence
+that used to live in this spot said the residue was "the adapters' error
+branches", and that is **false** — it omits `chat_api.send()`'s
+`thread.threadKey` branch, which is a success path. That exact shorthand has now
+been written and corrected three times in this repo, so this file no longer
+keeps its own copy.

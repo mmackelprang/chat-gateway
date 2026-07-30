@@ -52,7 +52,7 @@ one concern each; `adapters/` — webhook (tier 1), chat_api + pubsub (tier 2);
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 63 passing.
+`python` is 3.13.7) — offline, 98 passing.
 
 ## Current status (2026-07-29)
 
@@ -64,7 +64,7 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   defaulting on anything it does not recognize. Unparseable events are audited
   under `_unrouted` as `UNPARSEABLE`, counted at `/healthz`, and still acked so
   they cannot wedge the subscription.
-- Core + all adapters + service + client built and tested offline (63
+- Core + all adapters + service + client built and tested offline (98
   tests), including the aitrader contract surface: /v1/notify (severity
   routing/rendering, dedupe windows, async dispatcher with retry backoff +
   per-source delivery log, titles-only logging) and /v1/heartbeat (dead-man
@@ -81,16 +81,69 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   **dead** — it belongs to the deleted project; do not try to authenticate with
   it and do not treat its presence as configuration.
   **Provisioning is not verification** — see below.
-- ⚠ LIVE-UNVERIFIED (updated honestly):
-  - Events DO reach `chat-gateway-sub` — proven 2026-07-29.
-  - **Not** proven: which principal published them. Both
+- **Verification ledger** (was "⚠ LIVE-UNVERIFIED"; renamed 2026-07-30 because
+  most of it is now cleared and a list titled after the flag invites a reader to
+  assume everything under it still carries one).
+
+  **What is still unexercised against Google — the complete list, because a
+  one-line summary of this was drafted as "every adapter's error branches, and
+  nothing else" and that was FALSE:**
+
+  | Surface | Note |
+  |---|---|
+  | every adapter's **non-200** branches (`webhook.send`, `chat_api.send`, `chat_api.send_text`, `pubsub._post`) | no Google error response has ever been observed |
+  | `webhook.send` + `chat_api.send`'s **`httpx.HTTPError`** branches | `send_text` has none at all — that is CG-25 |
+  | **`chat_api.send()`'s `thread.threadKey` threading branch** | a **success** path, not an error path. The live `send()` posts were unthreaded, and `send_text()`'s clear does not reach it — different field, different request shape. |
+  | **`pubsub.pull()`'s `_undecodable` branches** | malformed-payload handling. Nothing on the live subscription was malformed, so both stay reasoned-about. |
+  | **`SubscriberLoop`'s long-run thread behaviour** | not a branch at all — no multi-hour live run has happened. |
+  | **whether `messageReplyOption` is required at all** (webhook threading) | not a branch either — an unisolated *variable*. All three live threading variants included it, so "either `threadKey` location suffices" is only proven *given* it is present. The fourth variant was never run. |
+
+  **Scope of this table: every surface where behaviour against Google is not
+  established — not "code branches".** Two rows are not branches at all, and
+  that is deliberate: an unisolated experimental variable and an unobserved
+  long-run behaviour are both things a reader could otherwise assume were
+  settled.
+
+  Kept as a table rather than a sentence precisely because the sentence was
+  wrong twice. First draft: *"every adapter's error branches, and nothing
+  else"* — which omitted the two success-path rows. Second: the same shorthand
+  survived in `docs/consumers/jobhunt.md` after being corrected here. "Error
+  branches" is the *majority* of the residue, which is exactly what makes the
+  shorthand tempting and inaccurate. **Do not re-summarize this table anywhere.
+  Link to it.**
+  - Events DO reach the subscription — proven 2026-07-29, and re-proven
+    2026-07-30 through our own `PubSubPuller` rather than an ad-hoc client.
+  - **CLOSED BY CIRCUMSTANCE, not answered — stop carrying it as open work:**
+    which principal published those events. Both
     `chat-api-push@system.gserviceaccount.com` and the add-ons service agent
-    `service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com` are
-    now bound, so the evidence is circumstantial. GCP also accepts bindings to
-    `*@system.gserviceaccount.com` principals **without validating they
-    exist**, so a clean apply was never evidence either.
-  - `PubSubPuller.pull()/acknowledge()` — still unexercised; the live pull used
-    an ad-hoc client, not our class.
+    `service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com` were
+    bound in `chat-gateway-prod`, and **that project is deleted**, so the
+    question can never be settled. (GCP also accepts bindings to
+    `*@system.gserviceaccount.com` principals **without validating they exist**,
+    so a clean apply was never evidence either.) It is not a flag, not a gap to
+    close, and not a task — it is an unanswerable question about a system that no
+    longer exists. The IaC still binds **both** principals and its comments
+    explain why, so a fresh-project operator is not stranded by this being closed.
+  - **Narrowed by architecture on the live project, though — labelled as
+    inference, not verification.** `chat-gateway-gw` runs a **classic** Chat app
+    with **no `gsuiteaddons` deployment at all**, so the add-ons service agent has
+    nothing to publish through there. Events demonstrably arrive (proven through
+    our own `PubSubPuller`, 2026-07-30). It therefore follows that the
+    **Chat-API-side publisher is the operative one on `gw`**, and that the
+    add-ons binding the setup script also applies is **vestigial** on a classic
+    project. That is a deduction from the deployment model, not an observation of
+    which principal wrote the message — it does not clear anything, and it does
+    not retroactively answer the `prod` question. It is recorded because it is
+    the actionable half: a fresh classic project needs the Chat-API publisher
+    binding, and the add-ons one is carried only for a runtime we no longer
+    deploy on (see CG-19).
+  - `PubSubPuller.pull()` / `.acknowledge()` — ⚠ flag CLEARED 2026-07-30, both
+    halves, through the real class. `pull()` returned real `(ack_id, event)`
+    tuples fed straight into `normalize_event`. `acknowledge()` was proven
+    **selectively**: acking one id removed only that message while two other
+    unacked ids kept redelivering across a 60s poll — which proves the *right*
+    message was acked, not merely that the subscription drained. Not covered:
+    `_post`'s non-200 branch and the `_undecodable` branches.
   - Add-on **CARD_CLICKED** — a real interaction WAS captured 2026-07-29 and is
     now ⚠ SHAPE-VERIFIED (tests/fixtures/addon-buttonclicked-event.json). It
     found a defect rather than confirming the mapping: `action.id` normalizes to

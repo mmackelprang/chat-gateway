@@ -9,10 +9,12 @@ Routing: event space → every registered app owning an identity homed in that
 space (registry.apps_for_space). Unroutable events are audited under the
 reserved app id "_unrouted" rather than dropped.
 
-⚠ LIVE-UNVERIFIED: REST pull/acknowledge against the documented Pub/Sub v1
-surface, written off-site. The FakePuller below is what the tests drive.
-The 2026-07-29 live pull used an ad-hoc client, NOT PubSubPuller — this class
-is still unexercised against Google.
+⚠ flag CLEARED 2026-07-30 for `PubSubPuller.pull()` and `.acknowledge()` —
+both halves, driven against the live subscription through THIS class rather
+than an ad-hoc client (which is what every earlier live pull used). See the
+method docstrings for the evidence and for what is still NOT covered: the
+non-200 branch (`PubSubError`), the undecodable-payload branches, and the
+`SubscriberLoop` thread's long-run behaviour.
 
 ⚠ SHAPE-VERIFIED 2026-07-29: the add-ons MESSAGE envelope AND the add-ons
 buttonClicked (CARD_CLICKED) envelope are both normalized against REAL captured
@@ -183,7 +185,14 @@ class FakePuller:
 
 
 class PubSubPuller:
-    """REST pull client (⚠ LIVE-UNVERIFIED — see module docstring)."""
+    """REST pull client. ⚠ flag CLEARED 2026-07-30 — see `pull` / `acknowledge`.
+
+    Verification status is per method here, as in `chat_api.py`:
+
+        pull()         verified live — real (ack_id, event) tuples
+        acknowledge()  verified live — and SELECTIVELY, see below
+        _post()        the non-200 branch is still UNVERIFIED
+    """
 
     def __init__(self, subscription: str, token_provider, client: httpx.Client | None = None):
         self._sub = subscription.strip("/")
@@ -201,6 +210,19 @@ class PubSubPuller:
         return resp.json() if resp.text else {}
 
     def pull(self, max_messages: int = 10) -> list[tuple[str, dict]]:
+        """Drain up to `max_messages`, returning (ack_id, event) tuples.
+
+        ⚠ flag CLEARED 2026-07-30. Driven against the live subscription through
+        THIS class — every earlier live pull in this project used an ad-hoc
+        client, which is exactly why the flag survived until now. Real
+        `(ack_id, event)` tuples came back, ack ids were 196 characters, the
+        `_pubsub_message_id` injection below happened on real messages, and the
+        output was fed straight into `normalize_event` without adaptation.
+
+        NOT covered: the `_undecodable` branches. Nothing on the live
+        subscription was malformed, so both remain reasoned-about rather than
+        observed.
+        """
         data = self._post("pull", {"maxMessages": max_messages})
         out = []
         for received in data.get("receivedMessages", []):
@@ -221,6 +243,23 @@ class PubSubPuller:
         return out
 
     def acknowledge(self, ack_ids: list[str]) -> None:
+        """Ack the given ids. Empty list is a no-op, deliberately.
+
+        ⚠ flag CLEARED 2026-07-30, and on stronger evidence than a smoke test
+        could give. Acking message id `20755182577634163` removed **only** that
+        message, while two other unacked ids (`21328572002996378`,
+        `21339851456542226`) kept redelivering across a 60-second poll.
+
+        That distinction is the point. A batch ack followed by an empty
+        subscription proves the subscription *drained* — it does not prove the
+        RIGHT message was acked, and an ack that removed too much would look
+        identical. Selective redelivery is what separates the two, and it is
+        what makes at-least-once dedupe (`_pubsub_message_id` above) trustworthy
+        rather than assumed.
+
+        NOT covered: the non-200 branch in `_post` (see `PubSubError`), which is
+        exercised only by `httpx.MockTransport` in the tests.
+        """
         if ack_ids:
             self._post("acknowledge", {"ackIds": ack_ids})
 
