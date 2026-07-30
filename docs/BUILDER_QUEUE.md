@@ -1,6 +1,17 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-28 shipped**: the jobhunt consumer
+**Last updated:** 2026-07-30 (Builder — **CG-27 and CG-28 shipped in parallel**,
+one Builder each, in separate worktrees.
+
+**CG-27**: the aitrader consumer handoff doc, and with it the removal of a
+**false claim** that had been live in `docs/consumers/aitrader.md` since
+2026-07-24 — that the gateway has no callback-to-consumer mechanism at all.
+aitrader's guarantee was never affected; it is now stated on its real and
+stronger basis, that the mechanism exists and this app is locked out of every
+part of it. **CG-30 filed** from that item's verification pass — `info` severity
+500s on a payload `alert` accepts; measured, not predicted.
+
+**CG-28**: the jobhunt consumer
 handoff doc lands as a *sibling* of the contract doc, so CG-11's five prose
 locations were not touched; its live blocker is stated as "routing resolves,
 `callback_url` is the only missing value, and jobhunt has no receiver — so
@@ -124,9 +135,10 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-27 → CG-11 → CG-20 →
+Remaining order: **CG-11 → CG-20 →
 CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24, CG-8, CG-22+CG-9,
-CG-25, CG-12 and CG-28 have since shipped). **CG-29** was filed by Builder from CG-25's UAT and is
+CG-25, CG-12, CG-27 and CG-28 have since shipped). **CG-29** was filed by Builder from CG-25's UAT and
+**CG-30** by Builder from CG-27's verification pass; both are
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
@@ -565,41 +577,6 @@ none. The guard is the control that matters, and it runs on what lands.
 
 ---
 
-### CG-27 · Consumer handoff doc — **aitrader**  🔨 in flight
-
-| | |
-|---|---|
-| **Origin** | user request 2026-07-29, **lost to the outage that night**; re-filed 2026-07-30 |
-| **Depends on** | nothing |
-| **Touches** | `docs/consumers/aitrader.md` (or a sibling handoff doc) — docs only |
-
-The user asked for handoff docs for both consumers before the 2026-07-29 outage.
-No artifact exists — not in this repo, not in `D:\prj\aitrader`, not in memory.
-Re-filed rather than assumed done.
-
-**The direction matters.** `D:\prj\aitrader\docs\chat-gateway-requirements.md` is
-what aitrader sent **to** the gateway. This is the gateway's answer **back**:
-what is implemented, how to integrate, and what is verified versus not.
-
-Must cover: `/v1/notify` severity routing (`alert` → `aitrader-alerts` loud,
-`warning`/`info` → `aitrader-reports` quiet), the dedupe window, the async
-dispatcher with retry backoff + per-source delivery log, titles-only logging, and
-`/v1/heartbeat`'s dead-man monitor — tz-aware `weekdays` schedule rolling weekend
-due-dates to Monday, daily repeat, JSON-persisted checks, and **US market
-holidays deliberately not modeled** (the contract says widen grace).
-
-**State plainly that aitrader has no inbound path and never will.**
-`allow_inbound: false` is hard rule #6, its own contract treats any two-way path
-as a security hole in a real-money system, and `callback_url` on such an app is a
-registry validation error. This is a feature of the contract, not a gap in it.
-
-**State honestly that tier 1 is project-independent, empirically** — all four
-webhook identities delivered immediately after `chat-gateway-prod` was deleted.
-That is what makes tier 1 the floor under aitrader's alerting, which matters
-precisely because aitrader has no inbound path to fall back on.
-
-For the residue, **link `CLAUDE.md`'s verification ledger — do not restate it.**
-Every restatement of it in this repo has drifted within two PRs.
 
 ---
 
@@ -646,6 +623,85 @@ not Builder's. Filed with the observation, not a prescription.
 
 Note the R7 path does **not** have this problem: `forwarder.py:_fail_loudly` logs
 the full `{exc}`, so it gained detail where `poll_once` lost it.
+
+---
+
+### CG-30 · `info` severity 500s on a payload every other severity accepts  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-27's** verification pass — **measured, not predicted** |
+| **Depends on** | nothing |
+| **Touches** | `src/chat_gateway/notifications.py` (`render`'s info branch), plus a test |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
+
+`Notification.body` validates at `max_length=4000` (`notifications.py:40`) for
+every severity. But on the **`info`** path `render` concatenates the prefix, the
+title and the body into a single string and hands it to `OutboundMessage.text`,
+which is capped at **4000** (`envelope.py:40-41`):
+
+```python
+body_text = text + (f"\n{n.body}" if n.body else "")   # notifications.py:61
+```
+
+`alert` and `warning` are unaffected — their body becomes a card widget, so only
+the short fallback line goes through `text`.
+
+**So a `Notification` that passes its own validation cannot be rendered**, and
+the resulting `pydantic.ValidationError` is raised *inside* the request handler
+where nothing catches it. The caller gets an uncaught **HTTP 500**, not the
+422 that every other bad payload produces.
+
+Measured at the endpoint through `TestClient(..., raise_server_exceptions=False)`,
+not reasoned about:
+
+| severity | `len(title) + len(body)` | Result |
+|---|---|---|
+| `info` | 3989 | **202** |
+| `info` | 3990 | **500** |
+| `alert` | 4200 | 202 |
+| `warning` | 4200 | 202 |
+
+The bound is exactly `4000 - 11`; the 11 is `"ℹ️ [INFO] "` (10 — the emoji is two
+code points) plus the `\n`.
+
+**Not fixed here because the right fix is a design call, not a one-liner**, and
+CG-27 was docs-only. At least three options, with different contracts:
+
+1. **Truncate** the body on the info path — silent data loss, but never fails.
+2. **Tighten `Notification.body`'s limit** so the model rejects at 422 — honest
+   status code, but the limit then differs per severity, which is surprising in
+   the other direction and would need documenting.
+3. **Render `info` as a card too** when it overflows — no loss, no new limit, but
+   it breaks the contract's "info renders as plain text" (aitrader Feature 1).
+
+Option 2 is probably right, but it changes an accepted request into a rejected
+one, so it is the user's/Planner's call, not Builder's.
+
+**Documented as a sharp edge in `docs/consumers/aitrader.md` §11 in the
+meantime**, with the workaround (send `warning`, or truncate). aitrader is the
+consumer that would hit this — its contract sends `info` for weekly reports,
+which is the plausible long-body case.
+
+> **⚠ Dev-box note for whoever builds this — you will think you broke the
+> gateway, and you will not have.** Reproducing the 500 against a real uvicorn on
+> the **Windows** dev box does not return a 500 to the client: the request hangs,
+> and the server then stops answering *everything*, `/healthz` included, while the
+> process stays alive.
+>
+> **That is not this bug and not a gateway defect.** It was isolated during
+> CG-27's UAT: a **minimal FastAPI app containing no gateway code at all**, whose
+> handler does nothing but `raise RuntimeError("tiny")`, wedges the same way on
+> the same box. Any unhandled exception in a sync endpoint does it, at any
+> message size. The gateway's own behaviour is the plain 500 — uvicorn logs
+> `"POST /v1/notify HTTP/1.1" 500 Internal Server Error` before wedging, and
+> in-process `TestClient(..., raise_server_exceptions=False)` returns 500
+> cleanly.
+>
+> Practical consequence: **test this case in-process, not over TCP**, or you will
+> lose the server on every run. Whether the wedge also happens on the Linux
+> deploy target was **not** determined — it was out of CG-27's scope, and it is
+> not needed to characterize CG-30.
 
 ---
 
@@ -778,6 +834,66 @@ registry validation error.
 ledger is **linked, not restated** — the doc's §11 is a per-link table for
 jobhunt's own chain (parse / pull / reply / outbound / callback), the same shape
 the contract doc already carries, and it explicitly refuses to copy the residue.
+### CG-27 · Consumer handoff doc — **aitrader**  ✅ shipped 2026-07-30 · PR-PENDING
+
+`docs/consumers/aitrader.md` rewritten from a thin requirement→where table into
+the handoff the row asked for: the gateway's answer **back** to
+`D:\prj\aitrader\docs\chat-gateway-requirements.md`. Thirteen sections — the
+endpoint contracts as actually coded (every field, limit, status code and error
+string), severity routing/rendering, dedupe, the dispatcher + delivery log, the
+dead-man monitor, the inbound guarantee, tier-1 independence, verification
+status, sharp edges, an operator env-var checklist, and the requirement→
+implementation map. Docs only; no source touched. Suite unchanged at **136**.
+
+**The false claim was the urgent half, and the correction is stronger than the
+sentence it replaces.** Non-goal 1 said the gateway has *"NO
+callback/webhook-to-consumer mechanism at all — inbound is passive polling
+only."* False since 2026-07-24. aitrader's guarantee was never affected, but it
+was resting on a premise a reader could disprove in one grep — and would then
+reasonably doubt the guarantee too. Restated on its real basis: **the mechanism
+exists and this app is locked out of every part of it**, at four enforcement
+points (`/v1/inbox` 403; the registry-load rejection of `callback_url`; the
+dispatch skip; `/v1/identities` withholding a routing target). That claim
+*survives the gateway growing more inbound features*, which "no such mechanism
+exists" never could. Point 2 is the load-bearing one: the gateway **refuses to
+boot** in a configuration that would give aitrader an inbound path, so there is
+no runtime state in which a misconfiguration quietly opens one.
+
+**CG-12 is covered with both of the traps its own review caught** — the counters
+count *candidate apps that declined*, not events that went nowhere (an opted-out
+owner increments even when a co-owner **received** that same event), and they
+store nothing attributable because `/healthz` is unauthenticated.
+
+**Plus a precondition that neither `CLAUDE.md` nor CG-12's row states, and it
+narrows CG-12's own residue claim.** `apps_for_space` (`registry.py:161-172`)
+only nominates an app whose identity has a **non-empty `space`**. Both aitrader
+identities ship `space: ""` — they are one-way webhooks. **So as the registry is
+committed, aitrader cannot increment either counter at all.** CG-12 recorded that
+`suppressed_opt_out` is "a de-facto unauthenticated activity meter for that
+tenant by inference"; that is true only in a configuration where an operator has
+*also* filled in a space for an aitrader identity **and** added the Chat app to
+it. Not a contradiction of CG-12 — a missing precondition, documented in the
+consumer doc with the hedge rather than left as an assumption. Recorded here so
+the next reader of CG-12's residue paragraph knows what it is conditional on.
+
+**Ledger discipline held:** §10 **links** `CLAUDE.md`'s verification ledger and
+does not restate or summarize it, per that file's own instruction. **No ⚠ flag
+was cleared, added or reworded.** Env-var **names** only, per hard rule #2 — no
+webhook URL, no key, anywhere in the diff.
+
+**A real defect was found and filed rather than fixed — CG-30.** On the `info`
+path `render` concatenates title + body into one field capped at 4000, while
+`Notification.body` alone validates at 4000, so a payload that passes its own
+validation cannot be rendered and the uncaught `ValidationError` surfaces as
+**HTTP 500** instead of a 422. Measured at the endpoint, not inferred: `info`
+title+body 3989 → **202**, 3990 → **500**; `alert`/`warning` at 4200 → 202. The
+fix has at least three options with different contracts, so it is Planner's call;
+documented as a sharp edge with a workaround in the meantime.
+
+**Review caught one HIGH and it was real:** the doc said *"Filed as CG-30"* while
+no such row existed — a fabricated tracking reference, exactly the
+confidently-wrong-citation failure this repo keeps logging. Fixed by actually
+filing CG-30 in this same PR rather than by softening the sentence.
 
 ### CG-12 · Suppressed inbound is COUNTED, and still recorded nowhere  ✅ shipped 2026-07-30 · [PR #23](https://github.com/mmackelprang/chat-gateway/pull/23)
 
