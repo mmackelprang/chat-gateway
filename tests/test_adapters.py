@@ -935,38 +935,157 @@ def test_inbound_parameter_shape_is_a_runtime_property_not_a_direction_rule():
         inbound, classic        -> ARRAY under action.parameters (symmetric!)
         inbound, add-ons        -> MAP under commonEventObject.parameters
 
-    Both inbound shapes are first-hand: the add-ons map from
-    addon-buttonclicked-event.json, and the classic array from the 2026-07-29
-    production migration capture (`{"actionMethodName": "approve",
-    "parameters": [{"key": "jobId", "value": "mig-001"}]}`).
+    Both inbound shapes are now first-hand AND landed: the add-ons map from
+    addon-buttonclicked-event.json, the classic array from
+    classic-cardclicked-button-event.json. This test previously hand-transcribed
+    the classic half from a capture that had not been committed; CG-22 landed the
+    fixture and the transcription is gone.
 
     The reason this matters to a reader rather than only to us: a producer
     debugging a raw classic event who had been told "inbound is a map" would
-    conclude the gateway was broken. Real captures land in CG-22; this pins the
-    property itself so the guide cannot drift back to the simpler, wrong rule.
+    conclude the gateway was broken.
     """
-    # add-ons: the real capture carries the MAP form
     addon_cap = fixture("addon-buttonclicked-event.json")
-    assert isinstance(addon_cap["commonEventObject"]["parameters"], dict)
+    classic_cap = fixture("classic-cardclicked-button-event.json")
 
-    # classic: the ARRAY form, exactly as the migration capture delivered it
-    classic = normalize_event({
-        "type": "CARD_CLICKED", "space": {"name": "spaces/AAA"},
-        "user": {"email": "m@example.com"}, "message": {},
-        "action": {"actionMethodName": "approve",
-                   "parameters": [{"key": "jobId", "value": "mig-001"}]},
-        "common": {"formInputs": {"reason": {"stringInputs": {"value": ["good_fit"]}}}},
-    })
-    assert classic["action"] == {
-        "id": "approve",            # NATIVE identity — no __cg_action__ needed
-        "id_source": "google",
-        # the widget value rode along on the BUTTON's form inputs, with no
-        # onChangeAction anywhere: one event per decision, not two.
-        "params": {"jobId": "mig-001", "reason": "good_fit"},
-    }
+    assert isinstance(addon_cap["commonEventObject"]["parameters"], dict)
+    assert isinstance(classic_cap["action"]["parameters"], list)
+    assert classic_cap["action"]["parameters"] == [{"key": "jobId", "value": "mig-001"}]
 
     # ...and both inbound shapes flatten to the same kind of thing, which is why
     # a producer never has to know any of the above.
-    assert isinstance(classic["action"]["params"], dict)
+    assert normalize_event(classic_cap)["action"]["params"] == {
+        "jobId": "mig-001", "reason": "good_fit"}
     assert _action_params(addon_cap["commonEventObject"]["parameters"]) == {
         "probe": "topic-as-fn"}
+
+
+# --- the real CLASSIC captures (CG-22) ---------------------------------------
+
+
+def test_normalize_real_classic_button_click():
+    """REAL capture, 2026-07-30, live project `chat-gateway-gw`, real consumer space.
+
+    The classic counterpart of `test_normalize_real_addon_button_click`, and the
+    contrast is the point: the add-ons capture resolves `action.id` to None
+    because topic-as-function ate the identity slot, and this one resolves it
+    NATIVELY from `action.actionMethodName`.
+    """
+    core = normalize_event(fixture("classic-cardclicked-button-event.json"))
+    assert core["envelope_format"] == "classic"
+    assert core["event_type"] == "CARD_CLICKED"
+    assert core["space"] == "spaces/AAAAclassicRoom"
+    assert core["thread_name"] == "spaces/AAAAclassicRoom/threads/MIG1"
+    assert core["message_id"] == "spaces/AAAAclassicRoom/messages/MIG1.MIG1"
+    # the TAPPER, not the BOT that posted the card
+    assert core["sender_display"] == "Test User"
+    assert core["action"] == {
+        "id": "approve",
+        "id_source": "google",
+        # jobId from action.parameters (the ARRAY), reason harvested from
+        # common.formInputs at submit time — one event, both sources merged.
+        "params": {"jobId": "mig-001", "reason": "good_fit"},
+    }
+
+
+def test_classic_supplies_action_identity_natively_unlike_the_addon_capture():
+    """E1's headline result, now pinned against real bytes from BOTH runtimes.
+
+    `__cg_action__` is the FALLBACK that keeps a card working on the add-ons
+    side; this is why it is a fallback and not the mechanism. Neither capture
+    carries `__cg_action__` — the difference is entirely Google's.
+    """
+    classic = normalize_event(fixture("classic-cardclicked-button-event.json"))
+    addon = normalize_event(fixture("addon-buttonclicked-event.json"))
+    assert (classic["action"]["id"], classic["action"]["id_source"]) == ("approve", "google")
+    assert (addon["action"]["id"], addon["action"]["id_source"]) == (None, None)
+
+
+def test_normalize_real_classic_onchange_with_no_button_at_all():
+    """REAL capture, 2026-07-30 — and the card had NO BUTTON.
+
+    A selection widget is ITSELF an interaction trigger on the classic runtime:
+    changing the dropdown produced this whole event, with the widget's own
+    `onChangeAction.function` as the action identity and the changed value
+    harvested into params. There is no add-ons equivalent — under add-ons an
+    `onChangeAction` dies with `gsuiteaddons.googleapis.com/errors` code 13 —
+    so this is NEW coverage, not parity coverage.
+
+    Note `dedupe_key`: this is the only classic capture pulled through the real
+    `PubSubPuller`, which is what injects `_pubsub_message_id`.
+    """
+    event = fixture("classic-cardclicked-onchange-event.json")
+
+    # the card really had no button — otherwise this proves nothing
+    widgets = event["message"]["cardsV2"][0]["card"]["sections"][0]["widgets"]
+    assert not any("buttonList" in w for w in widgets)
+    selection = next(w["selectionInput"] for w in widgets if "selectionInput" in w)
+    assert selection["onChangeAction"]["function"] == "onVerdictChanged"
+
+    core = normalize_event(event)
+    assert core["envelope_format"] == "classic"
+    assert core["event_type"] == "CARD_CLICKED"
+    assert core["action"] == {
+        "id": "onVerdictChanged",
+        "id_source": "google",
+        "params": {"jobId": "onchange-001", "verdict": "approve"},
+    }
+    assert core["dedupe_key"] == "20759411966000501"
+
+
+def test_detect_envelope_labels_the_real_classic_captures():
+    for name in ("classic-cardclicked-button-event.json",
+                 "classic-cardclicked-onchange-event.json",
+                 "classic-added-to-space-event.json"):
+        assert detect_envelope(fixture(name)) == "classic"
+
+
+# --- the real CLASSIC ADDED_TO_SPACE capture (CG-9) ---------------------------
+
+
+def test_normalize_real_classic_added_to_space():
+    """REAL capture, 2026-07-30T00:24:51Z — the app added to a DM space.
+
+    Whole-dict equality on purpose: the value of this fixture is the fields that
+    are ABSENT. There is no `message` at all, so `_shape`'s empty-message arm
+    runs for real — thread/message ids resolve to None and `text` to "" without
+    a KeyError — and `action` stays None because the event is neither
+    CARD_CLICKED nor carries an `action` object.
+
+    A DM, not a ROOM. That is not a weaker case for this particular arm — a DM
+    ADDED_TO_SPACE carries no message object at all — but the ROOM variant is
+    genuinely uncovered; see tests/fixtures/README.md.
+    """
+    assert normalize_event(fixture("classic-added-to-space-event.json")) == {
+        "event_type": "ADDED_TO_SPACE",
+        "space": "spaces/_AAAAtestDm",
+        "thread_key": None,
+        "thread_name": None,
+        "message_id": None,
+        "sender_display": "Test User",
+        "sender_email": "agent-user@example.com",
+        "text": "",
+        "action": None,
+        "dedupe_key": "21339851456542226",
+        "envelope_format": "classic",
+    }
+
+
+def test_classic_added_to_space_carries_the_capability_url_at_the_ROOT():
+    """`CAPABILITY_FIELDS`' classic spelling was doc-derived until this capture.
+
+    The placement is the fact worth pinning: Google puts
+    `configCompleteRedirectUrl` at the TOP LEVEL of a classic event, not nested
+    under a payload as the add-ons `...Uri` is. `redact_capability_urls`
+    recurses, so either placement works — but a reader hunting for the field
+    should not have to guess, and the CONSTRUCTED classic fixture guessed the
+    root and turns out to have been right.
+
+    The value here is `<SCRUBBED>`, so this proves the KEY match. That the
+    redactor blanks a token-bearing VALUE is covered by
+    `test_capability_url_is_redacted_in_both_spellings`.
+    """
+    raw = fixture("classic-added-to-space-event.json")
+    assert "configCompleteRedirectUrl" in raw            # root, not nested
+    redacted = redact_capability_urls(raw)
+    assert redacted["configCompleteRedirectUrl"] == "<redacted-by-gateway>"
