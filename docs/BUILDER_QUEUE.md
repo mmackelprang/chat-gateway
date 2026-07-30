@@ -1,6 +1,17 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-23 shipped**
+**Last updated:** 2026-07-30 (Builder — **CG-19 shipped**
+([PR #30](https://github.com/mmackelprang/chat-gateway/pull/30)): the
+Marketplace-SDK comment is corrected in all three IaC paths, as a **warning that
+stays in the file** rather than a deletion — it is the exact sentence that put
+this project on the add-ons runtime. Enabling the API stays; only the
+prerequisite claim goes. Comments and illustrative defaults only, proven
+mechanically: stripping comments leaves **one** changed line repo-wide, and both
+scripts produce **byte-identical output** to `main` when run end to end against a
+stubbed `gcloud`. Suite unchanged at **144**. The `KEY_FILE` default is
+deliberately **not** renamed — see the row. **CG-35 filed.**
+
+Previously: **CG-23 shipped**
 ([PR #29](https://github.com/mmackelprang/chat-gateway/pull/29)): the
 `resp.text[:200]` echo is gone from `webhook.send` and `chat_api.send`. Measured,
 not argued: driving a real 403 through the real gateway over real TCP put the
@@ -185,15 +196,16 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-19 → CG-21 → CG-26** (CG-7, CG-4, CG-5, CG-24,
-CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30 and CG-23 have
+Remaining order: **CG-21 → CG-26** (CG-7, CG-4, CG-5, CG-24,
+CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23 and
+CG-19 have
 since shipped). **CG-29** was filed by Builder from CG-25's UAT, **CG-31** by
 Builder from CG-11+CG-20's pre-merge review, **CG-32** by Builder from CG-30's
-verification pass, and **CG-33 + CG-34** by Builder from CG-23's pre-merge review
-and UAT; all five are
+verification pass, **CG-33 + CG-34** by Builder from CG-23's pre-merge review
+and UAT, and **CG-35** by Builder from CG-19; all six are
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
-CG-19 and CG-21 carry **merge gates** — pause and report rather than
+CG-21 and CG-35 carry **merge gates** — pause and report rather than
 auto-merging; CG-17 and CG-18 stay deferred and must not be executed.
 
 **CG-9 was unblocked and shipped on 2026-07-30**, merged into CG-22's slot
@@ -331,55 +343,6 @@ as the live project rather than the deleted `chat-gateway-prod`. That does not
 make this startable. It still needs the user's **explicit go**, and it still
 carries its **merge gate**: what remains is reconciliation on the deploy and
 secret-handling path, which is exactly the class of change that pauses.
-
----
-
-### CG-19 · Correct the Marketplace-SDK comment in all three IaC paths  🔨 in flight · ⏸ merge gate
-
-| | |
-|---|---|
-| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) §5 option D, §14 |
-| **Depends on** | CG-6 (shipped — it corrected the same claim in the prose doc) |
-| **Origin** | filed by CG-6: correcting the doc left the IaC contradicting it |
-| **Merge gate** | **touches the IaC path — Builder must pause and report before merging**, per the session merge policy |
-
-`iac/gcloud-setup.sh:28`, `iac/gcloud-setup.ps1:163` and
-`iac/terraform/main.tf:76` each enable `appsmarket-component.googleapis.com`
-under a comment repeating the claim CG-6 just corrected ("Without it the app
-never appears under…"). Enabling the API is harmless and can stay; the comment
-is the defect, because it is exactly the sentence that put this project on the
-add-ons runtime.
-
-Scope is comments only — no resource changes, no behaviour change. It is filed
-separately rather than folded into CG-6 because touching `iac/` requires a user
-pause, and CG-6 was the credential fix that had to ship first.
-
-**Scope widened 2026-07-30** (CG-5's review, LOW): while in these three files,
-also update the illustrative project name and key filename. `iac/gcloud-setup.sh:3,7`,
-`iac/gcloud-setup.ps1:25,49` and `iac/terraform/main.tf:10` use
-`PROJECT_ID=chat-gateway-prod` as the example and default `KEY_FILE` to
-`chat-gateway-sa.json`. These are genuinely parameterized examples, not status
-claims — which is why this is LOW and not the same finding as CG-20's false ✅
-box — but an operator copy-pasting them would reuse a project name this repo has
-just declared deleted and a key filename it has declared dead. Still
-comments/defaults only; no resource changes.
-
-> **⚠ Builder-filed 2026-07-30, from CG-20 — there is a FOURTH location, and it
-> is not under `iac/`.** `docker-compose.yml:23` carries a commented-out mount
-> `- /srv/chat-gateway/chat-gateway-sa.json:/secrets/sa.json:ro`, so the dead key
-> filename survives in a file the scope line above does not name.
->
-> **Left unfixed deliberately**, on three grounds: it is outside CG-20's declared
-> scope, it is a deploy-path artifact rather than an IaC one, and this row already
-> owns the illustrative-filename sweep — so folding it in here keeps one item
-> responsible for the whole filename rather than splitting it across two PRs.
->
-> **LOW, and the reason is specific:** it is a **host-side example path**, not a
-> repo file. It is commented out, and `/srv/chat-gateway/` is the appserver
-> deploy target where the operator puts whatever key they actually minted. It
-> misleads a reader about the *filename*; it cannot cause the compose file to
-> mount a dead key, because nothing is mounted until somebody uncomments it and
-> edits the path anyway.
 
 ---
 
@@ -745,6 +708,68 @@ CG-30, not why it is imaginary.
 
 ---
 
+### CG-35 · Two IaC leftovers CG-19 was forbidden to touch  📋 queued · ⏸ merge gate
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-19** — both found while editing these files, both **measured** |
+| **Depends on** | nothing (CG-19 shipped the sweep that surfaced them) |
+| **Touches** | `iac/gcloud-setup.sh`, `iac/gcloud-setup.ps1` |
+| **Merge gate** | **touches the IaC path — Builder must pause and report before merging** |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
+
+Two defects in the files CG-19 owned. Neither was fixed there, and the reason is
+the same in both cases: CG-19's scope was **comments and illustrative defaults
+only**, and each of these needs something CG-19 was explicitly barred from doing.
+
+**(a) The `⚠ LIVE-UNVERIFIED` comment now contradicts `CLAUDE.md`.**
+`iac/gcloud-setup.sh:40` and `iac/gcloud-setup.ps1:93` say the Chat events
+publisher *"stays ⚠ LIVE-UNVERIFIED until the principal is confirmed on the Chat
+API Connection settings page"*. `CLAUDE.md` records that question as **CLOSED BY
+CIRCUMSTANCE, not answered** — both principals were bound in `chat-gateway-prod`,
+that project is deleted, so it *"is not a flag, not a gap to close, and not a
+task"*. The IaC therefore still presents as open work something the project has
+closed, under the one flag word hard rule #3 caps.
+
+**Why CG-19 left it:** resolving it means clearing or rewording a `⚠` flag, and
+CG-19 was told to clear, add and reword none. **This is a hard-rule-#3 change and
+needs the user's explicit sign-off** — which is exactly why it is a row and not a
+Builder fix.
+
+**Do not "fix" it by deleting the comment.** `CLAUDE.md` notes the IaC binds
+**both** principals *"and its comments explain why, so a fresh-project operator is
+not stranded by this being closed"* — the explanation is load-bearing. What is
+stale is the *pending-work framing*, not the content.
+
+**(b) The `.sh` and `.ps1` diverge on an absolute `KEY_FILE`.** The two scripts
+are meant to be siblings — the `.ps1`'s own header says *"same steps, same order,
+same output"*. They are not, for one input:
+
+| | Emits, for an absolute key path |
+|---|---|
+| `.ps1` | `GOOGLE_APPLICATION_CREDENTIALS=/srv/chat-gateway/<basename>` — it does `Split-Path -Leaf` |
+| `.sh` | `GOOGLE_APPLICATION_CREDENTIALS=/srv/chat-gateway/C:/…/key.json` — it concatenates `${KEY_FILE}` raw |
+
+**Measured, not derived from reading.** Both scripts were run end to end during
+CG-19's UAT against a stubbed `gcloud` with an absolute `KEY_FILE`; the mangled
+line is copied from the `.sh`'s real output.
+
+Low severity on its own — the `.env` block is a convenience the operator edits
+anyway — but it is a **parity** defect in a file pair whose entire contract is
+parity, and CG-19's new comments actively encourage passing a per-project
+`KEY_FILE`, which makes the input more likely, not less.
+
+**Why CG-19 left it:** fixing it changes emitted output, i.e. behaviour, which
+CG-19 forbade.
+
+**Not prescribed here:** whether the `.sh` should adopt `basename` or the `.ps1`
+should stop stripping. The `.ps1`'s behaviour looks more useful, but the `.env`
+block is a **host** path, and the two scripts may reasonably differ on whether a
+caller-supplied absolute path means *"the key is here now"* or *"the key will be
+there on the host"*. Filed with the observation, not the answer.
+
+---
+
 ## Experiments
 
 CG-15 and CG-16 **ran on 2026-07-29** and are recorded below with their results.
@@ -794,14 +819,81 @@ old one.)_
 
 ## In flight
 
-_(nothing — **CG-30 shipped** on 2026-07-30, and **CG-11 + CG-20** as one PR
-before it, and CG-27 and CG-28 before those. **CG-27 was worked in parallel** by
-a second Builder in its own worktree; per the CG-25 concurrency incident, one
-worktree per Builder and never a shared working directory.)_
+_(nothing — **CG-19 shipped** on 2026-07-30, and **CG-23** and **CG-30** before
+it, and **CG-11 + CG-20** as one PR before those. **CG-19, CG-23 and CG-30 were
+worked concurrently** by three Builders, one worktree each; per the CG-25
+concurrency incident, one worktree per Builder and never a shared working
+directory. That is also why CG-19's finding is filed as **CG-35** and not CG-32 —
+CG-32 through CG-34 were taken by the other two while it was in flight.)_
 
 ---
 
 ## Recently shipped
+
+### CG-19 · The Marketplace-SDK comment that chose this project's runtime  ✅ shipped 2026-07-30 · [PR #30](https://github.com/mmackelprang/chat-gateway/pull/30)
+
+All three IaC paths enabled `appsmarket-component.googleapis.com` under a comment
+repeating the claim CG-6 corrected. **Enabling the API stays** — harmless, free,
+and it shortens a later publish; only the *prerequisite* claim goes. Comments and
+illustrative defaults only; suite unchanged at **144**.
+
+**The correction is written to stay in the file, not to remove the words.** This
+is the sentence that put the project on the add-ons runtime, so each of the three
+now carries `⚠ CORRECTED 2026-07-30 (CG-19) — DO NOT REINSTATE THE OLD CLAIM`,
+mirroring the `⚠ CORRECTED` block CG-6 landed in `docs/google-cloud-setup.md`, and
+tells a reader choosing a runtime for a *new* project to read ADR-0001 first.
+
+**Worth recording, because it explains why the API is enabled at all:** CG-2's
+review caught that `appsmarket-component.googleapis.com` was *"declared a
+prerequisite while no IaC path enabled it"* and added the enable calls to resolve
+that — on the strength of the false claim. CG-6 then corrected the claim in the
+prose doc. This is the third act: the IaC keeps the harmless resource and loses
+the false reason.
+
+**Review caught the fix overclaiming in exactly the way the fix exists to
+correct**, and that is the entry's most useful line. The first draft quoted Google
+as saying the Marketplace SDK's settings *"are ignored for Chat outright"* and
+cited the add-ons page — but the repo's own source scopes that quote **"on an
+add-ons deployment"**, and the quotation had been truncated so it no longer
+carried the *"To deploy and test an add-on in Chat"* sentence that self-discloses
+the scope. Add-ons-derived evidence restated as universal, in files that now
+provision **classic** — the same failure class as CG-11's widget claim. Both
+sources are now quoted **with their scopes named and marked "do not merge them"**,
+and the classic-applicable citation leads.
+
+**The `KEY_FILE` / `-KeyFile` default is deliberately NOT renamed**, which
+deviates from the row's widening, and the reason is measured rather than argued.
+The `"already exists — not minting another"` branch matches on **filename only**;
+read out of the real key files (the `project_id` field only), `chat-gateway-sa.json`
+→ `chat-gateway-prod`, the **deleted** project, and the check returns True for any
+`-ProjectId`. So the trap is real. But the live key is `chat-gateway-sa-gw.json`,
+so **any** new default stops matching it too and the script would **mint a second
+service-account key** on every host that already has one. A comment fix must not
+create credentials as a side effect. Both scripts now document the trap at the
+default *and* at the check instead.
+
+**Comments-only was proven mechanically, not asserted.** Stripping comment lines
+at `origin/main` and on the branch and diffing the remainder leaves **one** changed
+line repo-wide — the `PROJECT_ID` unset-error message — and both scripts, run end
+to end against a stubbed `gcloud`, produce **byte-identical output** to `main`.
+The `.ps1` keeps its UTF-8 **BOM** and its exact non-ASCII inventory (`– — § ⚠`).
+
+**The examples now name no project at all**, rather than naming the live one:
+`chat-gateway-gw` would have been accurate, but an operator copy-pasting a usage
+line verbatim would then be running the setup script against **production**.
+`docker-compose.yml:23`'s fourth copy of the dead key filename is a placeholder.
+
+**⚠ Terraform was NOT validated and could not be** — it is not installed on this
+box, `terraform validate` has never run here, and that path has never been
+applied. The `.tf` edit is **reviewed by reading only**, exactly as CG-2 recorded.
+The comments-only proof covers it *textually*; it establishes nothing about the
+HCL's validity, which is exactly as verified (or not) as before.
+
+**Flags: none cleared, none added, none reworded** — `CLAUDE.md`'s verification
+ledger is neither restated nor summarized. **CG-35 filed** for the two things this
+item was forbidden to touch: the IaC's `⚠ LIVE-UNVERIFIED` comment now contradicts
+`CLAUDE.md`'s "closed by circumstance" record, and the `.sh`/`.ps1` diverge on an
+absolute `KEY_FILE` — the latter surfaced by the UAT run, measured not predicted.
 
 ### CG-23 · The `resp.text[:200]` echo survives in both sibling adapters  ✅ shipped 2026-07-30 · [PR #29](https://github.com/mmackelprang/chat-gateway/pull/29)
 
