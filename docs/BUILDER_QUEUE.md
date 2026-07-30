@@ -109,8 +109,8 @@ CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-25 → CG-12 → CG-11 → CG-20 →
-CG-22 → CG-19 → CG-21 → CG-23** (CG-7, CG-4, CG-5, CG-24 and CG-8 have since shipped). CG-14 is now
-`⏸ blocked` (E1 removed its rationale, so it needs a decision, not code);
+CG-22 → CG-19 → CG-21 → CG-23** (CG-7, CG-4, CG-5, CG-24 and CG-8 have since shipped). CG-14 is **✖ closed as obsolete**
+(user decision 2026-07-30 — the migration removed its premise; never built);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
 auto-merging; CG-9 stays blocked on a human; CG-17 and CG-18 stay deferred and
 must not be executed.
@@ -129,13 +129,50 @@ meant to be closed, say so and it comes straight back out.
 
 ---
 
-### CG-14 · Interaction dead-man (`interaction-canary`)  ⏸ blocked · rationale superseded by E1
+### CG-14 · Interaction dead-man (`interaction-canary`)  ✖ CLOSED AS OBSOLETE · user decision 2026-07-30
 
-| | |
-|---|---|
-| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **§8** |
-| **Blocked by** | its own justification, which E1 largely removed. Needs a decision before any code. |
-| **Built?** | **No.** Nothing was implemented — flagged here rather than quietly kept. |
+**Never built. Nothing to remove.** Closed by user decision, and the reason is
+recorded here rather than left as a status word, because "obsolete" without a
+premise is indistinguishable from "we forgot".
+
+**The premise the migration removed.** ADR-0001 §8 designed this detector for one
+specific failure: silent breakage of **undocumented** routing. Under the add-ons
+runtime a card reached the gateway only via the topic-as-function pattern, which
+Google does not document. If Google withdrew it, no event would reach the topic,
+no counter would move, no exception would be raised, and `/healthz` would report
+`ok` indefinitely. A weekly dead-man cleared by any `CARD_CLICKED` was a
+proportionate answer to an *invisible* failure.
+
+**Production migrated to a classic Chat app, so that failure mode does not
+exist.** Card clicks arrive by Google's own documented mechanism with
+`action.id` populated natively. There is no undocumented dependency left to
+break — ADR-0001's banner puts it as "not mitigated, *removed*". The detector
+would now be watching for the disappearance of something that cannot disappear
+the way it was designed to.
+
+**And the residual value it might still have had is already delivered, more
+precisely, by CG-7.** The weaker general question — *should the gateway alert when
+inbound goes quiet?* — is answered better than a 7-day canary ever could:
+
+| CG-14 would have caught | CG-7 catches it as | Latency |
+|---|---|---|
+| a dead subscription / revoked key / wrong subscription name / quota exhaustion | `N consecutive poll failures`, naming the HTTP status | ~15s |
+| a polling thread that died | `the polling thread was started and is NOT RUNNING` | immediate |
+| a thread alive but wedged | `seconds_since_last_poll` over budget | ≤ 5 min |
+
+Every one of those is **more specific and 2000× faster** than "no interaction in
+7 days", and none of them raises a false alarm on a genuinely quiet week — which
+was the accepted-but-real cost of the canary design.
+
+**What is genuinely NOT covered, stated so this closure is honest:** an app
+removed from a space, or a producer that stops shipping interactive cards. Both
+leave polling perfectly healthy and inbound legitimately silent. Neither is
+currently detected. If that ever matters it is a **new** item with its own
+justification — do not reopen this row, whose rationale was specific to a runtime
+this project no longer deploys on.
+
+<details>
+<summary>Original blocked-item text, kept for the record</summary>
 
 **Do not build this yet.** Its entire purpose was detecting *silent breakage of
 undocumented routing*: if Google withdrew topic-as-function, no event would
@@ -399,6 +436,10 @@ cost honestly, as CG-7 did: Google's error prose is lost, and status + phrase is
 what a caller can act on. Not folded into CG-4/CG-5 because those are docstring
 and flag-scope changes that auto-merge, while this changes runtime error text on
 the secret-handling path and therefore needs a pause.
+
+---
+
+</details>
 
 ---
 
