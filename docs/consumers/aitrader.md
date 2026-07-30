@@ -476,5 +476,9 @@ and `registry.apps` reports `key_configured` — booleans and names, never value
 
 ---
 
-*Companion doc: [`jobhunt.md`](jobhunt.md) — the two-way tenant, for contrast.
-Gateway constitution: [`../../CLAUDE.md`](../../CLAUDE.md).*
+*Companion docs: [`jobhunt-handoff.md`](jobhunt-handoff.md) — the same answer-back
+for the **two-way** tenant, and the sharpest available contrast with §8 — plus
+[`jobhunt.md`](jobhunt.md), its contract of record. Note the two consumers are
+laid out differently: jobhunt keeps contract and handoff as separate files, while
+aitrader's are merged into this one. Gateway constitution:
+[`../../CLAUDE.md`](../../CLAUDE.md).*
