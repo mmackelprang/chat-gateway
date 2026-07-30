@@ -113,12 +113,16 @@ def test_healthz_honest(env, monkeypatch):
     assert body["status"] == "degraded"
 
 
-def test_healthz_reports_real_subscriber_counters(env, tmp_path):
+def test_healthz_reports_real_subscriber_counters(env, tmp_path, monkeypatch):
     """Hard rule #5: the subscriber block must read the loop's REAL counters.
     A defaulted getattr() would report a hardcoded 0 forever after a rename —
-    exactly the silent-health failure this rule exists to prevent."""
+    exactly the silent-health failure this rule exists to prevent.
+
+    The exact-dict assertion is deliberate: a subset check would let a silent
+    rename ship."""
     from chat_gateway.adapters.pubsub import FakePuller, SubscriberLoop
 
+    monkeypatch.setenv("GATEWAY_GCP_BILLING", "disabled")
     _, inbox, adapter = env
     p = tmp_path / "r.yaml"
     p.write_text(REGISTRY_YAML, encoding="utf-8")
@@ -130,9 +134,109 @@ def test_healthz_reports_real_subscriber_counters(env, tmp_path):
 
     client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
     sub = client.get("/healthz").json()["subscriber"]
-    assert sub == {"enabled": True, "last_poll_at": "2026-07-29T12:00:00+00:00",
-                   "events_seen": 9, "unparseable_seen": 2, "dispatch_errors": 3,
-                   "interactions_without_action_id": 5}
+    assert sub == {
+        "enabled": True, "last_poll_at": "2026-07-29T12:00:00+00:00",
+        "events_seen": 9, "unparseable_seen": 2, "dispatch_errors": 3,
+        "interactions_without_action_id": 5,
+        "poll_failures": 0, "consecutive_poll_failures": 0, "last_poll_error": None,
+        "billing_declared": "disabled",
+        "quota_note": ("free-tier exhaustion fails CLOSED — inbound stops with no "
+                       "other symptom; consecutive_poll_failures is the signal"),
+    }
+
+
+# --- honest liveness: status is computed FROM reasons (CG-7) ------------------
+
+
+def _loop_with(tmp_path, inbox, **attrs):
+    from chat_gateway.adapters.pubsub import FakePuller, SubscriberLoop
+
+    p = tmp_path / "r.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+    registry = load_registry(p)
+    loop = SubscriberLoop(FakePuller(), registry, inbox)
+    for k, v in attrs.items():
+        setattr(loop, k, v)
+    return registry, loop
+
+
+def test_healthz_degrades_when_subscriber_has_never_polled(env, tmp_path):
+    """The claude-mem failure shape, exactly: green health over a dead input.
+
+    An enabled subscriber with last_poll_at=None has never successfully reached
+    Pub/Sub on this process. Before this, healthz reported "ok" indefinitely.
+    """
+    _, inbox, adapter = env
+    registry, loop = _loop_with(tmp_path, inbox)          # last_poll_at stays None
+    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("never completed a poll" in r for r in body["reasons"])
+
+
+def test_healthz_degrades_on_consecutive_poll_failures_and_recovers(
+        env, tmp_path, monkeypatch):
+    """Quota exhaustion, a revoked key and a deleted subscription are
+    indistinguishable from in-process and all fail CLOSED — so the signal is the
+    failure run, not the cause. And it must clear on recovery, not stick."""
+    from chat_gateway.service import POLL_FAILURE_THRESHOLD, ROUTING_TARGET_ENV
+
+    # A configured deployment, so the poll-failure run is the ONLY reason and
+    # the recovery assertion below is about it and nothing else.
+    monkeypatch.setenv(ROUTING_TARGET_ENV, "projects/p/topics/t")
+    _, inbox, adapter = env
+    registry, loop = _loop_with(
+        tmp_path, inbox,
+        last_poll_at=dt.datetime(2026, 7, 29, 12, 0, tzinfo=dt.timezone.utc),
+        poll_failures=7,
+        consecutive_poll_failures=POLL_FAILURE_THRESHOLD,
+        last_poll_error="PubSubError HTTP 429",
+    )
+    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("HTTP 429" in r and "inbound is DOWN" in r for r in body["reasons"])
+
+    loop.consecutive_poll_failures = 0
+    loop.last_poll_error = None
+    body = client.get("/healthz").json()
+    assert body["status"] == "ok" and body["reasons"] == []
+    assert body["subscriber"]["poll_failures"] == 7      # history is not erased
+
+
+def test_healthz_degrades_when_tier2_is_on_but_no_routing_target(
+        env, tmp_path, monkeypatch):
+    """CG-13's leftover. Tier 2 enabled with no routing target is not an
+    unconfigured extra: card interactions are IMPOSSIBLE, /v1/identities already
+    tells every producer so, and nothing else on this endpoint would show it."""
+    from chat_gateway.service import ROUTING_TARGET_ENV
+
+    monkeypatch.delenv(ROUTING_TARGET_ENV, raising=False)
+    _, inbox, adapter = env
+    registry, loop = _loop_with(
+        tmp_path, inbox,
+        last_poll_at=dt.datetime(2026, 7, 29, 12, 0, tzinfo=dt.timezone.utc),
+    )
+    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    reason = next(r for r in body["reasons"] if ROUTING_TARGET_ENV in r)
+    assert "topics/<TOPIC>" in reason          # says what to set, not just that it is unset
+
+    # ...and it is not raised when tier 2 is off: with no subscriber there is no
+    # inbound path for a routing target to be missing from.
+    off = TestClient(create_app(registry, inbox, {"webhook": adapter})).get("/healthz").json()
+    assert off["status"] == "ok" and off["reasons"] == []
+
+
+def test_healthz_reasons_explain_a_degraded_registry(env, monkeypatch):
+    """`degraded` with no explanation makes an operator diff the body against a
+    known-good copy. Say why."""
+    client, _, _ = env
+    monkeypatch.delenv("SVC_HOOK_FW")
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("does not resolve" in r for r in body["reasons"])
 
 
 # --- the portable card convention (CG-13 / ADR-0001 D3) ----------------------

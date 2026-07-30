@@ -16,6 +16,7 @@ Contract notes baked in here:
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -42,6 +43,11 @@ from .registry import Registry, RegistryError
 #: HTTP-endpoint deployment it is a URL (ADR-0001 D3's portability table).
 ROUTING_TARGET_ENV = "CHAT_GATEWAY_INTERACTION_ROUTING_TARGET"
 
+#: Consecutive failed polls before /healthz calls inbound dead. Three at the
+#: default 5s interval is ~15s — long enough to ride out a blip, short enough
+#: that a real outage is visible within one dashboard refresh.
+POLL_FAILURE_THRESHOLD = 3
+
 
 def _interaction_config(registry: Registry, app_id: str) -> dict | None:
     """The card convention, published so producers never hardcode it.
@@ -51,8 +57,6 @@ def _interaction_config(registry: Registry, app_id: str) -> dict | None:
     whose taps go nowhere, and finding that out at tap time is the failure this
     endpoint exists to prevent.
     """
-    import os
-
     if not registry.apps[app_id].allow_inbound:
         return {"enabled": False,
                 "reason": "inbound is disabled for this app (hard rule #6) — "
@@ -259,7 +263,13 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     @app.get("/healthz")
     def healthz():
         """Honest health: real resolvability + real liveness — never a
-        hardcoded OK (claude-mem pilot lesson; aiteam plan F18 gate 2)."""
+        hardcoded OK (claude-mem pilot lesson; aiteam plan F18 gate 2).
+
+        `status` is computed FROM `reasons`, not alongside it. Anything that can
+        make this endpoint degraded must be able to say so in words, because an
+        operator seeing "degraded" and no reason has to diff the body against a
+        known-good copy to learn anything.
+        """
         hb_all = [c for s in registry.apps for c in checks.list_for(s)]
         body = {
             "version": __version__,
@@ -281,14 +291,71 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                  # runtime under us. Rising counts here are one of the few
                  # observables if topic-as-function routing ever breaks.
                  "interactions_without_action_id":
-                     subscriber.interactions_without_action_id}
+                     subscriber.interactions_without_action_id,
+                 "poll_failures": subscriber.poll_failures,
+                 "consecutive_poll_failures": subscriber.consecutive_poll_failures,
+                 "last_poll_error": subscriber.last_poll_error,
+                 # DECLARED, not detected — the field name says so. Detecting it
+                 # means calling Cloud Billing / Service Usage: more scopes, more
+                 # IAM, more calls. And on 2026-07-29 Google's own
+                 # pubsub.googleapis.com/topic/send_request_count read ZERO after
+                 # a message had provably published, which is a standing argument
+                 # against trusting its telemetry for this — recorded, with the
+                 # architectural consequence, at docs/google-cloud-setup.md:117.
+                 "billing_declared": os.environ.get("GATEWAY_GCP_BILLING", "unknown"),
+                 "quota_note": (
+                     "free-tier exhaustion fails CLOSED — inbound stops with no "
+                     "other symptom; consecutive_poll_failures is the signal"
+                 )}
                 if subscriber is not None
                 else {"enabled": False, "note": "tier 2 not enabled (GATEWAY_ENABLE_PUBSUB=0)"}
             ),
         }
-        degraded = any(
-            not i["env_resolved"] for i in body["registry"]["identities"].values()
-        ) or any(not a["key_configured"] for a in body["registry"]["apps"].values())
-        return JSONResponse(status_code=200, content={"status": "degraded" if degraded else "ok", **body})
+
+        reasons: list[str] = []
+        for name, i in body["registry"]["identities"].items():
+            if not i["env_resolved"]:
+                reasons.append(f"identity {name!r}: env var does not resolve")
+        for app_id, a in body["registry"]["apps"].items():
+            if not a["key_configured"]:
+                reasons.append(f"app {app_id!r}: key env var is not set")
+        sub = body["subscriber"]
+        if sub["enabled"]:
+            if sub["last_poll_at"] is None:
+                reasons.append(
+                    "subscriber is enabled but has never completed a poll — "
+                    "inbound has never worked on this process"
+                )
+            elif sub["consecutive_poll_failures"] >= POLL_FAILURE_THRESHOLD:
+                reasons.append(
+                    f"subscriber: {sub['consecutive_poll_failures']} consecutive "
+                    f"poll failures (last: {sub['last_poll_error']}) — inbound is "
+                    "DOWN. Revoked key, deleted subscription, wrong subscription "
+                    "name, or quota exhaustion all look like this and all fail closed"
+                )
+            # CG-13 left this to CG-7 rather than colliding with the rewrite.
+            # It DEGRADES, deliberately: with tier 2 on and no routing target,
+            # inbound interactions are not merely unconfigured, they are
+            # impossible — /v1/identities already tells every producer
+            # `interaction.enabled: false`, so a half-built deployment can look
+            # healthy while no card any tenant ships can ever work. That is the
+            # silent-inbound shape rule #5 exists for, so it is a reason and not
+            # a footnote. The text names the variable and the value to set,
+            # because "unset" alone sends an operator to the docs.
+            if not os.environ.get(ROUTING_TARGET_ENV, ""):
+                reasons.append(
+                    f"subscriber is enabled but {ROUTING_TARGET_ENV} is unset — "
+                    "card interactions cannot reach this gateway at all and "
+                    "/v1/identities reports interaction.enabled=false to every "
+                    "producer; set it to the Pub/Sub TOPIC path "
+                    "(projects/<PROJECT_ID>/topics/<TOPIC>) — the topic, NOT the "
+                    "subscription"
+                )
+        # Names, never values: identity names and app ids are non-secret (they
+        # live in the committed registry); the poll error is a type and a status.
+        # Load-bearing, because this endpoint is UNAUTHENTICATED.
+        return JSONResponse(status_code=200,
+                            content={"status": "degraded" if reasons else "ok",
+                                     "reasons": reasons, **body})
 
     return app
