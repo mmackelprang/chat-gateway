@@ -96,10 +96,17 @@ CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-4 → CG-5 → CG-8 → CG-12 → CG-11 → CG-20 →
-CG-22 → CG-19 → CG-21** (CG-7 has since shipped). CG-14 is now `⏸ blocked`
-(E1 removed its rationale, so it needs a decision, not code); CG-19 and CG-21
-carry **merge gates** — pause and report rather than auto-merging; CG-9 stays
-blocked on a human; CG-17 and CG-18 stay deferred and must not be executed.
+CG-22 → CG-19 → CG-21 → CG-23** (CG-7 has since shipped). CG-14 is now
+`⏸ blocked` (E1 removed its rationale, so it needs a decision, not code);
+CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
+auto-merging; CG-9 stays blocked on a human; CG-17 and CG-18 stay deferred and
+must not be executed.
+
+**CG-11 is still open, and was omitted from the user's 2026-07-30 priority
+list** — recorded here rather than silently skipped or silently built. The wrong
+claim it exists to fix is live in `CLAUDE.md` and in `docs/consumers/jobhunt.md`
+R6 as of that date, so Builder is treating it as genuinely queued. If it was
+meant to be closed, say so and it comes straight back out.
 
 ---
 
@@ -380,6 +387,45 @@ add-ons runtime.
 Scope is comments only — no resource changes, no behaviour change. It is filed
 separately rather than folded into CG-6 because touching `iac/` requires a user
 pause, and CG-6 was the credential fix that had to ship first.
+
+---
+
+### CG-23 · The `resp.text[:200]` echo survives in both sibling adapters  📋 queued · ⏸ merge gate
+
+| | |
+|---|---|
+| **Rule** | **hard rule #2** — secrets are env-only; error paths name the identity, not the URL |
+| **Origin** | filed by CG-7: fixing this in `PubSubError` left two siblings with the identical defect |
+| **Depends on** | nothing (CG-4 and CG-5 touch these files' docstrings only and do not collide) |
+| **Merge gate** | **touches the secret-handling path — Builder must pause and report before merging**, per the session merge policy |
+
+CG-7 removed `resp.text[:200]` from the Pub/Sub error path on the grounds that
+**a Google error body can quote the request, and the request path names the
+subscription.** That argument applies with *more* force two files over:
+
+| Location | What the URL embeds |
+|---|---|
+| `src/chat_gateway/adapters/webhook.py:64` | `key` **and** `token` — the webhook URL *is* a bearer credential for posting as that identity |
+| `src/chat_gateway/adapters/chat_api.py:83` | a space id (non-secret) — lower severity, same class |
+
+Two things make this worth its own item rather than a shrug:
+
+1. **The same file already does it correctly.** `chat_api.py:103`
+   (`send_text`, the jobhunt R7 / R4 path) raises with **status only**. So the
+   file contradicts itself, and the wrong half is the one on the
+   credential-bearing adapter.
+2. **We do not control the body.** Whether Google echoes the request today is
+   not the question — rule #2 is written so the answer does not have to be
+   known. `docs/google-cloud-setup.md` §8a exists because a webhook URL leaked
+   once already, and there is no rotate-in-place: recovery is delete-and-recreate
+   the webhook by hand.
+
+Expected shape: the `PubSubError` treatment applied to `WebhookError` and
+`ChatApiError` — verb/identity + HTTP status + reason phrase, no body. State the
+cost honestly, as CG-7 did: Google's error prose is lost, and status + phrase is
+what a caller can act on. Not folded into CG-4/CG-5 because those are docstring
+and flag-scope changes that auto-merge, while this changes runtime error text on
+the secret-handling path and therefore needs a pause.
 
 ---
 
