@@ -24,12 +24,16 @@ of failing closed is a less informative console line; the cost of failing open
 is a credential, and only one of those can be undone.
 
 **Membership is earned per class, not extended to everything this repo
-defines.** `PubSubError` is deliberately OUT: `_post` passes
-`httpx.Response.reason_phrase` into it, httpcore populates that from the
-literal HTTP status line, and so its `str()` carries server-controlled bytes
-(CG-33, measured — not the fixed local table its own docstring claims). It is
-excluded until that row lands, and `tests/test_error_surfaces.py` pins both the
-exclusion and the reason.
+defines**, and `PubSubError` is now the worked example of the earning rather
+than of the exclusion. It was OUT under CG-29 for a property of `_post`, not of
+the class: `_post` passed `httpx.Response.reason_phrase`, which httpcore fills
+from the literal HTTP status line, so the message carried server-controlled
+bytes — measured, and the opposite of what its own docstring claimed. CG-33
+replaced that with a local `httpx.codes` lookup and the class joined the set.
+What makes membership *checkable* rather than asserted is the structural guard
+in `tests/test_error_surfaces.py`, which reads every construction site of every
+marked class: joining the set is how a class's raise sites get enrolled in it,
+and leaving the set is how they stop being read.
 """
 
 from __future__ import annotations

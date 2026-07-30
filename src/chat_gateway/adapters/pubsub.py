@@ -148,27 +148,38 @@ REDACTED = "<redacted-by-gateway>"
 CAPABILITY_FIELDS = ("configCompleteRedirectUri", "configCompleteRedirectUrl")
 
 
-# DELIBERATELY NOT a GatewayAuthoredError, and the omission is the design
-# working rather than an oversight (CG-29). That marker means "every byte of
-# this message was written here", which entitles `describe_exception` to print
-# it in full — and this one is not: `_post` passes `resp.reason_phrase`, which
-# httpcore populates from the literal HTTP status line, so a server can put
-# arbitrary bytes in `.reason` and in `str()`. Measured, not inferred: a
-# response built with `extensions={"reason_phrase": b"..."}` returns exactly
-# that. The docstring below still claims otherwise; making the two agree is
-# CG-33's row, and `tests/test_error_surfaces.py` pins the exclusion so
-# whoever ships CG-33 has to decide, explicitly, whether this now qualifies.
-class PubSubError(RuntimeError):
+# MARKED gateway-authored as of CG-33, having been excluded by CG-29 for a
+# reason that no longer holds. The exclusion was never about this class — it was
+# about `_post`, which passed `resp.reason_phrase` (the wire value) as the
+# `reason` argument. With that replaced by a local-table lookup the message is
+# verb + HTTP status + a phrase out of `httpx.codes`: structurally the same
+# string `ChatApiError` and `WebhookDeliveryError` already carry the marker for.
+#
+# Symmetry is the weaker half of the argument. The load-bearing half is that
+# `test_every_marked_message_interpolates_only_names_and_statuses` reads the
+# construction sites of MARKED classes only — so while this one sat outside the
+# set, the fix below rested on a single behavioural test, where its two siblings'
+# identical CG-23 fix was ALSO machine-checked against the next edit. Marking it
+# is what enrolls `_post`'s raise site in that guard.
+class PubSubError(GatewayAuthoredError, RuntimeError):
     """A Pub/Sub REST call failed, carrying the HTTP status.
 
     Typed rather than a bare RuntimeError so SubscriberLoop can classify a
     failure without regexing an error message. It also stops echoing
     `resp.text[:200]`: a Google error body can quote the request, and the
     request path names the subscription — hard rule #2 says names, not values.
-    The reason phrase is a fixed HTTP string and carries nothing.
+    The reason phrase is a fixed local string and carries nothing — but only
+    because `_post` looks it up in `httpx.codes`. The obvious spelling,
+    `resp.reason_phrase`, is NOT fixed: httpx returns the bytes off the HTTP/1.1
+    status line whenever the server sends any. This docstring asserted the safe
+    property while the code did the unsafe thing — landed with CG-7 on
+    2026-07-29, corrected by CG-33 the next day. Read the raise site, not this
+    line, if you are checking.
 
     The cost is honest: we lose Google's error prose. Status + phrase is what
     the loop can act on.
+
+    `RuntimeError` stays second so `except RuntimeError` still catches this.
     """
 
     def __init__(self, verb: str, status_code: int, reason: str = ""):
@@ -242,7 +253,16 @@ class PubSubPuller:
             headers={"Authorization": f"Bearer {self._tokens()}"},
         )
         if resp.status_code != 200:
-            raise PubSubError(verb, resp.status_code, resp.reason_phrase)
+            # The phrase comes off the LOCAL table, not `resp.reason_phrase` —
+            # that property is the wire value (httpx returns
+            # `extensions["reason_phrase"]`, which httpcore fills from the
+            # HTTP/1.1 status line). See webhook.py's raise site for the full
+            # note. This is the last of the three adapters to be brought onto
+            # the local lookup; CG-23 did the other two and could not touch this
+            # file — a concurrent Builder owned it — which is why the class
+            # docstring above claimed a property this line did not have.
+            reason = httpx.codes.get_reason_phrase(resp.status_code)
+            raise PubSubError(verb, resp.status_code, reason)
         return resp.json() if resp.text else {}
 
     def pull(self, max_messages: int = 10) -> list[tuple[str, dict]]:
@@ -909,15 +929,20 @@ class SubscriberLoop:
                     f"{type(exc).__name__} HTTP {exc.status_code}"
                     if isinstance(exc, PubSubError) else type(exc).__name__
                 )
-                # NOT `describe_exception`, on purpose, and for two independent
-                # reasons — do not "unify" this with the two sites above (CG-29).
-                # First, `PubSubError` is not in the marked set (see its class
-                # comment: CG-33), so describe_exception would give a bare type
-                # name and DROP the HTTP status, which is the one thing an
-                # operator can act on here. Second, this string is `/healthz`'s
-                # `last_poll_error` and /healthz is UNAUTHENTICATED — its
-                # audience is not the console's, so its field format is a
-                # published surface rather than a log line.
+                # NOT `describe_exception`, on purpose — do not "unify" this
+                # with the two sites above (CG-29). ONE reason, and it is
+                # sufficient on its own: this string is `/healthz`'s
+                # `last_poll_error`, `/healthz` is UNAUTHENTICATED, and its
+                # audience is not the console's — so the field format is a
+                # published surface rather than a log line, pinned as an exact
+                # string in `test_adapters.py` and `test_service.py`.
+                #
+                # CG-29 gave a second reason and CG-33 removed it. That reason
+                # was "`PubSubError` is unmarked, so describe_exception would
+                # drop the HTTP status"; `PubSubError` is marked now, and the
+                # helper would render it in full — `PubSubError: pubsub pull
+                # failed: HTTP 403 Forbidden`, status included. Do not go
+                # looking for the argument that is no longer here.
                 #
                 # Type + status only. The previous version printed the exception
                 # message, which for a Pub/Sub failure embedded resp.text[:200].

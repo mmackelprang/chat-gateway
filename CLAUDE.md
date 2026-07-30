@@ -60,7 +60,7 @@ printed in full (see below); `adapters/` — webhook (tier 1), chat_api + pubsub
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 190 passing.
+`python` is 3.13.7) — offline, 202 passing.
 
 ## Current status (2026-07-30)
 
@@ -299,22 +299,39 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   paid for: `send_text()` gained a typed transport error, so transport failure
   and non-200 both reached the console as `ChatApiError` and nothing else.
   `errors.py` now marks the classes whose messages this repo authors
-  (`ChatApiError`, `WebhookDeliveryError`, `UnrecognizedEventError`) and
-  `describe_exception` prints those in full, everything else by type alone.
+  (`ChatApiError`, `WebhookDeliveryError`, `UnrecognizedEventError`, and
+  `PubSubError` since CG-33) and `describe_exception` prints those in full,
+  everything else by type alone.
   **An ALLOWLIST, deliberately** — a denylist of known-unsafe types prints the
   next unanticipated exception once, and losing detail is recoverable where a
   webhook credential is not.
-  **`PubSubError` is excluded, and the exclusion is the design working.**
-  `_post` passes `resp.reason_phrase`, which httpcore populates from the literal
-  HTTP status line, so its `str()` carries server-controlled bytes — measured.
-  Its own docstring claims the opposite; making the two agree is queue item
-  CG-33, and `tests/test_error_surfaces.py` pins the exclusion so that row's
-  author has to decide in the open rather than inherit an assumption.
+  **`PubSubError` was excluded by CG-29 and joined the set in CG-33
+  (2026-07-30) — one decision, made twice, and the second time is not a
+  reversal of the first.** CG-29 kept it out because `_post` passed
+  `resp.reason_phrase`, which httpcore fills from the literal HTTP status line,
+  so its `str()` carried server-controlled bytes — measured, and the opposite of
+  what its own docstring claimed. CG-33 replaced that with the same local
+  `httpx.codes` lookup CG-23 gave the two sibling adapters, and the class
+  qualified. **The two halves are coupled and the order is load-bearing:**
+  marking it while `_post` still read the wire would hand those bytes to any
+  print site through `describe_exception` — measured as the counterfactual, so
+  never split the marker from the lookup.
+  **What marking BUYS is not symmetry, it is the guard.**
+  `tests/test_error_surfaces.py` reads the construction sites of marked classes
+  **only**, so an unmarked class's raise sites are unguarded; joining the set is
+  how they get read. Doing that meant teaching the guard a second
+  message-assembly shape — a class that takes fields and builds its f-string in
+  `__init__`, where half the message is chosen at a call site three frames from
+  the literal text.
   `SubscriberLoop._run` keeps its own format for `/healthz`'s `last_poll_error`
-  and must not be "unified" onto the helper — the file says why, in two
-  independent reasons. Nothing here clears, adds or rewords a ⚠ flag:
-  `poll_once`'s error paths remain unexercised against Google, and this changed
-  what they PRINT, not what is verified.
+  and must not be "unified" onto the helper — but on **one** reason now, not the
+  two CG-29 gave. The surviving one is that `last_poll_error` is an
+  unauthenticated `/healthz` field, pinned as an exact string in two test files
+  and interpolated into a `reasons` line. The other — *"`PubSubError` is
+  unmarked, so the helper would drop the HTTP status"* — **CG-33 removed**; do
+  not go looking for it. Nothing in either row clears, adds or rewords a ⚠ flag:
+  `poll_once`'s error paths and `_post`'s non-200 branch remain unexercised
+  against Google, and this changed what they PRINT, not what is verified.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
   gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`
