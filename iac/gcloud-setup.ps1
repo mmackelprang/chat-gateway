@@ -30,7 +30,7 @@
   and progress paths name identities and paths only.
 
   This script is project-agnostic and names no project on purpose — the id of
-  the project this repo actually runs on is recorded once, in
+  the project this repo actually runs on is deliberately not repeated here; see
   docs/google-cloud-setup.md. The example above used to read
   `chat-gateway-prod`, which was DELETED on 2026-07-30, so copy-pasting it
   aimed every gcloud call below at a project that no longer exists.
@@ -192,12 +192,20 @@ Invoke-Gcloud @('config', 'set', 'project', $ProjectId) -Quiet
 #
 # Installability comes from Chat API -> Configuration -> Visibility: list your
 # own address (or a Google Group) there and you can add the app to a space
-# immediately. Google states its Marketplace settings are ignored for Chat
-# outright — "Any visibility or testing settings that you've configured in the
-# Google Workspace Marketplace SDK are ignored"
-# (https://developers.google.com/workspace/add-ons/chat). Marketplace publishing
-# is needed only to reach people BEYOND that Visibility list, and it is
-# console-only either way.
+# immediately, before any Marketplace publish. Two sources say so and their
+# SCOPES DIFFER — do not merge them into one universal sentence, which is the
+# exact mistake this comment exists to undo:
+#   * classic, which is what this script provisions — "the Chat API lets you
+#     share your Chat app with specific people in your Google Workspace
+#     organization. The people that you specify can add the Chat app to a space
+#     and test its features before you publish it to the Marketplace"
+#     https://developers.google.com/workspace/chat/test-interactive-features
+#   * add-ons specifically — "To deploy and test an add-on in Chat, you must use
+#     the Chat API's Visibility setting. Any visibility or testing settings that
+#     you've configured in the Google Workspace Marketplace SDK are ignored"
+#     https://developers.google.com/workspace/add-ons/chat
+# Marketplace publishing is needed only to reach people BEYOND that Visibility
+# list, and it is console-only either way.
 #
 # The API stays enabled: it is harmless, it costs nothing, and it shortens a
 # later publish. It is simply not a prerequisite for anything provisioned here.
