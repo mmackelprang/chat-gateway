@@ -290,6 +290,25 @@ other failure: an event that parsed fine but could not be delivered (callback
 enqueue, in-thread reply, or audit write blew up) — it is acked and dropped
 rather than left to wedge the subscription.
 
+Two further counters cover the events that parsed and routed fine but reached
+nobody. `subscriber.suppressed_opt_out` counts events landing in a space whose
+registered owners all have `allow_inbound: false` — the tenant opted out, so
+the event goes nowhere, by design. `subscriber.suppressed_not_authorized`
+counts events refused by an app's `allowed_users` list; that user got an
+in-thread `⛔ Not authorized for this action.` and nothing was forwarded.
+Neither is a fault and neither makes `/healthz` report `degraded` — they are
+guarantees working, not failures — but both used to happen with no trace
+anywhere at all, which is what they exist to fix.
+
+They are **bare integers by design**: no space, no app id, no sender, no
+content, no timestamp. `/healthz` needs no authentication, so anything
+attributable reported here would be readable by anyone who can reach the port.
+Two other things follow from that. They count **suppressions, not events** — the
+decision is made per candidate app, so one event arriving in a space with two
+opted-out owners increments by two — and if you need to know *which* space or
+*which* user, `/healthz` is not where you will find it; that is a deliberate
+omission, not a gap.
+
 ## Inbound replies — `GET /v1/inbox` (tier 2, opt-in)
 
 Polling returns and clears your app's replies (each carries `space`,
