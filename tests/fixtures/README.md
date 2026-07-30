@@ -192,7 +192,7 @@ comes with it, so nobody re-files it as a gap.
   - Any allowlist wide enough to pass those is wide enough to pass a real leak.
 - **`SUSPECT_KEY` / `SUSPECT_VALUE`, ported only in the narrowed URL form.** The
   fixture rule keys off a JSON path, and prose has none. A naive port scores
-  **64 hits across the scanned trees today** — every one a false positive,
+  **62 hits across the scanned trees today** — every one a false positive,
   mostly documentation of the rule itself. Method, because the two figures
   printed here before (39, and 28 "before this item") were taken by different
   methods at different moments and neither reproduced afterwards: apply
