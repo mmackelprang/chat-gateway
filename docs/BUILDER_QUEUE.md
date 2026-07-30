@@ -676,7 +676,7 @@ _(nothing)_
 
 ## Recently shipped
 
-### CG-22 + CG-9 · The real **classic** fixtures — `CARD_CLICKED` ×2 and `ADDED_TO_SPACE`  ✅ shipped 2026-07-30 · PR-PENDING
+### CG-22 + CG-9 · The real **classic** fixtures — `CARD_CLICKED` ×2 and `ADDED_TO_SPACE`  🔨 in review 2026-07-30 · [PR #20](https://github.com/mmackelprang/chat-gateway/pull/20) ⛔ merge gate
 
 Plan: [`superpowers/plans/2026-07-30-classic-fixtures-cg22-cg9.md`](superpowers/plans/2026-07-30-classic-fixtures-cg22-cg9.md).
 One PR for both items. Three real captures from the live project
