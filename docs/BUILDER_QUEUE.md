@@ -1,6 +1,16 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-11 + CG-20 shipped as ONE PR**
+**Last updated:** 2026-07-30 (Builder — **CG-30 shipped**
+([PR #28](https://github.com/mmackelprang/chat-gateway/pull/28)): the `info`
+render path's combined title+body overflow is a **422 naming the limit and the
+size**, where it was an uncaught **500**. Scoped to `info` and derived, not
+hardcoded — `Notification.body`'s global `max_length` is untouched, because
+`alert`/`warning` at title-200 + body-4000 are **accepted today** and had to stay
+accepted. Measured before *and* after at the endpoint; suite **136 → 140**.
+**CG-32 filed** from its verification pass — a second, narrower overflow on the
+same path that request-time validation provably cannot cover.
+
+Previously: **CG-11 + CG-20 shipped as ONE PR**
 ([PR #27](https://github.com/mmackelprang/chat-gateway/pull/27)), per the user's
 combine decision: CG-11's job was to adopt ADR-0001
 §7, and §7 carried the very error CG-11 existed to fix, so the ADR had to be
@@ -166,10 +176,10 @@ CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24,
-CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28 and CG-11+CG-20 have since
-shipped). **CG-29** was filed by Builder from CG-25's UAT,
-**CG-30** by Builder from CG-27's verification pass, and **CG-31** by Builder
-from CG-11+CG-20's pre-merge review; all three are
+CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20 and CG-30 have since
+shipped). **CG-29** was filed by Builder from CG-25's UAT, **CG-31** by Builder
+from CG-11+CG-20's pre-merge review, and **CG-32** by Builder from CG-30's
+verification pass; all three are
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
@@ -568,85 +578,6 @@ the full `{exc}`, so it gained detail where `poll_once` lost it.
 
 ---
 
-### CG-30 · `info` severity 500s on a payload every other severity accepts  🔨 in flight
-
-| | |
-|---|---|
-| **Origin** | filed by Builder 2026-07-30 from **CG-27's** verification pass — **measured, not predicted** |
-| **Depends on** | nothing |
-| **Touches** | `src/chat_gateway/notifications.py` (`render`'s info branch), plus a test |
-| **Priority** | **appended last, unprioritized.** The user sets order. |
-
-`Notification.body` validates at `max_length=4000` (`notifications.py:40`) for
-every severity. But on the **`info`** path `render` concatenates the prefix, the
-title and the body into a single string and hands it to `OutboundMessage.text`,
-which is capped at **4000** (`envelope.py:40-41`):
-
-```python
-body_text = text + (f"\n{n.body}" if n.body else "")   # notifications.py:61
-```
-
-`alert` and `warning` are unaffected — their body becomes a card widget, so only
-the short fallback line goes through `text`.
-
-**So a `Notification` that passes its own validation cannot be rendered**, and
-the resulting `pydantic.ValidationError` is raised *inside* the request handler
-where nothing catches it. The caller gets an uncaught **HTTP 500**, not the
-422 that every other bad payload produces.
-
-Measured at the endpoint through `TestClient(..., raise_server_exceptions=False)`,
-not reasoned about:
-
-| severity | `len(title) + len(body)` | Result |
-|---|---|---|
-| `info` | 3989 | **202** |
-| `info` | 3990 | **500** |
-| `alert` | 4200 | 202 |
-| `warning` | 4200 | 202 |
-
-The bound is exactly `4000 - 11`; the 11 is `"ℹ️ [INFO] "` (10 — the emoji is two
-code points) plus the `\n`.
-
-**Not fixed here because the right fix is a design call, not a one-liner**, and
-CG-27 was docs-only. At least three options, with different contracts:
-
-1. **Truncate** the body on the info path — silent data loss, but never fails.
-2. **Tighten `Notification.body`'s limit** so the model rejects at 422 — honest
-   status code, but the limit then differs per severity, which is surprising in
-   the other direction and would need documenting.
-3. **Render `info` as a card too** when it overflows — no loss, no new limit, but
-   it breaks the contract's "info renders as plain text" (aitrader Feature 1).
-
-Option 2 is probably right, but it changes an accepted request into a rejected
-one, so it is the user's/Planner's call, not Builder's.
-
-**Documented as a sharp edge in `docs/consumers/aitrader.md` §11 in the
-meantime**, with the workaround (send `warning`, or truncate). aitrader is the
-consumer that would hit this — its contract sends `info` for weekly reports,
-which is the plausible long-body case.
-
-> **⚠ Dev-box note for whoever builds this — you will think you broke the
-> gateway, and you will not have.** Reproducing the 500 against a real uvicorn on
-> the **Windows** dev box does not return a 500 to the client: the request hangs,
-> and the server then stops answering *everything*, `/healthz` included, while the
-> process stays alive.
->
-> **That is not this bug and not a gateway defect.** It was isolated during
-> CG-27's UAT: a **minimal FastAPI app containing no gateway code at all**, whose
-> handler does nothing but `raise RuntimeError("tiny")`, wedges the same way on
-> the same box. Any unhandled exception in a sync endpoint does it, at any
-> message size. The gateway's own behaviour is the plain 500 — uvicorn logs
-> `"POST /v1/notify HTTP/1.1" 500 Internal Server Error` before wedging, and
-> in-process `TestClient(..., raise_server_exceptions=False)` returns 500
-> cleanly.
->
-> Practical consequence: **test this case in-process, not over TCP**, or you will
-> lose the server on every run. Whether the wedge also happens on the Linux
-> deploy target was **not** determined — it was out of CG-27's scope, and it is
-> not needed to characterize CG-30.
-
----
-
 ### CG-31 · `forwarder.py`'s docstring names the retry **gaps** as if they were attempt times  📋 queued
 
 | | |
@@ -679,6 +610,79 @@ The identical text in `docs/consumers/jobhunt.md` R7 and
 which was a docs-only PR and could not touch `src/`. This row is the remaining
 half: the docstring is now the only place in the repo that still states it the
 misleading way.
+
+---
+
+### CG-32 · The dedupe counter can overflow an `info` payload the gateway just accepted  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-30's** verification pass — **measured, not predicted** |
+| **Depends on** | nothing (CG-30 shipped the guard that makes this the *only* remaining 500 on the path) |
+| **Touches** | `src/chat_gateway/notifications.py` (`render`'s info branch and/or the counter), plus a test |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
+
+CG-30 made the `info` path reject an unrenderable payload with a **422** instead
+of 500ing. It validates `len(title) + len(body)` against
+`info_max_combined_length()` — **3989**, derived as `TEXT_MAX` minus the rendered
+prefix minus the newline. What that budget does **not** reserve is the dedupe
+counter: `render` appends `" (×N since last notice)"` (23 characters at N=3) to
+the prefix when a suppressed notification is re-delivered (`notifications.py`,
+`render`'s `counter` local). So a payload the gateway
+**accepted with a 202** can be unrenderable by the time it is actually delivered,
+and the `pydantic.ValidationError` fires in the same uncaught place CG-30 just
+emptied.
+
+Measured in-process at `/v1/notify` (`TestClient(..., raise_server_exceptions=False)`),
+combined 3989 with a `dedupe_key`, clock advanced past the window:
+
+| Step | Result |
+|---|---|
+| first delivery | **202** |
+| repeat within the window (suppressed, counted) | **202** |
+| after the window reopens, `occurrences=3` | **500** |
+
+**Why CG-30 deliberately did not fix it, so this is not read as an oversight.**
+Reserving counter width in the request-time budget would lower the accepted
+bound below 3989 for *every* info notification — including the ones with no
+`dedupe_key` at all, which can never grow a counter and succeed today. The
+user's CG-30 decision was explicitly conditioned on **every request that
+succeeds today must still succeed**, so the guard could not cover this. It is
+not the same defect wearing a hat: CG-30's overflow was knowable at request
+time, and this one is **not** — it depends on delivery history that has not
+happened yet.
+
+**Three options, with different contracts — this is a design call, deliberately
+NOT decided here:**
+
+1. **Drop or shorten the counter when it would overflow.** Loses no *app*
+   content — the counter is gateway-generated dedupe decoration, which by hard
+   rule #1 is transport, not app domain — but it silently loses the count on
+   exactly the messages long enough to need it.
+2. **Truncate the body on the info path when the counter pushes it over.**
+   Silent loss of app content; the thing option 1 avoids.
+3. **Reserve a fixed counter width in `info_max_combined_length()`.** Honest and
+   simple, but it rejects payloads that succeed today, which is the constraint
+   CG-30 was built around. Would need the user to relax that.
+
+Option 1 looks right on rule-#1 grounds, but it changes what a delivered message
+says, so it is the user's/Planner's call, not Builder's. Filed with the
+observation, not a prescription.
+
+**Documented as a sharp edge in `docs/consumers/aitrader.md` §11 in the
+meantime**, with the avoidance (leave ~40 characters of slack under 3989, or
+skip `dedupe_key` on long info bodies). It needs all three of a long `info`
+body, a `dedupe_key`, and a suppressed repeat — which is why it is narrower than
+CG-30, not why it is imaginary.
+
+> **⚠ Same dev-box trap as CG-30 — read that row's warning box before
+> reproducing this.** This one still *is* an uncaught exception in a sync
+> endpoint, so on this Windows box it will hang the request and stop the server
+> answering everything, `/healthz` included, while the process stays alive.
+> **Reproduce it in-process with `TestClient(..., raise_server_exceptions=False)`,
+> never over TCP.** That is a property of this box, isolated during CG-27's UAT
+> against a minimal FastAPI app with no gateway code in it — not a gateway
+> defect, and not what this row is about.
 
 ---
 
@@ -731,18 +735,91 @@ old one.)_
 
 ## In flight
 
-**CG-30** — claimed 2026-07-30 by Builder, branch `fix/cg-30-info-render-budget`.
-Single worktree, one Builder. The user's fix decision is **option 2, scoped to
-`info` only** — see that row.
-
-_(Previously: **CG-11 + CG-20 shipped** as one PR on 2026-07-30, and CG-27 and
-CG-28 before them. **CG-27 was worked in parallel** by a second Builder in its
-own worktree; per the CG-25 concurrency incident, one worktree per Builder and
-never a shared working directory.)_
+_(nothing — **CG-30 shipped** on 2026-07-30, and **CG-11 + CG-20** as one PR
+before it, and CG-27 and CG-28 before those. **CG-27 was worked in parallel** by
+a second Builder in its own worktree; per the CG-25 concurrency incident, one
+worktree per Builder and never a shared working directory.)_
 
 ---
 
 ## Recently shipped
+
+### CG-30 · `info` severity 500s on a payload every other severity accepts  ✅ shipped 2026-07-30 · [PR #28](https://github.com/mmackelprang/chat-gateway/pull/28)
+
+The `info` render path concatenated prefix + title + body into
+`OutboundMessage.text`, which is capped at the same 4000 as `Notification.body`
+itself — so a notification that passed its own validation could not be rendered,
+and the `pydantic.ValidationError` fired inside the request handler where nothing
+catches it. **Uncaught 500.** Now a **422 naming both the limit and the size
+sent**. Suite **136 → 140**.
+
+**The constraint that shaped the fix, and the reason it is not the one-liner it
+looks like.** The obvious implementation is to lower `Notification.body`'s global
+`max_length`. That is wrong, and measurably: `alert` and `warning` at title-200 +
+body-4000 (4200 combined) are **accepted today**, because those severities put the
+body in a **card widget** and only a short fallback line reaches the text field.
+The user's decision (option 2) was explicitly conditioned on **every request that
+succeeds today must still succeed** — only the range that currently 500s changes,
+and it changes to 422. So the guard is a `model_validator` scoped to
+`severity == "info"`, and `body`'s limit is untouched.
+
+Measured at the endpoint before *and* after, in-process and again over real TCP
+against a live uvicorn:
+
+| severity | `len(title) + len(body)` | before | after |
+|---|---|---|---|
+| `info` | 3989 | 202 | 202 |
+| `info` | 3990 | **500** | **422** |
+| `alert` | 4200 | 202 | 202 |
+| `warning` | 4200 | 202 | 202 |
+
+**Derived, not hardcoded — and that is load-bearing, not fastidiousness.** The
+bound is `TEXT_MAX - len(severity_prefix("info")) - len(INFO_BODY_SEPARATOR)`.
+`severity_prefix()` is now the single construction `render` itself uses, so the
+guard cannot drift from what is emitted, and a relabelled severity moves the
+bound automatically. `"ℹ️ [INFO] "` is **10** characters, not 9 — the emoji is
+two code points — which is exactly the sort of constant that rots if written
+down. `4000` also stopped being a bare literal: it is `envelope.TEXT_MAX` now,
+commented as a **transport** limit on the envelope, which is the hard-rule-#1
+framing this whole item needs (the gateway is budgeting its own rendered
+message, not knowing anything about an app's schema). The tests derive their
+boundary from `info_max_combined_length()` too, so the pair cannot silently
+drift apart, and one of them pins that `render` really does emit
+`severity_prefix("info")`.
+
+**The regression test is the point of the exercise.** `alert` and `warning` at
+4200 → 202, with a docstring saying in words that it exists to stop a later
+"simplification" into a global `body` limit. Without it, the wrong fix passes
+review in six months.
+
+**Hard rule #2 held under measurement, not assertion:** the 422 the gateway
+constructs names the field pair, the size and the limit and **quotes no content**
+— asserted against a body of 3790 `b`s and a title of 200 `t`s, neither of which
+appears in the message. (FastAPI's own 422 envelope echoes the caller's `input`
+back to the caller who sent it; pre-existing for every validation error on this
+endpoint, not a log path, and out of scope.)
+
+**UAT was run over real TCP, which the row's own warning box says to avoid — and
+that inversion is the finding.** The warning is about reproducing the *500*: any
+unhandled exception in a sync endpoint wedges this Windows box, `/healthz`
+included, while the process stays alive. Post-fix the overflow is an ordinary
+**422**, so it does not wedge anything — which is itself worth proving rather
+than assuming. Against a live uvicorn: 4×202, 5×422, `/healthz` answering 200
+before and after, **zero 500s and zero tracebacks** in the server log. The
+pre-fix 500 and the CG-32 case below were driven **in-process only**.
+
+**Flags: none cleared, none added, none reworded** — this is offline behaviour
+and touches no Google seam. `CLAUDE.md`'s verification ledger is untouched and
+not restated; only its test count moved.
+
+**CG-32 filed** from the verification pass: a deduped `info` re-delivery has
+`" (×N since last notice)"` appended by `render`, which can push an **accepted**
+payload back over the field cap — 202, 202, then **500** at `occurrences=3`,
+measured. Request-time validation provably cannot cover it without rejecting
+payloads that succeed today, which is the one thing this item was forbidden to
+do, so it is a separate row rather than a silent gap. It is now the only
+remaining 500 on this path, and `docs/consumers/aitrader.md` §11 says so rather
+than claiming the 500 is gone.
 
 ### CG-11 + CG-20 · The selection-widget claim, E1/E2, and a deleted project  ✅ shipped 2026-07-30 · [PR #27](https://github.com/mmackelprang/chat-gateway/pull/27)
 

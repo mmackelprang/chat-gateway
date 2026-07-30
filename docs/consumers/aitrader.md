@@ -45,7 +45,7 @@ Request (`notifications.py:35-52`):
 |---|---|---|---|---|
 | `severity` | str | **yes** | `alert` \| `warning` \| `info` | anything else → **422** before routing |
 | `title` | str | **yes** | 1–200 chars | |
-| `body` | str | no | ≤ 4000 | markdown; **see the `info` bound in §11** |
+| `body` | str | no | ≤ 4000 | markdown. On `info` only, `len(title) + len(body)` must also be ≤ **3989** — a **422** naming the limit; **see §11** |
 | `action` | str | no | ≤ 200 | the "what to do" line; **rendered only on `alert`/`warning`** |
 | `dedupe_key` | str | no | ≤ 128 | see §5 |
 | `thread_key` | str | no | ≤ 128 | same key → same Chat thread |
@@ -138,7 +138,9 @@ there is no colour field on a Chat card, so `SEVERITY_EMOJI` is it:
 - if `body`, `action` and `timestamp` are all empty, the card falls back to a
   single paragraph containing the title — a card is never rendered empty
 
-**`info` → plain text, no card.** `ℹ️ [INFO] <title>` plus `\n<body>`.
+**`info` → plain text, no card.** `ℹ️ [INFO] <title>` plus `\n<body>` — all of it
+in the envelope's single 4000-char text field, which is why this severity alone
+carries a *combined* title+body limit (§11).
 
 > **Two fields are silently dropped on `info`:** `action` and `timestamp` are
 > **not rendered at all** on the plain-text path. If the "what to do" line
@@ -435,11 +437,45 @@ smoke test.
 
 - **`info` has a combined length limit that `alert` does not.** On the `info`
   path the title and body are concatenated into one 4000-char text field, so
-  **`len(title) + len(body)` must be ≤ 3989** or the request returns **HTTP
-  500** — even though `body` alone validates at 4000. Measured, not inferred:
-  3989 → 202, 3990 → 500. `alert` and `warning` are unaffected (the body becomes
-  a card widget). Filed as **CG-30**; until it ships, keep long content on
-  `warning`, or truncate.
+  **`len(title) + len(body)` must be ≤ 3989** — even though `body` alone
+  validates at 4000. Over that, the request is a **422** naming both the limit
+  and the size you sent; `body`'s own 4000 limit and `title`'s own 200 are
+  unchanged and still reported separately. `alert` and `warning` are unaffected
+  (their body becomes a card widget, so only the short fallback line goes
+  through the text field) — a title-200 + body-4000 payload is accepted on
+  those two and rejected on `info`.
+
+  The 3989 is not a number to hardcode: it is `4000` minus the rendered prefix
+  `"ℹ️ [INFO] "` (10 characters — the emoji is two code points) minus the
+  newline. The gateway derives it from the same construction the renderer uses,
+  so relabelling a severity moves it. Read it off the 422 rather than computing
+  it yourself.
+
+  Measured at the endpoint, before and after **CG-30** (2026-07-30):
+
+  | severity | `len(title) + len(body)` | before | after |
+  |---|---|---|---|
+  | `info` | 3989 | 202 | 202 |
+  | `info` | 3990 | **500** | **422** |
+  | `alert` | 4200 | 202 | 202 |
+  | `warning` | 4200 | 202 | 202 |
+
+  **What changed is the status code, not the limit.** Before CG-30 the overflow
+  raised inside the renderer, after validation had already passed, and surfaced
+  as an uncaught **500**. Nothing that was accepted before is rejected now. If
+  your weekly report can run long, either keep it on `warning` (a card, no
+  combined limit) or split it — but you no longer have to guess, because the
+  rejection tells you the limit and your size.
+
+- **One overflow is still a 500, and it is a narrower one: the dedupe counter.**
+  A deduped `info` re-delivery has `" (×N since last notice)"` appended by the
+  renderer, which can push an *accepted* payload back over the 4000-char field.
+  Request-time validation cannot reserve room for it without rejecting payloads
+  that succeed today, so CG-30 deliberately did not. Reproduced in-process at
+  combined 3989 with a `dedupe_key`, suppressed once, then re-delivered after
+  the window → 500. **Filed as CG-32.** It needs all three of a long `info`
+  body, a `dedupe_key`, and a suppressed repeat; leaving ~40 characters of slack
+  under 3989 avoids it entirely in the meantime.
 - **`action` and `timestamp` are dropped on `info`** (§4).
 - **`grace` is case-sensitive** — `2H` is a 422 (§7).
 - **`dedupe_key` ignores severity** — an `info` and an `alert` sharing a key

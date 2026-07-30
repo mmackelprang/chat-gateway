@@ -58,6 +58,12 @@ def info_max_combined_length() -> int:
     which the transport caps at `TEXT_MAX`. Derived, never hardcoded, so this
     and `render` are the same arithmetic. (The dedupe counter `render` may also
     append is deliberately NOT reserved here — see `Notification`'s validator.)
+
+    One deliberate approximation, checked rather than assumed: the separator is
+    subtracted unconditionally, while `render` only emits it when `body` is
+    non-empty. That makes the bound one character conservative for a body-less
+    info notification — and unreachably so, because `title` caps at 200 on its
+    own, four thousand short of where the difference could ever be felt.
     """
     return TEXT_MAX - len(severity_prefix("info")) - len(INFO_BODY_SEPARATOR)
 
