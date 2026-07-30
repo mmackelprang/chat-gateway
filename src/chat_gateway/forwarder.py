@@ -6,9 +6,17 @@ WHOLE as InboundReply JSON (jobhunt R3), carrying the Pub/Sub message id as
 `dedupe_key` because delivery is at-least-once — tenant callbacks must be
 idempotent.
 
-Retries are short and latency-shaped (0s/3s/7s — a human just tapped a
-button): when they exhaust, the user must SEE the failure (jobhunt R7), so
-the forwarder posts the tenant's `unreachable_message` into the thread via
+Retries are short and latency-shaped — a human just tapped a button. Three
+attempts, and `BACKOFF_S` holds the **gaps between them, not the times they
+land at**: the last is due about **10s** after the tap (0s / 3s / 10s), and in
+the running gateway they land at **0s / 5s / 15s**, because `process_due()`
+only runs after a subscriber poll and each due time therefore rounds up to the
+next tick. Both numbers are measured; the second assumes the default 5s
+interval. Full treatment, including why the schedule is a floor and not a
+timer: `docs/consumers/jobhunt-handoff.md` §7.
+
+When the attempts exhaust, the user must SEE the failure (jobhunt R7), so the
+forwarder posts the tenant's `unreachable_message` into the thread via
 `reply_fn` and records `failed` in the delivery log. Never silent.
 """
 
@@ -25,6 +33,8 @@ from .delivery import DeliveryLog
 from .envelope import InboundReply
 from .registry import App
 
+# GAPS, not attempt times — index i is the wait AFTER attempt i fails, so the
+# three attempts fall due at 0s / 3s / 10s. Length sets the attempt count.
 BACKOFF_S = (0, 3, 7)
 
 # reply_fn(space, thread_name, text) — wired to the Chat API adapter's
