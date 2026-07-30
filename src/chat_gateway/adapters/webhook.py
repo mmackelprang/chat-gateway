@@ -23,6 +23,12 @@ path down.** That is what makes tier 1 the floor under `aitrader`'s alerting.
 Scope of the clear: the success path. The non-200 branch and the httpx.HTTPError
 branch below have never been exercised against Google.
 
+The URL never has to reach a log for it to be logged. `httpx` writes the whole
+request URL — key and token — through its own logger on EVERY request, success
+included, and nothing in this file put it there. `WebhookAdapter.__init__`
+therefore arms `log_redaction.install_url_redaction()`; see that module for what
+is redacted, what is not, and why the logger is not simply silenced (CG-34).
+
 Threading — the experiment, and exactly what it proved. Two messages per
 variant, distinct thread keys, using `thread.name` from Google's response as the
 objective signal:
@@ -53,6 +59,7 @@ from __future__ import annotations
 import httpx
 
 from ..envelope import DeliveryResult, OutboundMessage
+from ..log_redaction import install_url_redaction
 from ..registry import Identity
 
 
@@ -102,6 +109,14 @@ def build_params(message: OutboundMessage) -> dict:
 
 class WebhookAdapter:
     def __init__(self, client: httpx.Client | None = None):
+        # CG-34. Constructing the one object in the repo that resolves a
+        # credential-bearing URL arms the logging guard, because httpx logs the
+        # whole URL — key and token — at INFO, on the success path as well as
+        # the failure path. Here rather than only at the entrypoint so it also
+        # holds in tests, in `client.py`, and in the ad-hoc scripts that are how
+        # the leak was found. Idempotent; see `log_redaction` for why redaction
+        # rather than silencing the logger.
+        install_url_redaction()
         self._client = client or httpx.Client(timeout=30)
 
     def send(self, identity: Identity, message: OutboundMessage) -> DeliveryResult:

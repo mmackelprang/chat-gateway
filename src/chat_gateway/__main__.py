@@ -17,10 +17,20 @@ import sys
 
 from .auth import mint_key
 from .inbox import Inbox
+from .log_redaction import install_url_redaction
 from .registry import RegistryError, load_registry
 
 
 def build_runtime():
+    # CG-34, hard rule #2. Before anything can make an HTTP request: `httpx`
+    # logs the full request URL at INFO on every request, and a tier-1 webhook
+    # URL embeds key+token. Armed here as well as in `WebhookAdapter.__init__`
+    # so the guard does not depend on which adapters this deployment happens to
+    # build — a config with no webhook identity still POSTs to tenant callbacks
+    # through the same logger. Idempotent, and it redacts rather than silencing;
+    # `log_redaction` has the reasoning.
+    install_url_redaction()
+
     registry = load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml"))
     state_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
     inbox = Inbox(audit_dir=os.environ.get("CHAT_GATEWAY_INBOX_DIR", "inbox-data"))
