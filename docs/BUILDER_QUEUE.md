@@ -1,6 +1,32 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-31 shipped**
+**Last updated:** 2026-07-30 (Builder — **CG-29 shipped**: `poll_once` prints
+the detail CG-25 created, and still nothing else. A marker base class
+(`src/chat_gateway/errors.py`, core-owned so `pubsub.py` need not import
+`chat_api.py`) plus one `describe_exception` helper: the classes whose messages
+this repo authors print in full, everything else prints its type name alone.
+**An allowlist, because the shapes fail in opposite directions** — a denylist
+prints the next unanticipated exception once, and a webhook credential has no
+rotate-in-place.
+
+**The load-bearing result is who got EXCLUDED.** `PubSubError` is not marked:
+`_post` passes `resp.reason_phrase`, which httpcore takes off the HTTP status
+line, so its `str()` carries server-controlled bytes — measured through the real
+`PubSubPuller`. That is **CG-33**, still queued, and admitting it here would have
+done exactly what that row predicts. A test pins the exclusion *and* the
+measurement, so CG-33's author decides in the open.
+
+Before/after measured over **real TCP** on the real R4 chain, not MockTransport:
+`ChatApiError` / `ChatApiError` became `ChatApiError: in-thread reply failed:
+ConnectError` / `... HTTP 403`, while a `google.auth`-shaped failure and a
+pydantic `ValidationError` carrying a capability URL both still print their type
+and nothing more. Pre-merge review found **two real bypasses** of the new
+structural guard (construct-then-raise; subclassing a marked class) — both fixed
+before merge and both now mutation-tested. **Nine mutations, nine caught.** Suite
+**151 → 163**. The design call the row reserved for Planner was delegated to
+Builder at dispatch; see the row. No ⚠ flag cleared, added or reworded.
+
+Previously: **CG-31 shipped**
 ([PR #34](https://github.com/mmackelprang/chat-gateway/pull/34)): comments only, in
 one file. `forwarder.py`'s docstring named `BACKOFF_S = (0, 3, 7)` as if those were
 attempt times; they are **gaps**, so the three callback attempts fall due at
@@ -276,8 +302,7 @@ outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-26** (CG-7, CG-4, CG-5, CG-24,
 CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23, CG-19,
-CG-32, CG-21, CG-34 and CG-31 have since shipped). **CG-29** was filed by Builder from
-CG-25's UAT, **CG-33**
+CG-32, CG-21, CG-34, CG-31 and CG-29 have since shipped). **CG-33** was filed
 by Builder from CG-23's pre-merge review, **CG-35** by Builder from CG-19,
 **CG-36** by Builder from CG-32's docs pass, **CG-37** by Builder from
 CG-21's inventory, and **CG-42** by Builder from CG-31's UAT; all five are
@@ -565,50 +590,6 @@ none. The guard is the control that matters, and it runs on what lands.
 
 ---
 
-### CG-29 · `poll_once`'s type-name-only print swallows the detail CG-25 just created  🔨 in flight
-
-| | |
-|---|---|
-| **Origin** | filed by Builder 2026-07-30 from **CG-25's UAT** — measured, not predicted |
-| **Depends on** | nothing (CG-25 shipped the guard that exposes it) |
-| **Touches** | `src/chat_gateway/adapters/pubsub.py` — one print, plus whatever import shape the fix needs |
-| **Priority** | **appended last, unprioritized.** The user sets order. |
-
-CG-25 made `send_text()` raise `ChatApiError` on transport failure instead of a
-raw `httpx` exception. That is right for callers, and it is a **measured
-improvement** in the R7 delivery log. But `SubscriberLoop.poll_once`
-(`adapters/pubsub.py:750`) prints `type(exc).__name__` and **discards the
-message** — which is exactly where CG-25 put the distinguishing detail. On the R4
-path (an authorization refusal to a non-allowlisted sender) the console line
-therefore lost specificity:
-
-| Failure | Before CG-25 | After CG-25 |
-|---|---|---|
-| transport (reset / DNS / timeout) | `ConnectError` | `ChatApiError` |
-| non-200 from Google | `ChatApiError` | `ChatApiError` |
-
-Two distinguishable console lines collapsed into one. Both UAT-observed, not
-reasoned about — see the CG-25 PR body for the transcript. The detail is not
-destroyed, only unprinted: the full message is `in-thread reply failed:
-ConnectError` and `__cause__` is the original `httpx` exception.
-
-**Do not "fix" this by widening the print.** The type-name-only rule at that line
-is deliberate and hard rule #2 is its reason: a pydantic `ValidationError` embeds
-the offending input value, and these events carry capability URLs. The comment
-above the line says so.
-
-**The open question, which is a design call and deliberately NOT decided here:**
-gateway-authored exceptions (`ChatApiError`, `PubSubError`, `WebhookDeliveryError`)
-carry messages this repo constructs and which are provably rule-#2-clean — type
-name or HTTP status, never a body. Whether `poll_once` should print `str(exc)` for
-*those* and stay type-only for everything else — and if so, whether the
-discrimination is an `isinstance` check, a marker base class, or something that
-avoids `adapters/pubsub.py` importing `adapters/chat_api.py` — is Planner's call,
-not Builder's. Filed with the observation, not a prescription.
-
-Note the R7 path does **not** have this problem: `forwarder.py:_fail_loudly` logs
-the full `{exc}`, so it gained detail where `poll_once` lost it.
-
 ---
 
 ### CG-42 · `0s / 5s / 15s` is stated as a timetable in two docs; a slow attempt stretches it  📋 queued
@@ -851,6 +832,116 @@ every item's content and re-applying only the resolver's own row.)_
 
 ## Recently shipped
 
+### CG-29 · `poll_once`'s type-name-only print swallowed the detail CG-25 created  ✅ shipped 2026-07-30 · PR-PENDING
+
+`SubscriberLoop.poll_once` printed `type(exc).__name__` and discarded the
+message, so CG-25's typed transport error arrived at the operator's console
+indistinguishable from a non-200. Measured on the real jobhunt R4 chain
+(`reply_fn = ChatApiAdapter.send_text`, as `__main__.py` wires it) over **real
+TCP** — a genuinely closed port for the transport branch, a real HTTP server
+answering 403 for the other — not through MockTransport:
+
+| Failure | Before (main @ `724124c`) | After |
+|---|---|---|
+| transport (closed port) | `ChatApiError` | `ChatApiError: in-thread reply failed: ConnectError` |
+| non-200 (real 403) | `ChatApiError` | `ChatApiError: in-thread reply failed: HTTP 403` |
+| `google.auth`-shaped refresh failure | `RefreshError` | `RefreshError` — unchanged |
+| pydantic `ValidationError` (capability URL) | `ValidationError` | `ValidationError` — unchanged |
+
+**The design call the row reserved for Planner was delegated to Builder at
+dispatch**, with the considerations named there (are the gateway's own types now
+safe to render; should foreign ones stay type-only; does the discrimination
+belong at the raise site or the print site; prefer the shape that fails safe).
+Recorded because the row still reads *"Planner's call, not Builder's"* and
+pre-merge review correctly flagged the mismatch.
+
+**The answer is an ALLOWLIST, and the reason is asymmetry, not taste.** A
+denylist of known-unsafe types fails OPEN — the next exception class nobody
+anticipated prints in full, once, and a webhook URL has no rotate-in-place. An
+allowlist fails CLOSED — an unfamiliar exception prints a bare type name, which
+is exactly what an operator had before. Same reasoning CG-34 applied to
+redaction by position.
+
+`src/chat_gateway/errors.py` holds the marker `GatewayAuthoredError` and
+`describe_exception`. It lives in **core**, not an adapter, so `pubsub.py` reads
+it without importing `chat_api.py` — the constraint the row named, and the same
+reason `UNROUTED` is core-owned (hard rule #3). The marker is mixed in *beside*
+the concrete builtin, so `except RuntimeError` / `except ValueError` handlers
+are untouched.
+
+**`PubSubError` is deliberately NOT marked, and that exclusion is the load-bearing
+result.** `_post` passes `resp.reason_phrase`; httpcore populates it from the
+literal HTTP status line, so its `str()` carries server-controlled bytes.
+Measured through the real `PubSubPuller`, not inferred. Its own docstring claims
+the opposite — that is **CG-33**, still queued — and admitting it here would have
+done precisely what that row predicts: *"the next person who prints `str(exc)`
+in a log line is doing what the docstring says is fine."* A test pins the
+exclusion **and the measurement that justifies it**, so CG-33's author gets a red
+test and an explicit decision rather than an inherited assumption.
+
+`SubscriberLoop._run` keeps its own `type + HTTP status` format and the file now
+says why in two independent reasons, so it is not "unified" later: `PubSubError`
+is unmarked, so the helper would drop the HTTP status — the one actionable fact
+in a poll failure — and `last_poll_error` is published at **unauthenticated**
+`/healthz`, whose field format is a surface, not a log line. Its exact string is
+already pinned in `test_adapters.py` and `test_service.py`.
+
+**The safety claim is a test, not a comment**, as the row's open question
+implies: printing these messages is only safe while the constructors stay
+names-and-statuses-only. A structural guard reads every **construction site** of
+every marked class across `src/` and checks each interpolated expression against
+an allowlist, resolving single-assignment locals so
+`httpx.codes.get_reason_phrase(...)` (a local table) is distinguishable from
+`resp.reason_phrase` (the wire).
+
+**Pre-merge review found two real bypasses of that guard, both fixed before
+merge**, and both are now mutation-tested:
+
+- **construct-then-raise.** The guard matched `raise <Class>(...)` nodes, so
+  `err = ChatApiError(f"...{resp.text}")` / `raise err` was never inspected —
+  the raise's `.exc` is a bare Name. It reads construction sites now.
+- **subclassing.** `describe_exception` asks `isinstance`, which is MRO-aware,
+  so `class ChatApiTimeoutError(ChatApiError)` was marked while the membership
+  test — looking for a literal `GatewayAuthoredError` base — reported the set
+  unchanged. Membership is a fixed point over the inheritance graph now.
+
+Two more from the same review: expressions compare by **parsed AST** rather than
+source text with parens stripped (no collisions, and both sides parse on the
+same interpreter, so `ast`'s cross-version formatting cancels at
+`requires-python = ">=3.10"`), and `_single_assignments` no longer descends into
+nested functions, lambdas or comprehensions.
+
+**Nine mutations, each caught by the test that claims it:**
+
+| | reverted | result |
+|---|---|---|
+| M1 | the `poll_once` print — the defect itself | 3 failed |
+| M2 | the marker on `ChatApiError` | 4 failed |
+| M3 | `describe_exception` → a denylist | 5 failed |
+| M4 | `resp.text` smuggled into a marked message | 3 failed |
+| M5 | message hidden behind a local variable | **1 failed — the guard alone** |
+| M6 | `PubSubError` admitted to the set | 3 failed |
+| M7 | `_run` unified onto the helper | 3 failed |
+| M8 | construct-then-raise with `resp.text` | 3 failed |
+| M9 | subclass a marked class and leak from it | 6 failed |
+
+M5 is the guard's whole justification: the message is byte-identical, so no
+behavioural test can see it, and the next edit to that local is unguarded.
+
+**Flag discipline: nothing cleared, added or reworded.** `poll_once`'s error
+paths are still unexercised against Google; this changed what they PRINT, not
+what is verified. The `CLAUDE.md` verification ledger was **not** restated
+anywhere — the new entry links to it.
+
+Docs: `docs/consumers/jobhunt-handoff.md` had documented this exact console line
+as *"type name only — `ChatApiError`"*, which is the one audience doc the change
+falsifies; it now shows both lines and keeps the type-only rule stated for
+everything else. `docs/integration-guide.md`'s mention was checked and needed
+nothing — it describes the `dispatch_errors` counter, not the printed format.
+`CLAUDE.md`'s test count was **stale at 140** (main was already 151) and is
+corrected to **163**.
+
+Suite **151 → 163**. No ⚠ flag touched.
 ### CG-31 · `forwarder.py`'s docstring named the retry **gaps** as if they were attempt times  ✅ shipped 2026-07-30 · [PR #34](https://github.com/mmackelprang/chat-gateway/pull/34)
 
 **Comments only, in one file, and that is the whole PR.** The module docstring

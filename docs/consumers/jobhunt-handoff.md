@@ -203,11 +203,24 @@ hard rule #6 is written that way on purpose.
 
 **If the refusal itself fails to post** (Chat unreachable), the exception escapes
 `dispatch`, the event is acked and dropped, `subscriber.dispatch_errors`
-increments, and the gateway console prints the exception **type name only** —
-`ChatApiError`. The type-name-only rule is deliberate (an exception message can
-embed a payload value; hard rule #2), so the console is not where the detail
-lives. This one is worth knowing because it is the case where a refusal is
-neither delivered nor visible to the refused human.
+increments, and the gateway console names the failure. Since **CG-29** it names
+it precisely, because the two ways this can fail are different operator
+problems:
+
+```
+subscriber: dispatch failed, event acked and dropped: ChatApiError: in-thread reply failed: ConnectError
+subscriber: dispatch failed, event acked and dropped: ChatApiError: in-thread reply failed: HTTP 403
+```
+
+Before CG-29 both printed `ChatApiError` and stopped there — the type alone,
+which stopped distinguishing them the moment CG-25 gave the transport branch a
+typed error too. **The rule that produced that is unchanged and still governs
+everything else:** an exception message can embed a payload value (hard rule
+#2), so only exceptions this gateway authored are printed in full. Anything
+else — a `google.auth` refresh failure, a pydantic `ValidationError` quoting the
+input it rejected — is still named by type and nothing more. This one is worth
+knowing because it is the case where a refusal is neither delivered nor visible
+to the refused human.
 
 ---
 
