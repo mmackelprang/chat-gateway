@@ -36,7 +36,7 @@ prominent; `warning` → mild card; `info` → plain text), routes by your app's
 (default 1h) collapses: one delivered message; the collapsed count rides on
 the next delivery ("×N since last notice") — **when there is room for it.** The
 counter is the gateway's own decoration, so on a long `info` payload it yields
-rather than truncate your content; how exactly it degrades is in
+rather than truncating your content; how exactly it degrades is in
 [the aitrader consumer doc,
 §11](consumers/aitrader.md#11-sharp-edges-and-accepted-limitations), and the
 count is in the delivery log either way. Never assume guaranteed receipt
