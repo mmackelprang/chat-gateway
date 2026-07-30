@@ -137,7 +137,9 @@ write-path is the natural place to enforce "record this verdict once".
 
 Return **any 2xx quickly** and do the work asynchronously. A 2xx is what stops
 the retry clock; anything else, including a slow success that trips the 10s
-client timeout, counts as a failure and moves the job toward R7's loud failure.
+client timeout, counts as a failure and moves the job toward R7's loud failure —
+and it is the *slowest* route there, because each timed-out attempt also delays
+the next one. §7 sizes that.
 
 ### The one field that is not forwarded whole
 
@@ -309,8 +311,8 @@ shifts every tick after it:
 
 | How the callback fails | attempts land at | in-thread notice |
 |---|---|---|
-| n/a — `process_due()` called freely, the forwarder's own contract | 0s / 3s / 10s | — |
-| refuses instantly, `process_due()` driven on exact 5s ticks (fake clock) | 0s / 5s / 15s | ~15s |
+| fails faster than the next gap, `process_due()` called freely — the forwarder's own contract | 0s / 3s / 10s | — |
+| duration cannot count — `process_due()` driven on exact 5s ticks of a fake clock | 0s / 5s / 15s | ~15s |
 | **refuses fast** — `ConnectError` to a closed port, ~2s on the dev box | **0s / 7s / 14s** | ~16s |
 | **hangs** — accepted but never answered, to the forwarder's 10s client timeout | **0s / 15s / 30s** | **~40s** |
 
