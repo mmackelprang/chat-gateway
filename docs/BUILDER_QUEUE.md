@@ -1,6 +1,7 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-29 shipped**: `poll_once` prints
+**Last updated:** 2026-07-30 (Builder — **CG-29 shipped**
+([PR #35](https://github.com/mmackelprang/chat-gateway/pull/35)): `poll_once` prints
 the detail CG-25 created, and still nothing else. A marker base class
 (`src/chat_gateway/errors.py`, core-owned so `pubsub.py` need not import
 `chat_api.py`) plus one `describe_exception` helper: the classes whose messages
@@ -832,7 +833,7 @@ every item's content and re-applying only the resolver's own row.)_
 
 ## Recently shipped
 
-### CG-29 · `poll_once`'s type-name-only print swallowed the detail CG-25 created  ✅ shipped 2026-07-30 · PR-PENDING
+### CG-29 · `poll_once`'s type-name-only print swallowed the detail CG-25 created  ✅ shipped 2026-07-30 · [PR #35](https://github.com/mmackelprang/chat-gateway/pull/35)
 
 `SubscriberLoop.poll_once` printed `type(exc).__name__` and discarded the
 message, so CG-25's typed transport error arrived at the operator's console
