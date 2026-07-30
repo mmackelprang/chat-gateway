@@ -2,15 +2,30 @@
 
 Sends `spaces.messages.create` as the gateway's Chat app, authenticated with
 the service account from the Google Cloud setup (docs/google-cloud-setup.md).
-Identity presentation at this tier: the app is one sender; per-agent flavor
-rides in the message content (cards can carry per-PM headers) unless/until
-per-identity apps are ever justified.
 
-⚠ LIVE-UNVERIFIED end to end: written off-site with no Google Cloud project.
-The token provider uses google-auth's standard service-account flow (scope
-`chat.bot`); the request shape follows the documented REST surface. Exercise
-against the real project before trusting — and keep this adapter the only
-place Chat API calls exist.
+Identity at this tier: the app is ONE sender, and a real one — verified live
+2026-07-29, the response carried
+`sender: {"displayName": "Agent Comms", "type": "BOT"}`. That is the trade-off
+against tier 1, which gives as many named identities as you create webhooks and
+no sender object at all. Per-agent flavour therefore rides in the message
+content (cards can carry per-PM headers) unless per-identity apps are ever
+justified.
+
+⚠ Verification status is PER METHOD here, not per module — the halves of this
+file have different evidence behind them. Read each docstring; do not
+generalize from one to another. Keep this adapter the only place Chat API calls
+exist (hard rule #3).
+
+Summary as of 2026-07-30, against project `chat-gateway-gw`:
+
+    GoogleServiceAccountTokens   verified (minted the token send() used)
+    send()                       verified — text + Cards v2, UNTHREADED only
+    send_text()                  verified — BOTH branches, in-thread and top-level
+
+What remains unexercised against Google, in either method: the `thread.threadKey`
++ `messageReplyOption` branch of `send()` (a different field from the
+`thread.name` branch `send_text()` uses, so send_text's clear does NOT cover
+it), the non-200 branches, and the `httpx.HTTPError` branch.
 """
 
 from __future__ import annotations
@@ -34,7 +49,14 @@ class ChatApiError(RuntimeError):
 
 class GoogleServiceAccountTokens:
     """Standard google-auth service-account flow. Lazy imports so offline
-    tests never need google-auth's transport dependencies."""
+    tests never need google-auth's transport dependencies.
+
+    ⚠ flag CLEARED 2026-07-29: this provider minted the token that
+    `ChatApiAdapter.send()` used to post as the app. Re-exercised 2026-07-30
+    against `chat-gateway-gw` with the current key (`chat-gateway-sa-gw.json`;
+    the older `iac/chat-gateway-sa.json` belongs to a deleted project and is
+    dead).
+    """
 
     def __init__(self, credentials_path: str, scope: str = CHAT_SCOPE):
         self._path = credentials_path
@@ -60,6 +82,20 @@ class ChatApiAdapter:
         self._client = client or httpx.Client(timeout=30)
 
     def send(self, identity: Identity, message: OutboundMessage) -> DeliveryResult:
+        """Post a message as the Chat app.
+
+        ⚠ flag CLEARED 2026-07-29. Verified through THIS class and the real
+        `GoogleServiceAccountTokens` provider (not a reimplementation): a text
+        message and a Cards v2 card both posted as the app, and the response
+        carried `sender: {"displayName": "Agent Comms", "type": "BOT"}`.
+
+        Scope of that clear — the success path for text and cards. NOT covered:
+        the `thread.threadKey` + `messageReplyOption` branch below, because the
+        live posts were UNTHREADED. Note that `send_text()`'s 2026-07-30 clear
+        does not extend here: it threads by `thread.name`, a different field on
+        a different request shape. Also not covered: the non-200 branch and the
+        `httpx.HTTPError` branch.
+        """
         if not identity.space:
             raise ChatApiError(f"identity {identity.name!r} has no space set (required for mode: app)")
         body: dict = {"text": message.text}
@@ -89,7 +125,33 @@ class ChatApiAdapter:
 
     def send_text(self, space: str, thread_name: str | None, text: str) -> None:
         """Bare in-thread text (authorization refusals, R7 failure notices).
-        Matches the forwarder's ReplyFn signature."""
+        Matches the forwarder's ReplyFn signature.
+
+        ⚠ flag CLEARED 2026-07-30 — **both branches**, which is the point.
+        The plan for this item (Part C / CG-5) said this method would keep its
+        flag; that was written before the live session and is superseded by it.
+
+        The two branches were driven separately because they fail separately and
+        each one is load-bearing for a different guarantee:
+
+            thread_name set   -> posted into
+                                 spaces/AAQAgjGR7J4/threads/_CWBxuQ8MlU.
+                                 This is jobhunt R7's in-thread failure notice
+                                 AND R4's authorization refusal — the paths that
+                                 tell a user their tap did not land, or that they
+                                 were not allowed to make it. A silent failure
+                                 here is a silent failure of exactly those
+                                 guarantees.
+            thread_name None  -> posted at top level. The fallback when an event
+                                 carries no thread, where a naive
+                                 implementation would send `{"thread": {"name":
+                                 null}}` and be rejected.
+
+        NOT covered: the non-200 branch below. Note it already raises with the
+        status ONLY — deliberately unlike `send()` above, which still
+        interpolates `resp.text[:200]`. That inconsistency inside one file is
+        queue item CG-23; this method is the half that was already right.
+        """
         body: dict = {"text": text}
         params = {}
         if thread_name:

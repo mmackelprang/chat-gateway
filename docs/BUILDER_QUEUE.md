@@ -95,8 +95,8 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-5 → CG-24 → CG-8 → CG-12 → CG-11 → CG-20 →
-CG-22 → CG-19 → CG-21 → CG-23** (CG-7 and CG-4 have since shipped). CG-14 is now
+Remaining order: **CG-24 → CG-25 → CG-8 → CG-12 → CG-11 → CG-20 →
+CG-22 → CG-19 → CG-21 → CG-23** (CG-7, CG-4 and CG-5 have since shipped). CG-14 is now
 `⏸ blocked` (E1 removed its rationale, so it needs a decision, not code);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
 auto-merging; CG-9 stays blocked on a human; CG-17 and CG-18 stay deferred and
@@ -141,29 +141,6 @@ and much more precisely.
 
 **Planner/user call.** Either re-justify it as a general inbound-quietness
 detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
-
----
-
-### CG-5 · Split `chat_api.py`'s flag: `send()` clears, `send_text()` does not  📋 queued
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-5)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-3 |
-| **Plan** | [Part C](superpowers/plans/2026-07-29-live-verification-followups.md) |
-| **Depends on** | CG-4 (touches the same `CLAUDE.md` lines — sequence to avoid a conflict) |
-| **Touches** | docstrings only; the suite must stay at 70 |
-
-`ChatApiAdapter.send()` verified live through the real class and the real
-`GoogleServiceAccountTokens` provider: text and a Cards v2 card posted as the
-app, response carried `sender: {displayName: "Agent Comms", type: BOT}`. That
-clears the provider too.
-
-**`send_text()` keeps its flag.** Different request shape (`thread.name`, not
-`thread.threadKey`), never driven — and it is the method that tells a user their
-tap did not land (jobhunt R7) and the method that refuses an unauthorized user
-(R4). The flag moves from module scope to method scope; be precise about the
-split. `send()`'s own threading branch was not exercised either (the live posts
-were unthreaded).
 
 ---
 
@@ -264,6 +241,29 @@ inference), so Part G adopts §7 rather than paraphrasing it.
 | **Depends on** | nothing |
 | **Touches** | `docs/google-cloud-setup.md`, `docs/architecture/decisions/2026-07-29-tier2-interaction-model.md` — docs only |
 
+> **⚠ SCOPE WIDENED 2026-07-30, and this half is now the more urgent one.**
+> CG-5's review caught that this item's original scope — record the E1/E2
+> findings — did **not** cover the fact that `chat-gateway-prod` is **deleted**,
+> even though `docs/google-cloud-setup.md` is the file that asserts it exists.
+> CG-5 corrected `CLAUDE.md`; deferring the rest here was only legitimate if
+> this row actually owned it, and it did not. It does now:
+>
+> | Location | Currently says | Reality |
+> |---|---|---|
+> | step 1 (~L34) | `gcloud projects create chat-gateway-prod` | the live project is `chat-gateway-gw` (`#860649224827`) |
+> | steps 2–4 (~L45) | ✅ **Provisioned for `chat-gateway-prod`** | that project no longer exists — the ✅ is **false** |
+> | step 5 (~L143) | point the console at `projects/chat-gateway-prod/topics/…` | wrong project |
+> | step 8 (~L235, ~L315) | hand back / rotate `chat-gateway-sa.json` | the live key is `chat-gateway-sa-gw.json`; `iac/chat-gateway-sa.json` is **dead** |
+>
+> A reader following this doc today would create a second project named after a
+> deleted one and wire credentials by a dead filename. Also record that the app
+> is the classic **"Agent Comms"** in the **JobHunt space only**, and that tier 1
+> is project-independent (four identities delivered immediately after the project
+> deletion) — the doc asserts that already; it is now observed.
+>
+> Do **not** silently reuse the ✅ box. A provisioning claim for a deleted project
+> should be rewritten as history, dated, not left looking current.
+
 Two traps cost real time on this project and together they are the whole story
 of how it ended up on the wrong runtime. CG-6 corrected the first (the
 Marketplace SDK does **not** gate installability). This records the second,
@@ -361,6 +361,16 @@ Scope is comments only — no resource changes, no behaviour change. It is filed
 separately rather than folded into CG-6 because touching `iac/` requires a user
 pause, and CG-6 was the credential fix that had to ship first.
 
+**Scope widened 2026-07-30** (CG-5's review, LOW): while in these three files,
+also update the illustrative project name and key filename. `iac/gcloud-setup.sh:3,7`,
+`iac/gcloud-setup.ps1:25,49` and `iac/terraform/main.tf:10` use
+`PROJECT_ID=chat-gateway-prod` as the example and default `KEY_FILE` to
+`chat-gateway-sa.json`. These are genuinely parameterized examples, not status
+claims — which is why this is LOW and not the same finding as CG-20's false ✅
+box — but an operator copy-pasting them would reuse a project name this repo has
+just declared deleted and a key filename it has declared dead. Still
+comments/defaults only; no resource changes.
+
 ---
 
 ### CG-23 · The `resp.text[:200]` echo survives in both sibling adapters  📋 queued · ⏸ merge gate
@@ -443,6 +453,42 @@ that question is permanently unresolvable (both principals were bound in
 
 ---
 
+### CG-25 · `send_text()` has no transport-error guard, unlike `send()`  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by CG-5's review — a code asymmetry found while checking the docstring split |
+| **Depends on** | nothing (CG-5 shipped the docstrings; this is the behaviour) |
+| **Touches** | `src/chat_gateway/adapters/chat_api.py` + a test |
+
+`ChatApiAdapter.send()` wraps its POST in `try/except httpx.HTTPError` and
+re-raises as `ChatApiError`, naming the identity. **`send_text()` does not wrap
+it at all** — a connection reset, DNS failure or read timeout propagates as a raw
+`httpx` exception.
+
+Not a crash: `CallbackForwarder` catches broad `Exception` and logs, so nothing
+goes silent. The defect is that the failure arrives **untyped**, in the one method
+whose entire job is to be reliable about telling a user something went wrong:
+
+- jobhunt **R7** — the in-thread notice that a tap did not land.
+- jobhunt **R4** — the refusal shown to an unauthorized user.
+
+So the delivery log records `ConnectError` where every other adapter path records
+`ChatApiError`, and a caller cannot distinguish "Google refused us" from "we never
+reached Google" without string-matching an exception type. That is the same
+class of ambiguity `PubSubError` was introduced to remove in CG-7.
+
+Expected shape: mirror `send()`'s guard — `except httpx.HTTPError` → `ChatApiError`
+carrying the type name only, never the response body (that is CG-23's separate
+concern, and `send_text()`'s non-200 branch is already correct on it). One test
+driving a transport failure through `httpx.MockTransport`.
+
+Note this does **not** re-open CG-5's flag clear: both of `send_text()`'s
+*threading* branches were verified live. The transport-error branch was never
+exercised against Google and CG-5's docstring says so.
+
+---
+
 ## Experiments
 
 CG-15 and CG-16 **ran on 2026-07-29** and are recorded below with their results.
@@ -511,6 +557,63 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-5 · Split `chat_api.py`'s flag — and BOTH halves cleared, not one  ✅ shipped 2026-07-30 · PR-PENDING
+
+**The plan for this item is superseded by evidence, and that is recorded rather
+than quietly acted on.** Part C said `send()` clears and `send_text()` **keeps**
+its flag, with the instruction *"be precise about the split."* That was written
+before the 2026-07-30 live session, which cleared `send_text()` too. Builder did
+not decide this — the evidence did, and the user named it explicitly.
+
+| Seam | Status |
+|---|---|
+| `GoogleServiceAccountTokens` | ✅ cleared — minted the token `send()` used; re-exercised 2026-07-30 with the live key |
+| `send()` | ✅ cleared 2026-07-29 — text + Cards v2 posted as the app, response carried `sender: {displayName: "Agent Comms", type: BOT}` |
+| `send_text()` | ✅ cleared 2026-07-30 — **both branches** |
+
+**Why `send_text()`'s two branches were driven separately, and why that matters
+more than the count of flags cleared.** They fail separately and each carries a
+different guarantee:
+
+- `thread_name` set → posted into `spaces/AAQAgjGR7J4/threads/_CWBxuQ8MlU`. This
+  is jobhunt **R7**'s in-thread failure notice *and* **R4**'s authorization
+  refusal — the paths that tell a user their tap did not land, or that they were
+  not allowed to make it. A silent failure here is a silent failure of exactly
+  those guarantees, which is why the plan singled this method out as the one not
+  to clear cheaply.
+- `thread_name=None` → posted at top level. The no-thread fallback, where a naive
+  implementation sends `{"thread": {"name": null}}` and is rejected.
+
+**What did NOT clear, stated because a per-method flag invites exactly this
+mistake:** `send()`'s `thread.threadKey` + `messageReplyOption` branch. The live
+`send()` posts were unthreaded, and `send_text()`'s clear does **not** reach it —
+that method threads by `thread.name`, a different field on a different request
+shape. Both non-200 branches and the `httpx.HTTPError` branch also stay
+unexercised. The module docstring now carries a three-line status table so the
+next reader cannot generalize from one method to the other.
+
+Noted while in the file, and it is the contrast that makes **CG-23** concrete:
+`send_text()`'s error path already raises with the HTTP **status only**, while
+`send()` twelve lines above still interpolates `resp.text[:200]`. One file,
+two standards, and the lax one is on the method that handles arbitrary content.
+
+**Also corrected here, because it is actively dangerous rather than merely
+stale:** `CLAUDE.md` described the Cloud resources of `chat-gateway-prod` and
+pointed at `iac/chat-gateway-sa.json` as the SA key. That project is **deleted**
+and that key is **dead**. A reader following it would try to authenticate with a
+credential for a project that no longer exists. Replaced with `chat-gateway-gw`
+(`#860649224827`) and `chat-gateway-sa-gw.json`, with the dead path named as dead
+so its presence on disk is not mistaken for configuration.
+
+`docs/consumers/jobhunt.md`'s R3/R4 status was split into a per-link table for the
+same reason: "live-unverified end to end" was covering a verified parse, a
+now-verified reply transport, and one link that genuinely has never happened —
+an interaction reaching a jobhunt callback, which is outstanding for a
+**configuration** reason (`job-hunter` has no `callback_url` set) rather than a
+code one.
+
+Docstrings and docs only. Suite unchanged at **98**.
 
 ### CG-4 · Clear `webhook.py`'s flag, drop the redundant threadKey mechanism  ✅ shipped 2026-07-30 · PR-PENDING
 

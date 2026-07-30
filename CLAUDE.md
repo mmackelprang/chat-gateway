@@ -72,11 +72,15 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   daily repeat; JSON-persisted checks). US market holidays deliberately not
   modeled (contract says widen grace). Queue is in-memory (restart drops
   undelivered jobs — visible in the log; accepted v0).
-- Cloud resources now EXIST for `chat-gateway-prod` (steps 2–4, 2026-07-28):
-  chat + pubsub APIs enabled (no billing needed), `chat-gateway` SA, the
-  `chat-gateway-events` topic, the `chat-gateway-sub` pull subscription, both
-  IAM bindings, SA key minted to `iac/chat-gateway-sa.json` (gitignored,
-  ACL-locked to its owner). **Provisioning is not verification** — see below.
+- **The live project is `chat-gateway-gw` (`#860649224827`), and it is the only
+  one.** `chat-gateway-prod` — which every "Cloud resources now exist" note in
+  this file used to describe — was **deleted 2026-07-30**, along with E1's
+  throwaway project. Chat + Pub/Sub APIs enabled (no billing needed), the
+  `chat-gateway` SA, the topic and the pull subscription all exist on `gw`; the
+  live SA key is **`chat-gateway-sa-gw.json`**. ⚠ `iac/chat-gateway-sa.json` is
+  **dead** — it belongs to the deleted project; do not try to authenticate with
+  it and do not treat its presence as configuration.
+  **Provisioning is not verification** — see below.
 - ⚠ LIVE-UNVERIFIED (updated honestly):
   - Events DO reach `chat-gateway-sub` — proven 2026-07-29.
   - **Not** proven: which principal published them. Both
@@ -103,7 +107,19 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
     was deleted, so no tier-2 deployment change can take the notification path
     down. Not covered: the non-200 and transport-error branches. Whether
     `messageReplyOption` is required at all was NOT isolated.
-  - Chat API **send** — see CG-5.
+  - Chat API **send()** — ⚠ flag CLEARED 2026-07-29 (real `ChatApiAdapter` +
+    real `GoogleServiceAccountTokens`; text and Cards v2 posted as the app;
+    response carried `sender: {displayName: "Agent Comms", type: BOT}`). Not
+    covered: its `thread.threadKey` threading branch — the live posts were
+    unthreaded — and its error branches.
+  - Chat API **send_text()** — ⚠ flag CLEARED 2026-07-30, **both branches**:
+    in-thread (`spaces/AAQAgjGR7J4/threads/_CWBxuQ8MlU`) and top-level
+    (`thread_name=None`). They matter separately — in-thread is jobhunt R7's
+    failure notice and R4's authorization refusal, top-level is the no-thread
+    fallback. This **supersedes the CG-5 plan**, which predated the live session
+    and expected this method to keep its flag. It threads by `thread.name`, so
+    this clear does **not** extend to `send()`'s `thread.threadKey` branch. Not
+    covered: its non-200 branch.
   - The add-on **MESSAGE** and **buttonClicked** shapes are ⚠ SHAPE-VERIFIED
     2026-07-29 (real captured bytes replayed offline,
     `tests/fixtures/addon-message-event.json`,
