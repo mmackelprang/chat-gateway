@@ -126,6 +126,26 @@ REDACTED = "<redacted-by-gateway>"
 CAPABILITY_FIELDS = ("configCompleteRedirectUri", "configCompleteRedirectUrl")
 
 
+class PubSubError(RuntimeError):
+    """A Pub/Sub REST call failed, carrying the HTTP status.
+
+    Typed rather than a bare RuntimeError so SubscriberLoop can classify a
+    failure without regexing an error message. It also stops echoing
+    `resp.text[:200]`: a Google error body can quote the request, and the
+    request path names the subscription — hard rule #2 says names, not values.
+    The reason phrase is a fixed HTTP string and carries nothing.
+
+    The cost is honest: we lose Google's error prose. Status + phrase is what
+    the loop can act on.
+    """
+
+    def __init__(self, verb: str, status_code: int, reason: str = ""):
+        super().__init__(f"pubsub {verb} failed: HTTP {status_code} {reason}".rstrip())
+        self.verb = verb
+        self.status_code = status_code
+        self.reason = reason
+
+
 class UnrecognizedEventError(ValueError):
     """The pulled bytes are not any Chat event envelope this gateway knows.
 
@@ -177,7 +197,7 @@ class PubSubPuller:
             headers={"Authorization": f"Bearer {self._tokens()}"},
         )
         if resp.status_code != 200:
-            raise RuntimeError(f"pubsub {verb} HTTP {resp.status_code}: {resp.text[:200]}")
+            raise PubSubError(verb, resp.status_code, resp.reason_phrase)
         return resp.json() if resp.text else {}
 
     def pull(self, max_messages: int = 10) -> list[tuple[str, dict]]:
@@ -554,7 +574,12 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
 
 class SubscriberLoop:
     """Background pull loop. `last_poll_at` feeds healthz — honest liveness,
-    not a hardcoded OK (the claude-mem pilot lesson, aiteam plan F18 gate 2)."""
+    not a hardcoded OK (the claude-mem pilot lesson, aiteam plan F18 gate 2).
+
+    As of CG-7 the failure counters below feed it too: they are what /healthz
+    computes `status` FROM, so a loop whose every poll has failed can no longer
+    be reported green. Reporting a counter nobody reads is how the endpoint
+    stayed dishonest while looking honest."""
 
     def __init__(self, puller: Puller, registry: Registry, inbox: Inbox,
                  interval_seconds: float = 5.0, forwarder=None, reply_fn=None):
@@ -579,6 +604,17 @@ class SubscriberLoop:
         # failed). A non-zero value means some producer's cards are missing
         # `__cg_action__` — or that Google changed the runtime underneath us.
         self.interactions_without_action_id = 0
+        # Poll-level failure tracking. poll_once() raising means the
+        # SUBSCRIPTION is unreachable — a revoked key, a deleted subscription, a
+        # wrong CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, or free-tier quota exhaustion.
+        # All four look identical from in here and all four fail CLOSED: inbound
+        # simply stops. Before this existed, healthz reported "ok" throughout
+        # (hard rule #5, the failure it was written after).
+        self.poll_failures = 0
+        self.consecutive_poll_failures = 0
+        # "<ExceptionType> HTTP <status>" — a TYPE and a STATUS, never a message
+        # body (rule #2). Cleared on the first success so recovery is visible.
+        self.last_poll_error: str | None = None
 
     def _count_unparseable(self, exc: Exception) -> None:
         self.unparseable_seen += 1
@@ -622,10 +658,21 @@ class SubscriberLoop:
         while not self._stop.is_set():
             try:
                 self.poll_once()
+                self.consecutive_poll_failures = 0
+                self.last_poll_error = None
                 if self.forwarder is not None:
                     self.forwarder.process_due()
             except Exception as exc:  # noqa: BLE001 — the loop must survive
-                print(f"subscriber: poll error (will retry): {exc}", flush=True)
+                self.poll_failures += 1
+                self.consecutive_poll_failures += 1
+                self.last_poll_error = (
+                    f"{type(exc).__name__} HTTP {exc.status_code}"
+                    if isinstance(exc, PubSubError) else type(exc).__name__
+                )
+                # Type + status only. The previous version printed the exception
+                # message, which for a Pub/Sub failure embedded resp.text[:200].
+                print(f"subscriber: poll error (will retry): {self.last_poll_error}",
+                      flush=True)
             self._stop.wait(self._interval)
 
     def start(self) -> None:

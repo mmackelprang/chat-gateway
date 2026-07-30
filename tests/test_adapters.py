@@ -187,6 +187,71 @@ def test_pubsub_wire_decode(registry):
     puller.acknowledge(["a1"])
 
 
+# --- poll-failure visibility (CG-7) -----------------------------------------
+#
+# NOTE: the tests below drive PubSubPuller / SubscriberLoop with a MOCK
+# transport and a fake puller. That is not a live round-trip and clears
+# nothing: PubSubPuller stays ⚠ LIVE-UNVERIFIED (see the module docstring).
+
+
+def test_pubsub_error_carries_status_not_response_body():
+    """Hard rule #2: a Google error body can quote the request, and the request
+    path names the subscription. Status and reason phrase only."""
+    from chat_gateway.adapters.pubsub import PubSubError, PubSubPuller
+
+    def quota_exhausted(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, text="RESOURCE_EXHAUSTED on projects/p/subscriptions/s")
+
+    puller = PubSubPuller("projects/p/subscriptions/s", lambda: "tok",
+                          mock_client(quota_exhausted))
+    with pytest.raises(PubSubError) as exc:
+        puller.pull()
+    assert exc.value.status_code == 429
+    assert "RESOURCE_EXHAUSTED" not in str(exc.value)
+    assert "projects/p/subscriptions/s" not in str(exc.value)
+
+
+def test_run_loop_counts_poll_failures_and_clears_the_run_on_recovery(registry):
+    """The CG-7 defect lived HERE, not only in /healthz: `_run` swallowed every
+    poll exception with a print, so a subscription that had never worked moved
+    NO counter at all — healthz had nothing it could have reported honestly.
+
+    Also pins the recovery semantics /healthz depends on: the RUN resets, the
+    lifetime total does not (an operator needs to see it flapped)."""
+    from chat_gateway.adapters.pubsub import PubSubError
+
+    inbox = Inbox()
+
+    class Failing:
+        """Raises once, then stops the loop so `_run` executes one iteration."""
+
+        def pull(self, max_messages: int = 10):
+            loop._stop.set()
+            raise PubSubError("pull", 429, "Too Many Requests")
+
+        def acknowledge(self, ack_ids):  # pragma: no cover — never reached
+            raise AssertionError("acknowledge after a failed pull")
+
+    loop = SubscriberLoop(Failing(), registry, inbox, interval_seconds=0)
+    loop._run()
+    assert loop.poll_failures == 1 and loop.consecutive_poll_failures == 1
+    # A TYPE and a STATUS — never Google's prose (rule #2).
+    assert loop.last_poll_error == "PubSubError HTTP 429"
+    assert loop.last_poll_at is None            # no poll has ever succeeded
+
+    class Recovering(FakePuller):
+        def pull(self, max_messages: int = 10):
+            loop._stop.set()
+            return super().pull(max_messages)
+
+    loop._puller = Recovering([CHAT_EVENT])
+    loop._stop.clear()
+    loop._run()
+    assert loop.consecutive_poll_failures == 0 and loop.last_poll_error is None
+    assert loop.poll_failures == 1               # lifetime history is not erased
+    assert loop.last_poll_at is not None
+
+
 # --- dual-format normalization (CG-1) ---------------------------------------
 
 
