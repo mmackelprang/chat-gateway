@@ -324,16 +324,16 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                  # observables if topic-as-function routing ever breaks.
                  "interactions_without_action_id":
                      subscriber.interactions_without_action_id,
-                 # CG-12: events that routed to real candidates and reached none
-                 # of them — every owner of the space is `allow_inbound: false`,
-                 # or the sender was not on an owner's allowlist. Neither writes
-                 # an inbox entry nor an `_unrouted` record, so before these the
-                 # discard left no trace anywhere: the silent-loss shape rule #5
-                 # exists for. BARE integers because this endpoint is
-                 # UNAUTHENTICATED — no space, no app id, no content — and they
-                 # count SUPPRESSIONS, not events (one event in a space with two
-                 # opted-out owners increments by two). Full reasoning sits with
-                 # the counters in adapters/pubsub.py; do not restate it here.
+                 # CG-12: each counts CANDIDATE APPS THAT DECLINED an event —
+                 # `allow_inbound: false`, or a sender not on that app's
+                 # allowlist — not events that went nowhere. An opted-out owner
+                 # increments even when a co-owner of the same space RECEIVED
+                 # that same event, and one event with two opted-out owners
+                 # increments by two; `events_seen` is the event count. BARE
+                 # integers — no space, no app id, no content — because this
+                 # endpoint is UNAUTHENTICATED. Full reasoning, and the
+                 # all-owners-opted-out gap this was filed for, sit with the
+                 # counters in adapters/pubsub.py; do not restate them here.
                  #
                  # They are deliberately NOT inputs to `status` and never add a
                  # `reasons` entry, at any magnitude. Both are CORRECT behaviour:

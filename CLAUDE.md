@@ -234,6 +234,31 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   need the first row. Pinned by
   `test_card_parameters_are_an_array_in_the_real_captured_card` and
   `test_inbound_parameter_shape_is_a_runtime_property_not_a_direction_rule`.
+- **Suppressed inbound is COUNTED, never RECORDED** (CG-12; user decision
+  option A, 2026-07-29). A space whose registered owners are **all**
+  `allow_inbound: false` used to discard events with **zero** forensic trace:
+  `candidates` is non-empty so the `_unrouted` fallback never fires, every
+  candidate hits an authorization `continue`, and nothing was written anywhere.
+  Hard rule #6 was satisfied; rule #5's spirit was not. `dispatch` now takes an
+  additive `on_suppressed(app_id, reason)` callback — mirroring `on_unparseable`
+  — feeding two **bare integers** at `/healthz`: `subscriber.suppressed_opt_out`
+  and `subscriber.suppressed_not_authorized`. No space, no app id, no content,
+  no timestamp, because **`/healthz` is unauthenticated**; the alternatives (a
+  metadata-only record, a full `_unrouted` audit record) were considered and
+  **rejected**, so `aitrader`'s traffic is still never persisted anywhere.
+  Accepted with eyes open, and recorded rather than claimed away: with exactly
+  **one** `allow_inbound: false` tenant registered — today's deployment —
+  `suppressed_opt_out` is a de-facto unauthenticated activity meter for that
+  tenant **by inference**, though no field names it. Taken as **volume-only**,
+  and marginal beside `events_seen`, which already publishes total inbound
+  volume on the same endpoint. Two
+  integers rather than one because the reasons are different investigations —
+  `opt_out` is rule #6 working as designed, `not_authorized` is a real human
+  refused (jobhunt R4, newly reachable in production since `job-hunter` gained
+  an `allowed_users` list). They count **suppressions, not events** (once per
+  candidate app) and deliberately do **not** colour `status`: a guarantee
+  working is not a fault, and degrading on one teaches an operator to ignore
+  `degraded`.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
   gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`
