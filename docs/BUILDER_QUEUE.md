@@ -404,7 +404,7 @@ accurate by saying the phrase comes off the wire. Not both, and not neither.
 
 ---
 
-### CG-34 · `httpx` logs the whole webhook URL — key and token — at INFO  📋 queued
+### CG-34 · `httpx` logs the whole webhook URL — key and token — at INFO  🔨 in flight
 
 | | |
 |---|---|
