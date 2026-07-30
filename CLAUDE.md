@@ -81,16 +81,30 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   **dead** — it belongs to the deleted project; do not try to authenticate with
   it and do not treat its presence as configuration.
   **Provisioning is not verification** — see below.
-- ⚠ LIVE-UNVERIFIED (updated honestly):
-  - Events DO reach `chat-gateway-sub` — proven 2026-07-29.
-  - **Not** proven: which principal published them. Both
+- **Verification ledger** (was "⚠ LIVE-UNVERIFIED"; renamed 2026-07-30 because
+  most of it is now cleared and a list titled after the flag invites a reader to
+  assume everything under it still carries one). **What is still flagged, in one
+  line: every adapter's error branches, and nothing else.** No non-200 or
+  transport-error path has been driven against Google in any adapter.
+  - Events DO reach the subscription — proven 2026-07-29, and re-proven
+    2026-07-30 through our own `PubSubPuller` rather than an ad-hoc client.
+  - **CLOSED BY CIRCUMSTANCE, not answered — stop carrying it as open work:**
+    which principal published those events. Both
     `chat-api-push@system.gserviceaccount.com` and the add-ons service agent
-    `service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com` are
-    now bound, so the evidence is circumstantial. GCP also accepts bindings to
-    `*@system.gserviceaccount.com` principals **without validating they
-    exist**, so a clean apply was never evidence either.
-  - `PubSubPuller.pull()/acknowledge()` — still unexercised; the live pull used
-    an ad-hoc client, not our class.
+    `service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com` were
+    bound in `chat-gateway-prod`, and **that project is deleted**, so the
+    question can never be settled. (GCP also accepts bindings to
+    `*@system.gserviceaccount.com` principals **without validating they exist**,
+    so a clean apply was never evidence either.) It is not a flag, not a gap to
+    close, and not a task — it is an unanswerable question about a system that no
+    longer exists.
+  - `PubSubPuller.pull()` / `.acknowledge()` — ⚠ flag CLEARED 2026-07-30, both
+    halves, through the real class. `pull()` returned real `(ack_id, event)`
+    tuples fed straight into `normalize_event`. `acknowledge()` was proven
+    **selectively**: acking one id removed only that message while two other
+    unacked ids kept redelivering across a 60s poll — which proves the *right*
+    message was acked, not merely that the subscription drained. Not covered:
+    `_post`'s non-200 branch and the `_undecodable` branches.
   - Add-on **CARD_CLICKED** — a real interaction WAS captured 2026-07-29 and is
     now ⚠ SHAPE-VERIFIED (tests/fixtures/addon-buttonclicked-event.json). It
     found a defect rather than confirming the mapping: `action.id` normalizes to

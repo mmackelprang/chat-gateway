@@ -95,8 +95,8 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-24 → CG-25 → CG-8 → CG-12 → CG-11 → CG-20 →
-CG-22 → CG-19 → CG-21 → CG-23** (CG-7, CG-4 and CG-5 have since shipped). CG-14 is now
+Remaining order: **CG-25 → CG-8 → CG-12 → CG-11 → CG-20 →
+CG-22 → CG-19 → CG-21 → CG-23** (CG-7, CG-4, CG-5 and CG-24 have since shipped). CG-14 is now
 `⏸ blocked` (E1 removed its rationale, so it needs a decision, not code);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
 auto-merging; CG-9 stays blocked on a human; CG-17 and CG-18 stay deferred and
@@ -412,47 +412,6 @@ the secret-handling path and therefore needs a pause.
 
 ---
 
-### CG-24 · Clear `PubSubPuller`'s flag — `pull()` **and** `acknowledge()`  📋 queued
-
-| | |
-|---|---|
-| **Rule** | **hard rule #3** — remove a ⚠ LIVE-UNVERIFIED flag only after a real round-trip, and note the verification date |
-| **Origin** | filed by CG-7: the 2026-07-30 live session clears this, and no existing item owns it (CG-4 is `webhook.py`, CG-5 is `chat_api.py`) |
-| **Depends on** | nothing |
-| **Touches** | docstrings + `CLAUDE.md` status block only; the suite must not move |
-
-`adapters/pubsub.py` has carried *"The 2026-07-29 live pull used an ad-hoc
-client, NOT PubSubPuller — this class is still unexercised against Google"*
-since CG-1. **That is no longer true.** On 2026-07-30 the real class was driven
-against the live subscription and returned real `(ack_id, event)` tuples —
-196-character ack ids, `_pubsub_message_id` injected, output fed straight into
-`normalize_event`.
-
-**The `acknowledge()` half is the stronger evidence, and it is worth stating
-precisely** because a batch smoke test would not have earned it: acking message
-id `20755182577634163` removed **only** that message, while two other unacked ids
-(`21328572002996378`, `21339851456542226`) kept redelivering across a 60-second
-poll. That is a **selective** ack — it proves the *right* message was acked, not
-merely that the subscription drained. Both halves of the module flag are
-therefore real.
-
-Scope the clear honestly, as CG-4 and CG-5 do:
-
-- **Cleared:** the success path of `pull()` and of `acknowledge()`, including the
-  base64/JSON decode, the `_pubsub_message_id` injection and selective ack
-  semantics.
-- **NOT cleared:** the non-200 branch of `_post` (`PubSubError`) — CG-7's test
-  drives it with `httpx.MockTransport`, and a UAT against the real REST endpoint
-  with a junk token returned a genuine HTTP 401, which proves a request was
-  *formed and dispatched* but says nothing about pull/ack semantics; the
-  `_undecodable` branches; and the `SubscriberLoop` thread's long-run behaviour.
-
-Do **not** widen this into the `chat-api-push@system.gserviceaccount.com` grant —
-that question is permanently unresolvable (both principals were bound in
-`chat-gateway-prod`, which is deleted) and is recorded as closed, not open.
-
----
-
 ### CG-25 · `send_text()` has no transport-error guard, unlike `send()`  📋 queued
 
 | | |
@@ -557,6 +516,52 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-24 · Clear `PubSubPuller`'s flag — `pull()` **and** `acknowledge()`  ✅ shipped 2026-07-30 · PR-PENDING
+
+The flag `adapters/pubsub.py` had carried since CG-1: *"the live pull used an
+ad-hoc client, NOT PubSubPuller — this class is still unexercised against
+Google."* Driven through the real class on 2026-07-30 and cleared, both halves.
+
+**`acknowledge()` is the half worth dwelling on, because the evidence is
+stronger than a smoke test can produce.** Acking message id
+`20755182577634163` removed **only** that message, while two other unacked ids
+(`21328572002996378`, `21339851456542226`) kept redelivering across a 60-second
+poll. A batch ack followed by an empty subscription would have proven the
+subscription *drained* — not that the **right** message was acked, and an ack
+that removed too much would look identical. Selective redelivery is what
+separates those, and it is what makes the `_pubsub_message_id` dedupe key
+trustworthy rather than assumed.
+
+**Also closed here, deliberately as a non-task:** the
+`chat-api-push@system.gserviceaccount.com` publisher grant. Both candidate
+principals were bound in `chat-gateway-prod`; that project is **deleted**, so
+which one delivered the first event can never be determined. `CLAUDE.md` now
+says **CLOSED BY CIRCUMSTANCE, not answered — stop carrying it as open work**,
+because it had been sitting in a list titled after the ⚠ flag and reading like a
+gap someone should close. It is an unanswerable question about a system that no
+longer exists.
+
+**Flag-drift sweep, prompted by CG-4's review having caught exactly this once
+already** — and this time the stale table was Builder's own, written two PRs
+earlier:
+
+- `README.md`'s per-seam table listed Chat API send and Pub/Sub pull/ack as
+  `⚠ LIVE-UNVERIFIED`. Both had been cleared by CG-5 and this item. Rewritten,
+  and it now points at `CLAUDE.md` as authoritative instead of restating detail
+  that will drift again.
+- `docs/consumers/jobhunt.md` said the end-to-end run *"needs the tier-2 Google
+  Cloud setup (LIVE-UNVERIFIED seams) — first smoke test once the Chat app +
+  subscription exist."* Three things wrong at once: the seams are verified, the
+  app and subscription **exist**, and the actual blocker is one missing
+  `callback_url`. Corrected to say so.
+- `CLAUDE.md`'s list heading was literally *"⚠ LIVE-UNVERIFIED (updated
+  honestly)"* while most entries under it were cleared — a title that invites a
+  reader to assume every child still carries the flag. Renamed to
+  **Verification ledger**, with the residue stated in one line up front: **every
+  adapter's error branches, and nothing else.**
+
+Docstrings and docs only. Suite unchanged at **98**.
 
 ### CG-5 · Split `chat_api.py`'s flag — and BOTH halves cleared, not one  ✅ shipped 2026-07-30 · PR-PENDING
 

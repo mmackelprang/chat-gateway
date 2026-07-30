@@ -117,6 +117,13 @@ Encoded as deterministic tests (`tests/test_callbacks.py`): authorized tap →
 whole-event callback with dedupe key and structured reason; unauthorized tap
 → in-thread refusal only; callback down → visible in-thread failure after
 ~10s of retries; opted-out tenants receive nothing and can't even configure
-a callback. The phone-tap-to-verdict-in-seconds end-to-end run needs the
-tier-2 Google Cloud setup (LIVE-UNVERIFIED seams) — first smoke test once
-the Chat app + subscription exist.
+a callback.
+
+**The end-to-end run is no longer blocked on unverified seams or missing
+infrastructure — it is blocked on one config value.** The Chat app
+(classic, "Agent Comms") and the subscription **exist** on `chat-gateway-gw`, and
+as of 2026-07-30 every transport link in the chain is verified live: the inbound
+pull and its selective ack, and the in-thread reply both branches. What is
+missing is a `callback_url` for `job-hunter` — see the per-link table above.
+The remaining unverified paths are the adapters' **error** branches, which the
+phone-tap happy path would not exercise anyway.
