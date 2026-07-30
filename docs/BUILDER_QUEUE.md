@@ -565,7 +565,7 @@ none. The guard is the control that matters, and it runs on what lands.
 
 ---
 
-### CG-29 · `poll_once`'s type-name-only print swallows the detail CG-25 just created  📋 queued
+### CG-29 · `poll_once`'s type-name-only print swallows the detail CG-25 just created  🔨 in flight
 
 | | |
 |---|---|
