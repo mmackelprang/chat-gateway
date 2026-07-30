@@ -505,7 +505,7 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
-### CG-33 · `PubSubError`'s docstring makes a claim about its own reason phrase that is false  📋 queued
+### CG-33 · `PubSubError`'s docstring makes a claim about its own reason phrase that is false  🚀 in-flight
 
 | | |
 |---|---|
