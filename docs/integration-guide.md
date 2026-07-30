@@ -143,18 +143,31 @@ Then build every interactive element like this:
 }
 ```
 
-> ### ⚠ `parameters` has two different shapes. This is the easiest thing here to get wrong.
+> ### ⚠ `parameters` shapes — outbound is fixed, inbound depends on the runtime
 >
-> | Direction | Shape | Evidence |
+> **Outbound is always an ARRAY** of `{"key": …, "value": …}`. That is the
+> Cards v2 schema, on every runtime, with no exceptions. Write the array — a
+> card built with a map is not valid Cards v2 and you find out at render or tap
+> time, in front of a user.
+>
+> **Inbound varies, and it is a property of the runtime, not of the direction:**
+>
+> | Runtime | Where the params arrive | Shape |
 > |---|---|---|
-> | **The card you send** | an **ARRAY** of `{"key": …, "value": …}` | Cards v2 schema — and it is what our own real card used, echoed back verbatim in `tests/fixtures/addon-buttonclicked-event.json` |
-> | **The event you receive** | a **MAP**, `{"key": "value"}`, under `commonEventObject.parameters` (add-ons) | same fixture, same file — live capture 2026-07-29 |
+> | **classic** (production since 2026-07-29) | `action.parameters` | an **ARRAY** — byte-identical to what you sent |
+> | **add-ons** | `commonEventObject.parameters` | a **MAP**, `{"key": "value"}` |
 >
-> Both shapes are from first-hand captures, not documentation. You never build
-> the map yourself: the gateway normalizes **either** form and hands you
-> `action.params`. **Write the array.** A card built with the map shape is not
-> valid Cards v2, and you find out at render or tap time, in front of a user.
-> Pinned by `test_card_parameters_are_an_array_in_the_real_captured_card`.
+> So classic is *symmetric* (array out, array back, with widget values arriving
+> separately under `common.formInputs`), and the map is an **add-ons-runtime
+> quirk** rather than "what inbound looks like". Every shape in both tables is
+> from a first-hand capture, not documentation.
+>
+> **You should not need any of this.** The gateway flattens all of it and hands
+> you `action.params` as a plain object either way — that normalization is the
+> whole point. It is documented only so that nobody reading a raw event
+> concludes the guide is wrong. Pinned by
+> `test_card_parameters_are_an_array_in_the_real_captured_card` and
+> `test_inbound_parameter_shape_is_a_runtime_property_not_a_direction_rule`.
 
 Two rules, and the reasons matter:
 
@@ -180,30 +193,35 @@ side. Hardcode the topic path and you have signed up to re-render every card
 the day it moves — **and it is moving**: see the runtime note below. See
 [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) D3.
 
-#### Runtime note: `__cg_action__` is a fallback, not the primary mechanism (updated 2026-07-29)
+#### Runtime note: `__cg_action__` is an add-ons compatibility fallback (updated 2026-07-29)
 
 This matters for how much weight to put on the reserved key.
 
-A live experiment on a **classic** (non-add-on) Chat app on Pub/Sub settled it:
-a card button with an **ordinary** function name (`approve`) reached Pub/Sub
-natively, and `action.id` came through populated as `'approve'`. No
-topic-as-function needed, and a selection widget's `onChangeAction` **fired**
-(`action.id: 'onDecision'`) — the thing that dies with `code 13` under the
-add-ons runtime. Native action identity works on classic; the add-ons runtime is
-the constrained one, and this deployment is on it by mistake rather than by
-design.
+**Production migrated to a classic (non-add-on) Chat app on 2026-07-29, and
+classic supplies action identity natively.** Live-verified through our real
+`ChatApiAdapter` on the production configuration: a card with **ordinary**
+function names delivered
 
-So:
+```
+type: CARD_CLICKED   action.id: 'approve'   envelope_format: 'classic'
+params: {"jobId": "mig-001", "reason": "good_fit"}
+```
 
-- **Classic is the preferred destination**, and it supplies action identity
-  natively. A migration is underway.
-- **`__cg_action__` stays**, and stays supported. It is load-bearing under the
-  add-ons runtime — which is what is deployed *today* — and it is the same
-  support-both posture the gateway already takes on the two envelope formats.
-  It also still wins over the native slot when present, so a card carrying it
-  behaves identically before and after the migration. **That is the point.**
-- Nothing you build against this section needs revisiting when the migration
-  lands. If you had hardcoded the routing target, it would.
+No topic-as-function, no reserved key needed — `action.id` is simply populated.
+
+So, plainly:
+
+- **On classic, `__cg_action__` is inert.** You do not need it. Give your
+  buttons ordinary function names and read `action.id`.
+- **It is not removed, and it still wins when present.** It stays load-bearing
+  under the add-ons runtime, and a card that sets it behaves identically on
+  either runtime. This is the same support-both posture the gateway takes on the
+  two envelope formats — the gateway does not force you to know which runtime
+  you are behind, and that guarantee is worth more than tidiness.
+- **Keep fetching `interaction.routing_target` regardless.** On classic it is
+  just a constant the runtime echoes back unused, and fetching it is what made
+  this migration cost **zero producer card changes**. That already paid for
+  itself once.
 
 If `interaction.enabled` is `false`, read the `reason`: either your app is
 `allow_inbound: false` (interactions from it are never routed anywhere) or the
@@ -224,11 +242,20 @@ So: put your widgets on the card, and give the user one button to submit. It
 costs a second tap; select-to-act is not available on this runtime.
 
 **Under a classic Chat app, `onChangeAction` does fire** — live-verified
-2026-07-29 (`action.id: 'onDecision'`, `params: {"decision": "approve"}`). So
-select-to-act becomes available after the migration. *Widgets for input, one
-button to submit* keeps working on both, which is why it is still the pattern to
-build against today: it is the intersection, not a workaround you will have to
-undo.
+2026-07-29 (`action.id: 'onDecision'`, `params: {"decision": "approve"}`), so
+select-to-act is available on production now.
+
+**Use it sparingly, and prefer the submit button anyway.** Verified live on the
+production configuration: a dropdown value (`reason: "good_fit"`) arrived on the
+**button click's** form inputs with **no `onChangeAction` on the dropdown at
+all**. That means *widgets for input, one button to submit* produces **one event
+per user decision** instead of two — fewer events to make idempotent, fewer
+half-finished interactions, and one obvious commit point. `onChangeAction` is
+there when you genuinely want live reactivity, not as the default.
+
+The pattern is therefore not a workaround you will have to undo: it is the
+better design on the runtime we now run, and it also happens to be the only one
+that works on add-ons.
 
 True modal dialogs are **believed** impossible over Pub/Sub transport (they need
 a synchronous HTTP interaction endpoint) — that half is doc-derived inference

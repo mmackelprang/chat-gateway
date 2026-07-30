@@ -8,26 +8,44 @@
 | **Unblocks** | `CG-10` (empty `action.id`), `CG-11` (selection-widget wording) — both filed `⏸ blocked · ADR` |
 | **Hard rules engaged** | #1 (transport, never schemas), #2 (secrets), #3 (adapters + flag discipline), #5 (honest `/healthz`), #6 (inbound opt-in) |
 
-> ## ⚠ Status update — 2026-07-29, later the same day
+> ## ⚠ Status: SUPERSEDED BY ITS OWN OUTCOME — 2026-07-29, later the same day
 >
-> **All five §12 open questions are answered, and the two experiments this ADR
-> said would decide option D have RUN.** Read this before acting on anything
-> below; several sections are now historical rather than open.
+> **This ADR's recommendation was "adopt the bridge now, treat classic as the
+> destination, settle it with E1." E1 ran, passed decisively, and the migration
+> to classic is COMPLETE and live-verified. Production no longer depends on
+> undocumented behaviour at all.**
+>
+> Read the body below as the *record of how that was decided*, not as an open
+> recommendation. In particular §3 (the "is the undocumented bet worth it"
+> analysis) and §5's option comparison are settled history; §8's detector was
+> superseded before it was built; §10's experiments have run; §12's questions are
+> all answered.
 >
 > | Item | Outcome |
 > |---|---|
-> | **D2** `__cg_action__` | **APPROVED** and shipped (CG-10). But **reframed to a FALLBACK** — see E1. |
+> | **D2** `__cg_action__` | **APPROVED** and shipped (CG-10) — then **reframed to an add-ons compatibility fallback.** On classic it is *inert*; kept because it is load-bearing on add-ons and still wins when present, so one card works on either runtime. |
 > | **D6** third flag word | **NO.** `⚠ SHAPE-VERIFIED` stays the only addition. |
-> | **D3** portable card convention | Shipped (CG-13). The card `parameters` example in D2 was **wrong** and is corrected in place — see the callout there. |
-> | **§8** interaction dead-man | Approved, then **superseded before being built.** E1 removed its rationale; **nothing was implemented.** Now `⏸ blocked` pending a decision on whether a general inbound-quietness detector is wanted instead. |
-> | **E1** classic + Pub/Sub `CARD_CLICKED` | **PASSED.** Native delivery, `action.id` populated (`'approve'`), and `onChangeAction` **fires**. §11 trigger 1 has fired. |
+> | **D3** portable card convention | Shipped (CG-13), and it **paid for itself immediately**: the migration below cost **zero producer card changes**. The card `parameters` example in D2 was **wrong** and is corrected in place — see the callout there. |
+> | **§8** interaction dead-man | Approved, then **superseded before being built.** E1 removed its rationale; **nothing was implemented.** Now `⏸ blocked` pending a user decision on whether a general inbound-quietness detector is wanted instead. |
+> | **E1** classic + Pub/Sub `CARD_CLICKED` | **PASSED.** Native delivery, `action.id` populated (`'approve'`), and `onChangeAction` **fires**. §11 trigger 1 fired. |
 > | **E2** add-on toggle reversibility | **Answered: NO.** The toggle is **create-time only** — §5 option D's "contradictory" note is settled, and D7's parallel-project path was the *only* available one, not merely the prudent one. |
-> | **Migration to option D** | Approved in principle, and now **underway** — `chat-gateway-gw` (`#860649224827`) provisioned. Tracked as CG-21. |
+> | **D7 / migration to option D** | **DONE and live-verified 2026-07-29.** `chat-gateway-gw` (`#860649224827`), classic Chat app, real card through our real `ChatApiAdapter`: `action.id: 'approve'`, `envelope_format: 'classic'`, params `{"jobId": "mig-001", "reason": "good_fit"}`. Tracked as CG-21. |
 >
-> The load-bearing consequence: **§3's risk calculus is obsolete in our favour.**
-> The undocumented dependency has a proven, documented destination, so
-> topic-as-function is a genuine bridge with a known exit rather than a bet.
-> Full write-up and the two live-verified capability tables land as **CG-20**.
+> **The load-bearing consequence: §3's risk analysis no longer applies to
+> production.** The undocumented topic-as-function dependency is gone from the
+> live path — not mitigated, *removed*. What remains of the bridge is
+> compatibility code for a runtime we no longer deploy on.
+>
+> One thing the migration taught that no experiment predicted: a dropdown's value
+> arrived on the **button click's** form inputs with **no `onChangeAction` at
+> all**, so the recommended pattern yields **one event per user decision instead
+> of two**. §7 framed *widgets for input, one button to submit* as an add-ons
+> limitation; it is actually the better design on classic too.
+>
+> `chat-gateway-prod` is deliberately **not deleted** — see CG-20. It holds the
+> add-ons-runtime evidence behind the fixtures and this ADR. E1's own project
+> (`chat-gw-e1-20260729`) **was** deleted, so E1's findings now survive only in
+> docs and fixtures; CG-20 and CG-22 exist to make them stand alone.
 
 ---
 

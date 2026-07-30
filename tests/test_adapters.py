@@ -843,3 +843,51 @@ def test_the_documented_card_convention_round_trips_on_both_runtimes():
 
     assert classic["action"] == addon["action"] == {
         "id": "verdict", "id_source": "cg_param", "params": {"job_id": "job-123"}}
+
+
+def test_inbound_parameter_shape_is_a_runtime_property_not_a_direction_rule():
+    """The correction to a correction, and worth pinning precisely.
+
+    It is tempting to summarize the shapes as "you send an array, you receive a
+    map". That is WRONG, and it was briefly written down that way. The map is an
+    **add-ons-runtime** quirk, not a property of the inbound direction:
+
+        outbound, every runtime -> ARRAY of {"key","value"}   (Cards v2)
+        inbound, classic        -> ARRAY under action.parameters (symmetric!)
+        inbound, add-ons        -> MAP under commonEventObject.parameters
+
+    Both inbound shapes are first-hand: the add-ons map from
+    addon-buttonclicked-event.json, and the classic array from the 2026-07-29
+    production migration capture (`{"actionMethodName": "approve",
+    "parameters": [{"key": "jobId", "value": "mig-001"}]}`).
+
+    The reason this matters to a reader rather than only to us: a producer
+    debugging a raw classic event who had been told "inbound is a map" would
+    conclude the gateway was broken. Real captures land in CG-22; this pins the
+    property itself so the guide cannot drift back to the simpler, wrong rule.
+    """
+    # add-ons: the real capture carries the MAP form
+    addon_cap = fixture("addon-buttonclicked-event.json")
+    assert isinstance(addon_cap["commonEventObject"]["parameters"], dict)
+
+    # classic: the ARRAY form, exactly as the migration capture delivered it
+    classic = normalize_event({
+        "type": "CARD_CLICKED", "space": {"name": "spaces/AAA"},
+        "user": {"email": "m@example.com"}, "message": {},
+        "action": {"actionMethodName": "approve",
+                   "parameters": [{"key": "jobId", "value": "mig-001"}]},
+        "common": {"formInputs": {"reason": {"stringInputs": {"value": ["good_fit"]}}}},
+    })
+    assert classic["action"] == {
+        "id": "approve",            # NATIVE identity — no __cg_action__ needed
+        "id_source": "google",
+        # the widget value rode along on the BUTTON's form inputs, with no
+        # onChangeAction anywhere: one event per decision, not two.
+        "params": {"jobId": "mig-001", "reason": "good_fit"},
+    }
+
+    # ...and both inbound shapes flatten to the same kind of thing, which is why
+    # a producer never has to know any of the above.
+    assert isinstance(classic["action"]["params"], dict)
+    assert _action_params(addon_cap["commonEventObject"]["parameters"]) == {
+        "probe": "topic-as-fn"}
