@@ -31,53 +31,92 @@ nothing requires being on the homelab network.
 
 ### 1. Project
 ```bash
-gcloud projects create chat-gateway-prod --name="chat-gateway"
-gcloud config set project chat-gateway-prod
+gcloud projects create chat-gateway-gw --name="chat-gateway"
+gcloud config set project chat-gateway-gw
 ```
+
+> **`chat-gateway-gw` (`#860649224827`) is the live project, and it is the only
+> one.** This document used to name **`chat-gateway-prod`** here and in five
+> other places. **That project was deleted on 2026-07-30**, so following the old
+> text would have created a second project named after a deleted one. Substitute
+> your own id throughout — the name is an example, not a requirement, and the
+> IaC is parameterized by `PROJECT_ID`.
+
 Chat API and Pub/Sub at this volume sit in the free tier. Billing turned out
-**not** to be required for `chat-gateway-prod`: both `chat.googleapis.com` and
-`pubsub.googleapis.com` enabled successfully with `billingEnabled: false`
-(observed 2026-07-28). That is the result for this project, not a guarantee —
-if an `enable` call is rejected for billing, link a billing account and retry.
+**not** to be required: `chat.googleapis.com` and `pubsub.googleapis.com` both
+enabled with `billingEnabled: false` — observed 2026-07-28 on
+`chat-gateway-prod`, and again on `chat-gateway-gw` when the setup script ran
+clean there on 2026-07-29. That is the result for those two projects, not a
+guarantee — if an `enable` call is rejected for billing, link a billing account
+and retry.
 
 ### 2–4. APIs, service account, Pub/Sub (scripted)
 
-> ✅ **Provisioned for `chat-gateway-prod`** — steps 2–4 ran 2026-07-28: APIs,
-> service account, topic, subscription, the topic-publisher and
-> subscription-subscriber bindings, and the SA key.
+> ### The provisioning claim that used to sit here was for a deleted project
 >
-> ⚠ **That run was incomplete.** It predated the Workspace Add-ons service
-> agent, which did not exist and was therefore never bound — the failure
-> documented below. The agent and its publisher binding were added by hand on
-> 2026-07-29 and are now part of all three IaC paths, so a re-run is a safe
-> no-op. The lesson worth keeping: **"the script exited 0" was not evidence the
-> project was complete.**
+> This box read **✅ Provisioned for `chat-gateway-prod`** — present tense,
+> describing a run on 2026-07-28. **`chat-gateway-prod` was deleted on
+> 2026-07-30.** A green check for a project that does not exist is worse than no
+> check at all, so it is rewritten as dated history rather than reused.
+>
+> | Date | Project | What happened |
+> |---|---|---|
+> | 2026-07-28 | `chat-gateway-prod` — **deleted 2026-07-30** | steps 2–4 ran: APIs, service account, topic, subscription, the topic-publisher and subscription-subscriber bindings, and the SA key. **The run was incomplete**: it predated the Workspace Add-ons service agent, which did not exist and was therefore never bound — the failure documented below. The agent and its publisher binding were added by hand on 2026-07-29 and are now in all three IaC paths, so a re-run is a safe no-op. |
+> | 2026-07-29 | `chat-gw-e1-20260729` — **deleted 2026-07-30** | experiment E1's throwaway classic project. Never production. |
+> | 2026-07-29 | **`chat-gateway-gw` (`#860649224827`) — the live project** | the setup script ran **clean end to end**, including the add-ons service-agent step. This was the second virgin-project run, which is what turned the IaC from reviewed-by-reading into genuinely exercised. **The Terraform path is still unapplied** — only the script path has run. |
+>
+> Two lessons, both paid for. From the 2026-07-28 run: **"the script exited 0"
+> was not evidence the project was complete.** From this box: a provisioning
+> record needs a date *and* a project id, or it silently becomes a claim about
+> whatever project the reader happens to be holding.
 
 POSIX:
 ```bash
-cd iac && PROJECT_ID=chat-gateway-prod ./gcloud-setup.sh
+cd iac && PROJECT_ID=chat-gateway-gw ./gcloud-setup.sh
 ```
 Windows (PowerShell — see "What can be automated" for why):
 ```powershell
-.\iac\gcloud-setup.ps1 -ProjectId chat-gateway-prod
+.\iac\gcloud-setup.ps1 -ProjectId chat-gateway-gw
 ```
 This enables `chat.googleapis.com` + `pubsub.googleapis.com` +
 `gsuiteaddons.googleapis.com`, creates the `chat-gateway` service account, the
 `chat-gateway-events` topic, the `chat-gateway-sub` pull subscription, grants
 **both** publisher principals write on the topic (see below) and the SA
-subscribe on the subscription, writes `chat-gateway-sa.json` (owner-only:
+subscribe on the subscription, writes the service-account key (owner-only:
 `chmod 600` on POSIX, `icacls` on Windows), and prints the `.env` block to copy.
 
-> ⚠ **Publisher principals — what is and is not proven (updated 2026-07-29).**
-> Two principals are now granted `roles/pubsub.publisher` on the topic:
+> **⚠ The key filename is a variable, and one value of it in this repo is dead.**
+> The scripts default `KEY_FILE` / `-KeyFile` to `chat-gateway-sa.json`. The key
+> actually in use on `chat-gateway-gw` is **`chat-gateway-sa-gw.json`**, and
+> **`iac/chat-gateway-sa.json` belongs to the deleted `chat-gateway-prod`** — it
+> is dead, it will not authenticate, and its presence on disk is not
+> configuration. Point `GOOGLE_APPLICATION_CREDENTIALS` at the key you actually
+> minted, by full path. *(The scripts' default filename and example project id
+> are corrected under queue item **CG-19**, which touches `iac/` and therefore
+> ships separately.)*
+
+> **Publisher principals — what is granted, and one question that is now
+> permanently closed (updated 2026-07-30).**
+> Two principals are granted `roles/pubsub.publisher` on the topic:
 > `chat-api-push@system.gserviceaccount.com` (per Google's docs) and the
 > Workspace Add-ons service agent
 > `service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com`.
-> A real event **did** reach `chat-gateway-sub` on 2026-07-29, immediately
-> after the add-ons service agent was created and bound. But because both
-> principals are bound, **we cannot prove which one delivered it** — the
-> correlation is strong, the evidence is circumstantial. Do not record this as
-> a clean verification of either principal.
+>
+> **Which one delivered the first real event can never be established.** It
+> arrived 2026-07-29 on `chat-gateway-prod`, immediately after the add-ons
+> service agent was created and bound — strong correlation, but the variable was
+> never isolated — and **that project was deleted on 2026-07-30.** This is closed
+> by circumstance, not answered. Do not carry it as open work and do not file a
+> task against it.
+>
+> **What an operator of a new project actually needs — stated as the inference
+> it is, not as an observation.** A **classic** Chat app has no `gsuiteaddons`
+> deployment at all, so the add-ons service agent has nothing to publish through:
+> on a classic project the Chat-API-side publisher is the operative one, and the
+> add-ons binding is **vestigial**. That is a deduction from the deployment
+> model, not an observation of who wrote a message. **Both** bindings are kept in
+> all three IaC paths, with comments explaining why, so a fresh-project operator
+> is not stranded by the question being closed.
 >
 > Note also that GCP accepts IAM bindings to `*@system.gserviceaccount.com`
 > principals **without validating that they exist**, so a clean
@@ -135,20 +174,59 @@ gcloud pubsub topics add-iam-policy-binding <TOPIC> \
 
 ### 5. Chat app configuration — console only
 Console → **APIs & Services → Google Chat API → Configuration**:
+- **FIRST, and it cannot be undone — clear *"Build this Chat app as a Google
+  Workspace add-on"*** → confirm **Disable**. Read the callout below **before**
+  you save anything on this page.
 - **App name:** `Agent Comms` (or your pick — this is the tier-2 sender
   identity users see), avatar URL, description.
 - **Interactive features:** enable; check *Receive 1:1 messages* and *Join
   spaces and group conversations*.
 - **Connection settings:** **Cloud Pub/Sub** → topic
-  `projects/chat-gateway-prod/topics/chat-gateway-events`.
-- **Visibility:** make available to your domain.
+  `projects/<PROJECT_ID>/topics/chat-gateway-events` — on the live project,
+  `projects/chat-gateway-gw/topics/chat-gateway-events`.
+- **Visibility:** make available to your domain, or list individuals (note the
+  scale limit recorded further down: up to five individuals, or Google Groups).
 - Save.
+
+> ### ⚠ The add-on toggle is CREATE-TIME ONLY — the second trap this project paid for
+>
+> **Answered by experiment E2, 2026-07-29, first-hand.** *"Build this Chat app as
+> a Google Workspace add-on"* **cannot be cleared once the app exists.**
+> Add-on → classic is not a toggle you can flip back.
+>
+> The consequence is expensive, which is why this note sits beside the
+> Marketplace-SDK correction below rather than in an appendix: escaping the
+> add-ons runtime requires a **new Chat app**, and Chat app configuration is
+> **per-project**, so it requires a **new GCP project**. ADR-0001 D7's
+> parallel-project-and-cut-over path was therefore the *only* available path, not
+> merely the prudent one — and that is exactly what happened here:
+> `chat-gateway-prod` → `chat-gateway-gw`, after which `prod` was deleted.
+>
+> Before E2 ran this was recorded as *contradictory*: Google documents an
+> explicit clear-and-confirm flow in two live quickstarts, while a third-party
+> vendor doc (CloudM, 2026-03-16) warned *"This setting cannot be disabled once
+> saved… you must create a new Google Cloud Project."* The quickstarts describe a
+> **never-saved** state on a fresh app. CloudM described ours, and CloudM was
+> right.
+>
+> **So decide the runtime before you press Save the first time.** Which runtime
+> you get changes what a card can do — the capability comparison is in
+> [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) §10.
 
 ### 6. Spaces + app membership
 For each project/app that gets a space: create the space in Chat, then
 **⚙ → Apps & integrations → Add apps** → add your Chat app. Grab each
 **space ID** (open the space in a browser — the URL ends
 `/room/AAAA...` → the ID is `spaces/AAAA...`).
+
+> **What is deployed today — a console observation dated 2026-07-30, not
+> something this repository can prove.** The live Chat app is the **classic** app
+> named **"Agent Comms"** on `chat-gateway-gw`, and it has been added to the
+> **JobHunt space only**. That is a fact about the Google Chat console and is
+> readable nowhere in this repo: no source file, no registry entry and no test
+> records which spaces an app has been added to. Treat it as a snapshot that goes
+> stale the moment somebody adds the app to a second space — re-check the
+> console, not this line.
 
 ### 7. Tier-1 named webhooks (per identity, console only, ~1 min each)
 Space → **⚙ → Apps & integrations → Webhooks → Add webhook** → name it as
@@ -207,10 +285,15 @@ avatar URL → copy the webhook URL.
   still enable `appsmarket-component.googleapis.com` and still carry a comment
   repeating the claim above. Enabling the API is harmless; the comment is not,
   and correcting it touches the IaC path so it ships separately.
-- Events arrive in the **Workspace Add-ons envelope** (`commonEventObject` +
-  `chat.messagePayload`), not the classic flat format. The gateway parses both
-  (`adapters/pubsub.py`), so no action is needed — but if you are eyeballing a
-  raw pull, that is what you should expect to see.
+- **Which envelope you get is a property of the runtime, and this project
+  changed runtimes.** A classic Chat app delivers the **flat** format
+  (`type` / `space` / `message` / `user`); the Workspace Add-ons runtime delivers
+  `commonEventObject` + `chat.<x>Payload`. Production was add-ons until
+  2026-07-29 and has been **classic** since. The gateway parses both
+  (`adapters/pubsub.py`) and reports which it saw as `envelope_format`, so no
+  action is needed — but if you are eyeballing a raw pull on a classic app,
+  expect the flat format. This bullet used to say events arrive in the add-ons
+  envelope full stop, which stopped being true the day production migrated.
 - **Which tier gives which identity** — both halves were observed live on
   2026-07-29, so this is a measured trade-off, not a design note:
 
@@ -227,12 +310,20 @@ avatar URL → copy the webhook URL.
   into one name. Running both is the intended configuration, not a migration
   step.
 
+  **Tier 1 is project-independent, and that is now empirical rather than
+  asserted.** On 2026-07-30, immediately after `chat-gateway-prod` was deleted,
+  all four webhook identities were re-run through the real `WebhookAdapter` and
+  all four returned `delivered`. The claim at the top of this document — *"Tier 1
+  (named webhooks) needs NONE of this"* — has now been tested by deleting the
+  project it does not need. No tier-2 deployment change can take the notification
+  path down.
+
 ### 8. What to hand back (and how)
 Safe to paste in chat (non-secret): **project id, topic + subscription
 names, space IDs**.
 **Never paste in chat** (secrets — put them straight into the gateway
 host's `.env`, mode 600, with pointers in homelab `SECRETS.md`):
-- `chat-gateway-sa.json` (→ `GOOGLE_APPLICATION_CREDENTIALS=/path/to/it`)
+- the service-account key JSON you minted (→ `GOOGLE_APPLICATION_CREDENTIALS=/path/to/it`). On the live project that is **`chat-gateway-sa-gw.json`**; **`iac/chat-gateway-sa.json` is a dead key for the deleted `chat-gateway-prod`** and must not be used or copied to the host
 - every webhook URL (→ the `GOOGLE_CHAT_WEBHOOK_URL__*` vars)
 
 Then set `GATEWAY_ENABLE_PUBSUB=1`, fill `CHAT_GATEWAY_PUBSUB_SUBSCRIPTION`,
@@ -312,7 +403,7 @@ they never accept a URL as an argument, and they never print one.
 | Secret | Recovery |
 |---|---|
 | Webhook URL | Space → **⚙ → Apps & integrations → Webhooks → ⋮ → Delete**, then create a new webhook with the same name and avatar, then update `.env`. The old URL cannot be revoked any other way. |
-| `chat-gateway-sa.json` | `gcloud iam service-accounts keys delete <KEY_ID> --iam-account=chat-gateway@<PROJECT_ID>.iam.gserviceaccount.com`, then re-run the setup script to mint a new one. |
+| The service-account key JSON | `gcloud iam service-accounts keys delete <KEY_ID> --iam-account=chat-gateway@<PROJECT_ID>.iam.gserviceaccount.com`, then re-run the setup script to mint a new one. |
 | A per-app API key | `python -m chat_gateway mint-key`, update `.env` and the consuming app. |
 
 **4. Delete the throwaway script when you are done.** It contains no secret, but
