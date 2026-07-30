@@ -1,6 +1,39 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-33 shipped, [PR #39](https://github.com/mmackelprang/chat-gateway/pull/39) OPEN and NOT merged**:
+**Last updated:** 2026-07-30 (Builder — **CG-37 shipped,
+[PR #40](https://github.com/mmackelprang/chat-gateway/pull/40)**: two source
+comments, and nothing else. Both still named the **add-ons** runtime as the one
+we are deployed on; production has been a **classic** Chat app since
+2026-07-29. **Re-scoped, not deleted** — the add-ons statements were *true of
+add-ons*, and `__cg_action__` remains a supported fallback `CLAUDE.md` says must
+not be ripped out, so the correction names the runtime each sentence is about
+and then says which one we run.
+
+**Proven comments-only mechanically, not asserted:** `ast.parse` output of both
+files is byte-identical to `main`'s (`#` comments are not AST nodes; a docstring
+edit *would* have shown). Suite **202 → 202**, unmoved. No ⚠ flag cleared, added
+or reworded, and `CLAUDE.md`'s verification ledger is untouched and not restated.
+**UAT for a comment-accuracy PR is the accuracy of the sentences**, so all six
+claims the new text makes were driven through the real code: the real classic
+capture yields `action.id='approve'` natively (`id_source='google'`), the real
+add-ons capture yields `None`, and `__cg_action__` still **beats** a live native
+`'approve'` on both runtimes and is popped from `params`.
+
+**Pre-merge review's one MEDIUM was PRE-EXISTING text inside the comment being
+corrected** — `service.py`'s flat *"under an HTTP-endpoint deployment it is a
+URL"*, where the ADR row it cites splits by runtime. Fixed rather than deferred,
+because the correction left it as the only un-split clause in a sentence about
+exactly that distinction; recorded because it is the one place this PR went past
+its two stale sentences.
+
+**`CLAUDE.md`'s test-count line was checked and is already correct** at 202 — the
+first time today it has not needed moving, because only one Builder was running.
+**CG-50 filed** — a third stale comment of the same family, which CG-21's
+inventory missed.
+
+Previously: **CG-33 shipped, [PR #39](https://github.com/mmackelprang/chat-gateway/pull/39) — MERGED** (`9daa672`; the
+banner below was written while the gate was still held and said "OPEN and NOT
+merged"):
 `PubSubError` stops carrying the wire, and then joins the marked set. `_post`
 looked the reason phrase up on the wire (`resp.reason_phrase` — httpcore fills it
 from the literal HTTP/1.1 status line); it uses `httpx.codes` now, as CG-23's two
@@ -402,13 +435,14 @@ outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 Remaining order: **the prioritized list is now empty** (CG-7, CG-4, CG-5, CG-24,
 CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23, CG-19,
 CG-32, CG-21, CG-34, CG-31, CG-29, CG-36, CG-42 and CG-26 have since shipped).
-What remains — CG-33, CG-35, CG-37 — was **appended last and unprioritized**;
+What remains — CG-35 and CG-50 — was **appended last and unprioritized**;
 the user sets their order. **CG-33** was filed
 by Builder from CG-23's pre-merge review, **CG-35** by Builder from CG-19,
 **CG-36** by Builder from CG-32's docs pass, **CG-37** by Builder from
 CG-21's inventory, and **CG-42** by Builder from CG-31's UAT; all five were
-appended last, unprioritized — the user sets priority. **CG-36 and CG-42 have
-since shipped**; CG-33, CG-35 and CG-37 remain queued. CG-14 is **✖ closed as obsolete**
+appended last, unprioritized — the user sets priority. **CG-36, CG-42, CG-33 and
+CG-37 have since shipped**; **CG-35** remains queued, joined by **CG-50** (filed
+by Builder 2026-07-30 from CG-37's sweep). CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-35 carries a **merge gate** — pause and report rather than
 auto-merging; CG-17 and CG-18 stay deferred and must not be executed.
@@ -525,7 +559,7 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
-### CG-33 · `PubSubError`'s docstring makes a claim about its own reason phrase that is false  ✅ shipped 2026-07-30 · [PR #39](https://github.com/mmackelprang/chat-gateway/pull/39) — **OPEN, merge gate held**
+### CG-33 · `PubSubError`'s docstring makes a claim about its own reason phrase that is false  ✅ shipped 2026-07-30 · [PR #39](https://github.com/mmackelprang/chat-gateway/pull/39) — **MERGED** (`9daa672`)
 
 **The docstring was made TRUE, not accurate** — `_post` looks the phrase up in
 `httpx.codes` now, exactly as CG-23 did in the two sibling adapters. And the
@@ -623,7 +657,9 @@ the convention CG-26 was extending.
 **Merge gate: user-imposed at dispatch.** The row declared none; the user added
 one because this is the secret-handling path and the leak is now measured — the
 same rule and the same class of value that gated CG-23 and CG-34. PR opened, not
-merged.
+merged — **and then merged 2026-07-30 as `9daa672` once the gate was released.**
+(Corrected by CG-37, which found this row and the banner still saying "OPEN"
+while `main` already carried the commit.)
 
 <details><summary>The row as filed</summary>
 
@@ -822,7 +858,7 @@ there on the host"*. Filed with the observation, not the answer.
 
 ---
 
-### CG-37 · Two `src/` comments still name **add-ons** as the runtime we are deployed on  🔨 in flight
+### CG-37 · Two `src/` comments still name **add-ons** as the runtime we are deployed on  ✅ shipped 2026-07-30 · [PR #40](https://github.com/mmackelprang/chat-gateway/pull/40)
 
 > **Renumbered from CG-35 on merge, 2026-07-30.** CG-19 had already taken CG-35
 > and CG-32 took CG-36 while all three ran in parallel. Queue numbers have no
@@ -835,6 +871,78 @@ there on the host"*. Filed with the observation, not the answer.
 | **Depends on** | nothing |
 | **Touches** | `src/chat_gateway/adapters/pubsub.py`, `src/chat_gateway/service.py` — comments only, no behaviour |
 | **Priority** | **appended last, unprioritized.** The user sets order. |
+
+**Shipped as two comments and nothing else.** Both were **re-scoped, not
+deleted** — the add-ons statements were *true of add-ons*, so the correction
+names the runtime each sentence is about and then says which one we run. The
+shipped text, verbatim:
+
+`adapters/pubsub.py` — the last sentence of the topic-as-function paragraph now
+ends *"…or action.id is permanently dead THERE"*, followed by:
+
+> THERE means ADD-ONS — not "the runtime we are actually deployed on", which is
+> how this sentence read until CG-37. Production cut over to a CLASSIC Chat app
+> on 2026-07-29 and classic supplies action.id natively, so everything above
+> this line is add-ons history, not a description of what we run. The key stays
+> regardless: `_resolve_action_id` checks it FIRST and unconditionally, so a
+> card that carries it still resolves through it on either runtime. Not needed
+> is not unused, and that sameness is D3's portability payoff (CLAUDE.md).
+
+`service.py` — `ROUTING_TARGET_ENV`:
+
+> …because the two were only ever coincidentally related, and only under ADD-ONS
+> at that: topic-as-function made the routing target look like it fell out of
+> the subscription. On CLASSIC — production since 2026-07-29 — it is any
+> constant, and under an HTTP-endpoint deployment it splits by runtime too: the
+> endpoint URL under add-ons, a function name under classic (ADR-0001 D3's
+> portability table).
+
+**"Comments only" was PROVEN, not asserted.** `ast.parse` output of both files
+is byte-identical to `main`'s — `#` comments are not AST nodes, and a docstring
+edit *would* have shown up, so this is a real check and not a tautology. Suite
+**202 → 202**, unmoved.
+
+**UAT for a comment-accuracy PR is the accuracy of the sentences**, so each
+clause was driven through the real code rather than reasoned about — 6/6:
+
+| Claim in the new text | Measured |
+|---|---|
+| classic supplies `action.id` natively | real classic capture → `action.id='approve'`, `id_source='google'` |
+| under add-ons the native slot was dead — the paragraph's subject | real add-ons capture → `action.id=None`, `id_source=None` |
+| `__cg_action__` is checked first and still WINS | beat a live native `'approve'` → `('verdict', 'cg_param')` |
+| the same card behaves identically on either runtime (D3) | both runtimes → `'verdict'` |
+| the key is POPPED, so no plumbing reaches a tenant | `params` after resolution: `{'jobId': …}` |
+| on classic the routing target is unrelated to the subscription | env constant `'handleInteraction'` vs a wholly different resource path |
+
+**Pre-merge review's one MEDIUM was PRE-EXISTING text inside the comment being
+corrected, and it was fixed rather than deferred** — recorded because it is the
+one place this PR went past its two stale sentences. `service.py`'s
+HTTP-endpoint clause read *"under an HTTP-endpoint deployment it is a URL"*,
+flat, where ADR-0001 D3's option-C row it cites says *"the endpoint URL
+(add-ons) or a function name (classic)"*. Untouched by the first draft — the
+diff's removed lines stop at *"and under an"*. It was fixed anyway because the
+correction made every **other** clause in that comment carefully runtime-split,
+which left this one as the only flat claim in a sentence about exactly that
+distinction. One clause; still AST-identical; suite still 202.
+
+**Flags: none cleared, added or reworded.** Neither edited region contains a ⚠
+flag — every `⚠` in `pubsub.py` lives in the module docstring, the
+`PubSubPuller`/`pull`/`acknowledge` docstrings, `ADDON_ACTION_KEY`'s comment and
+`_normalize_addon`'s docstring, all untouched. `CLAUDE.md`'s verification ledger
+is untouched and **not restated** anywhere in this PR.
+
+**`CLAUDE.md`'s test-count line was checked and needed nothing** — it already
+read 202, which is what the suite measures. It had been stale all day (136, 140,
+190 against a moving suite) because parallel Builders kept moving it; this is
+the first cycle with only one Builder running, and it was already correct.
+
+**CG-50 filed** from this row's sweep — `pubsub.py`'s module docstring states
+CG-10's defect as current (`action.id == ""`) and points at CG-10 as open work.
+CG-10 shipped, and the same fixture now yields `None`. A third comment of this
+exact family that CG-21's inventory missed; left alone here because it sits
+between two ⚠ SHAPE-VERIFIED blocks and this row was scoped to two comments.
+
+<details><summary>The row as filed</summary>
 
 CG-21 reconciled every *document* that still described the add-ons → classic
 migration as pending. Two **source comments** say the same stale thing and were
@@ -854,6 +962,50 @@ the classic runtime already. This is comment tense only.
 is the `__cg_action__` rule-#1 justification, which is load-bearing prose; the
 correction is that add-ons is where `action.id` was dead, not "the runtime we are
 deployed on". **No verification flag is involved and none may be touched.**
+
+</details>
+
+---
+
+### CG-50 · `pubsub.py`'s module docstring states CG-10's defect as current, and CG-10 shipped  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-37's** sweep — **measured against the real fixture, not read** |
+| **Depends on** | nothing |
+| **Touches** | `src/chat_gateway/adapters/pubsub.py` — module docstring, comment only |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
+
+**A third comment of exactly the family CG-37 was filed for, which CG-21's
+inventory missed.** CG-37 corrected the two comments that named the wrong
+*runtime*; this one names a *defect* that has since been fixed.
+`adapters/pubsub.py:27-29` says:
+
+> The interaction capture found a DEFECT rather than confirming the mapping: the
+> real event yields `action.id == ""` (see `ADDON_ACTION_KEY` below and queue
+> item CG-10).
+
+**Both halves are stale.** CG-10 shipped, and what it shipped is precisely this:
+`CLAUDE.md` records *"Unresolvable identity is `None`, never `""`"*. Measured
+here by feeding that exact fixture — `tests/fixtures/addon-buttonclicked-event.json`
+— through the real `normalize_event`: `action.id` is **`None`**, `id_source` is
+`None`. So the docstring states a value the code no longer produces, and points
+a reader at a queue item that is closed.
+
+**Why CG-37 did not fix it.** Two reasons, and both are why this is a row rather
+than a Builder fix. It is outside CG-37's declared scope — that row named exactly
+two comments and the dispatch was explicit that a small accurate PR was the
+wanted outcome. And it sits **between two ⚠ SHAPE-VERIFIED blocks** in the
+module docstring, which is hard-rule-#3 territory: the sentence immediately above
+it scopes the 2026-07-29 add-ons capture and the one below opens the 2026-07-30
+classic block.
+
+**Do not fix it by deleting the sentence.** What it records is still true and
+still load-bearing — the add-ons capture *did* find a defect rather than confirm
+the mapping, and *"Nothing about jobhunt R3/R4 is verified by it"* (the next line)
+is unaffected either way. What is stale is the **value** and the **open-work
+pointer**, not the finding. **No flag may be cleared, added or reworded**;
+`jobhunt` R3/R4 remain unverified regardless.
 
 ---
 
