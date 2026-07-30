@@ -49,15 +49,28 @@ The generality is load-bearing rather than tidy, because the `httpx` logger also
 carries `forwarder.py`'s POSTs to tenant `callback_url`s, whose shape the
 gateway does not control and which may embed a credential under any name at all.
 
+THE FRAGMENT COUNTS, and the first draft of this file got that wrong — it is
+recorded rather than quietly corrected, because the mistake is the instructive
+part. `?key=K#token=SECRET` came back as `?key=REDACTED#token=SECRET`: the
+denylist argument above had been taken to heart for parameter NAMES and then not
+applied to parameter LOCATION. It is a live shape rather than a hypothetical one
+— an OAuth implicit-flow callback puts its token after the `#`, `httpx` really
+does log the fragment (`str(request.url)` keeps it, verified), and a tenant
+`callback_url` is exactly the unvalidated string that could be shaped that way.
+Query and fragment are now redacted by the same rule. A fragment that is an
+ordinary anchor has no `=` in it and passes through untouched.
+
 The filter never needs to know what the secret IS. It holds no env var, reads no
 registry, and compares against nothing — it redacts by POSITION in the URL, so
 there is no path by which arming this guard puts a credential anywhere new.
 
 SCOPE LINE, STATED RATHER THAN LEFT TO BE DISCOVERED. A credential embedded in a
 URL *path* (`https://host/hooks/s3cr3t`) is NOT covered. Redacting paths would
-destroy the diagnostic the redaction exists to preserve, and no URL the gateway
-constructs is shaped that way. A tenant `callback_url` could be; that is a
-residue, and it is named here rather than implied to be handled.
+destroy the diagnostic the redaction exists to preserve — `/v1/spaces/A/messages`
+is the most useful thing in the line — and no URL the gateway constructs is
+shaped that way. A tenant `callback_url` could be; that is a residue, it is the
+ONLY residue in a URL's structure once query, fragment and userinfo are covered,
+and it is named here rather than implied to be handled.
 
 WHAT IS AND IS NOT FILTERED, MEASURED RATHER THAN ASSUMED. Driving a real
 `WebhookAdapter` over real TCP at `basicConfig(level=DEBUG)` produced 13 records
@@ -89,6 +102,7 @@ from __future__ import annotations
 
 import logging
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 REDACTED = "REDACTED"
 
@@ -101,32 +115,55 @@ HTTPX_LOGGER = "httpx"
 _URL_IN_TEXT = re.compile(r"[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s\"'<>]+")
 
 
-def redact_url(url: str) -> str:
-    """Blank every query-parameter value and any userinfo password in `url`.
+def _redact_pairs(text: str) -> str:
+    """Blank the value of every `name=value` pair, keeping the names.
 
-    Parameter names survive, so a reader still sees THAT a `token` was sent and
-    can tell a two-parameter URL from a three-parameter one. Split by hand
-    rather than through `urllib.parse.parse_qsl`, which drops empty values,
-    reorders nothing but re-encodes, and would rewrite parts of the URL this
-    function has no business touching.
+    Names survive so a reader still sees THAT a `token` was sent and can tell a
+    two-parameter URL from a three-parameter one. Anything with no `=` is left
+    alone, which is what makes this safe to run over a fragment as well as a
+    query: an ordinary anchor (`#results`, `#/route`) passes through untouched.
+
+    Split by hand rather than through `urllib.parse.parse_qsl`, which drops
+    parameters with empty values, percent-decodes what it returns, and would
+    have this function re-encoding parts of a URL it has no business rewriting.
     """
-    scheme, sep, rest = url.partition("://")
-    if not sep:
+    if not text:
+        return text
+    out = []
+    for pair in text.split("&"):
+        name, equals, _value = pair.partition("=")
+        out.append(f"{name}={REDACTED}" if equals else name)
+    return "&".join(out)
+
+
+def redact_url(url: str) -> str:
+    """Blank every query and fragment value, and any userinfo password.
+
+    `urlsplit` rather than hand-rolled `partition` calls, because the ordering
+    rules are the whole problem: RFC 3986 delimits the fragment at the FIRST
+    `#` and the query only within what remains, and an authority ends at the
+    first of `/`, `?` or `#`. Hand-rolling those got two shapes wrong —
+    `?key=K#token=SECRET` left the fragment intact, and `https://host?key=K`
+    (a query with no path) was not redacted at all, because the authority was
+    taken as everything up to the first `/`. `urlsplit` also handles the IPv6
+    literal authority that any such hand-rolled split mangles.
+
+    `urlsplit` can raise on a malformed authority. That is deliberate here: the
+    filter's `except` drops the record, so an unparseable URL costs a log line
+    rather than leaking one.
+    """
+    if "://" not in url:
         return url
-    authority, slash, tail = rest.partition("/")
-    if "@" in authority:
-        userinfo, _, host = authority.rpartition("@")
+    parts = urlsplit(url)
+    netloc = parts.netloc
+    if "@" in netloc:
+        userinfo, _, host = netloc.rpartition("@")
         user, has_password, _password = userinfo.partition(":")
-        authority = f"{user}:{REDACTED}@{host}" if has_password else f"{userinfo}@{host}"
-    path, question, query = tail.partition("?")
-    if question:
-        query, hash_, fragment = query.partition("#")
-        pairs = []
-        for pair in query.split("&"):
-            name, equals, _value = pair.partition("=")
-            pairs.append(f"{name}={REDACTED}" if equals else name)
-        query = "&".join(pairs) + hash_ + fragment
-    return f"{scheme}://{authority}{slash}{path}{question}{query}"
+        netloc = f"{user}:{REDACTED}@{host}" if has_password else f"{userinfo}@{host}"
+    return urlunsplit((
+        parts.scheme, netloc, parts.path,
+        _redact_pairs(parts.query), _redact_pairs(parts.fragment),
+    ))
 
 
 def _redact_text(text: str) -> str:
@@ -177,11 +214,15 @@ class RedactUrlCredentials(logging.Filter):
 def install_url_redaction(logger_name: str = HTTPX_LOGGER) -> bool:
     """Arm the guard on `logger_name`. Idempotent; returns whether it installed.
 
-    Called from `__main__.serve` so the service is covered before it handles
-    anything, and from `WebhookAdapter.__init__` so that CONSTRUCTING the object
-    that resolves a webhook URL arms the guard — in tests, in the `client`, and
-    in the ad-hoc scripts that are how this leak was found in the first place,
-    none of which go through the entrypoint.
+    Called from `__main__.build_runtime` so the service is covered before it can
+    make a request, and from `WebhookAdapter.__init__` so that CONSTRUCTING the
+    object that resolves a webhook URL arms the guard — in tests, and in the
+    ad-hoc verification scripts that are how this leak was found in the first
+    place. Neither of those goes through the entrypoint.
+
+    Deliberately NOT `client.py`, despite the name: that module is the gateway's
+    HTTP client for consumers, it speaks to the gateway rather than to Google,
+    and it is `urllib`-based, so it never touches the `httpx` logger at all.
     """
     logger = logging.getLogger(logger_name)
     if any(isinstance(f, RedactUrlCredentials) for f in logger.filters):

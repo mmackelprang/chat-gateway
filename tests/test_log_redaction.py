@@ -254,8 +254,25 @@ def test_a_tenant_callback_url_is_covered_by_the_same_guard(
          "https://pubsub.googleapis.com/v1/projects/p/subscriptions/s:pull"),
         # a valueless parameter keeps its name and gains no bogus `=`
         ("https://h/p?flag&key=K", f"https://h/p?flag&key={REDACTED}"),
-        # a fragment is not swallowed into the last value
+        # an ordinary anchor has no `=`, so it survives the same rule intact
         ("https://h/p?key=K#frag", f"https://h/p?key={REDACTED}#frag"),
+        # ...but a credential AFTER the `#` is redacted too. The first draft of
+        # this module returned `?key=REDACTED#token=SECRET` here. An OAuth
+        # implicit-flow callback is shaped exactly like this, httpx logs the
+        # fragment, and a tenant `callback_url` is unvalidated.
+        ("https://h/cb?key=K#access_token=T&scope=s",
+         f"https://h/cb?key={REDACTED}#access_token={REDACTED}&scope={REDACTED}"),
+        ("https://h/cb#token=T", f"https://h/cb#token={REDACTED}"),
+        # a query with no path at all: the authority ends at `?`, not at `/`.
+        # The hand-rolled split this replaced returned this one unredacted.
+        ("https://host?key=K", f"https://host?key={REDACTED}"),
+        # an IPv6 literal authority is not mangled
+        ("http://[::1]:80/p?key=K", f"http://[::1]:80/p?key={REDACTED}"),
+        # `#` before `?`: everything after the first `#` is fragment, per RFC 3986
+        ("https://h/p#/route", "https://h/p#/route"),
+        # an `@` in a query value is not mistaken for userinfo
+        ("https://h/p?email=a@b.test&key=K",
+         f"https://h/p?email={REDACTED}&key={REDACTED}"),
         # userinfo: `str(httpx.URL)` emits the password in full — only `repr`
         # masks it, and httpx logs with %s
         ("https://user:hunter2@h/p", f"https://user:{REDACTED}@h/p"),
@@ -267,6 +284,28 @@ def test_a_tenant_callback_url_is_covered_by_the_same_guard(
 )
 def test_redact_url_rule(url, expected):
     assert redact_url(url) == expected
+
+
+def test_a_fragment_credential_really_reaches_the_log_line(
+    local_google, dangerous_logging, monkeypatch
+):
+    """The pre-merge review's HIGH finding, pinned end to end rather than by unit.
+
+    `httpx` keeps the fragment in `str(request.url)` and logs it — this is not a
+    theoretical shape, and the unit test above would have been satisfied by a
+    `redact_url` that only ever ran on strings nobody logs. This drives it
+    through a real client and a real socket.
+    """
+    stream, _ = dangerous_logging
+    install_url_redaction()
+
+    httpx.Client(timeout=5).post(
+        f"{local_google}/oauth/cb?state=s#access_token={TOKEN}", json={},
+    )
+
+    rendered = stream.getvalue()
+    assert TOKEN not in rendered
+    assert f"access_token={REDACTED}" in rendered
 
 
 def test_a_credential_in_the_PATH_is_out_of_scope_and_says_so():
