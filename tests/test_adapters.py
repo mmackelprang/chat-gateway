@@ -876,6 +876,57 @@ def test_resolved_action_id_does_not_touch_the_counter(registry):
     assert loop.interactions_without_action_id == 0
 
 
+# Two apps, each owning its own identity homed in the SAME space, both opted
+# out. `registry.apps_for_space` returns owners in sorted app-id order, so this
+# space genuinely has two candidates for one event.
+TWO_OWNERS_REGISTRY_YAML = """
+identities:
+  owner-a-identity:
+    display: "Owner A"
+    mode: webhook
+    webhook_url_env: H
+    space: "spaces/AAA"
+  owner-b-identity:
+    display: "Owner B"
+    mode: webhook
+    webhook_url_env: H
+    space: "spaces/AAA"
+apps:
+  owner-a:
+    key_env: K
+    identities: [owner-a-identity]
+    allow_inbound: false
+  owner-b:
+    key_env: K
+    identities: [owner-b-identity]
+    allow_inbound: false
+"""
+
+
+def test_suppression_counts_per_app_not_per_event(tmp_path):
+    """CG-12 counter semantics, pinned: the callback fires per CANDIDATE APP.
+
+    ONE event into a space with TWO opted-out owners increments by TWO, because
+    two separate rule-#6 decisions were made about it. That is the claim the
+    counters' comment makes and the reason an operator must not read either
+    integer as an event count — `events_seen` is the event count, and here the
+    two numbers disagree on purpose.
+    """
+    p = tmp_path / "two-owners.yaml"
+    p.write_text(TWO_OWNERS_REGISTRY_YAML, encoding="utf-8")
+    reg = load_registry(p)
+    assert reg.apps_for_space("spaces/AAA") == ["owner-a", "owner-b"]
+
+    inbox = Inbox()
+    loop = SubscriberLoop(FakePuller([CHAT_EVENT]), reg, inbox)
+    assert loop.poll_once() == 1
+
+    assert loop.events_seen == 1, "one event arrived"
+    assert loop.suppressed_opt_out == 2, "but two apps each declined it"
+    assert loop.suppressed_not_authorized == 0
+    assert inbox.pending_counts() == {}
+
+
 def test_card_parameters_are_an_array_in_the_real_captured_card():
     """PINS THE OUTBOUND SHAPE against a real card that really worked.
 

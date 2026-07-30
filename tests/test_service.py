@@ -130,6 +130,10 @@ def test_healthz_reports_real_subscriber_counters(env, tmp_path, monkeypatch):
     loop = SubscriberLoop(FakePuller(), registry, inbox, interval_seconds=5.0)
     loop.events_seen, loop.unparseable_seen, loop.dispatch_errors = 9, 2, 3
     loop.interactions_without_action_id = 5
+    # Distinct values, and distinct from every other counter here: the two CG-12
+    # integers must be reported separately, and a copy-paste that reported one
+    # of them twice would pass against a shared value.
+    loop.suppressed_opt_out, loop.suppressed_not_authorized = 11, 4
     # A FIXED past instant, so `seconds_since_last_poll` is computed from the
     # real clock and cannot be a hardcoded 0 — the same reasoning as the
     # counters. Asserted as a range, because it is genuinely time-dependent.
@@ -143,6 +147,7 @@ def test_healthz_reports_real_subscriber_counters(env, tmp_path, monkeypatch):
         "enabled": True, "last_poll_at": loop.last_poll_at.isoformat(),
         "events_seen": 9, "unparseable_seen": 2, "dispatch_errors": 3,
         "interactions_without_action_id": 5,
+        "suppressed_opt_out": 11, "suppressed_not_authorized": 4,
         "poll_failures": 0, "consecutive_poll_failures": 0, "last_poll_error": None,
         # Never started, so not alive — and /healthz must not call that a death.
         "thread_alive": False, "thread_started": False,
@@ -360,6 +365,118 @@ def test_healthz_reasons_explain_a_degraded_registry(env, monkeypatch):
     body = client.get("/healthz").json()
     assert body["status"] == "degraded"
     assert any("does not resolve" in r for r in body["reasons"])
+
+
+# --- CG-12: suppression is visible, bare, and not a fault --------------------
+
+# A registry whose only owner of `spaces/SECRETSPACE` will never serve it — the
+# aitrader shape — with an app id, a space id and (below) a sender chosen to be
+# unmistakable if any of them ever appears in a health response.
+SUPPRESSION_PIN_YAML = """
+identities:
+  opted-out-identity:
+    display: "Opted Out"
+    mode: webhook
+    webhook_url_env: PIN_HOOK
+    space: "spaces/SECRETSPACE"
+apps:
+  opted-out-tenant:
+    key_env: PIN_KEY
+    identities: [opted-out-identity]
+    allow_inbound: false
+"""
+
+SECRET_SPACE_EVENT = {
+    "type": "CARD_CLICKED",
+    "space": {"name": "spaces/SECRETSPACE"},
+    "user": {"displayName": "Eve", "email": "eve@example.com"},
+    "message": {"name": "spaces/SECRETSPACE/messages/M1",
+                "thread": {"name": "spaces/SECRETSPACE/threads/T1"}},
+    "action": {"actionMethodName": "verdict",
+               "parameters": [{"key": "job_id", "value": "job-secret"}]},
+    "_pubsub_message_id": "ps-secret-1",
+}
+
+
+def test_suppression_counters_leak_no_space_sender_or_dedupe_key_to_healthz(
+        env, tmp_path, monkeypatch):
+    """THE RULE-6 PIN: prove structurally that the callback's arguments stop.
+
+    `/healthz` is UNAUTHENTICATED, which is the whole reason CG-12 chose a bare
+    counter over an `_unrouted` audit record or a metadata-only record. That
+    choice is worth nothing if a later maintainer adds `last_suppressed_app` or
+    a per-space breakdown "for debugging" — so this drives a real suppression
+    through the real loop and then reads the ENTIRE response body as text,
+    rather than checking the fields we happen to know about today.
+
+    The app id is asserted only against the `subscriber` block, deliberately:
+    `registry.health()` has published app ids since v0.1, they live in the
+    committed registry, and they are not what this test is about. "Which apps
+    are configured" is static, non-secret configuration; "which app is currently
+    dropping events, and from where" is observed traffic about a tenant that
+    opted out of every inbound path, and that is the thing that must not appear.
+    """
+    import json
+
+    from chat_gateway.adapters.pubsub import FakePuller, SubscriberLoop
+    from chat_gateway.service import ROUTING_TARGET_ENV
+
+    monkeypatch.setenv("PIN_HOOK", "https://x.example/hook")
+    monkeypatch.setenv("PIN_KEY", "cgk_pin")
+    monkeypatch.setenv(ROUTING_TARGET_ENV, "projects/p/topics/t")
+    _, inbox, adapter = env
+    p = tmp_path / "pin.yaml"
+    p.write_text(SUPPRESSION_PIN_YAML, encoding="utf-8")
+    registry = load_registry(p)
+
+    loop = SubscriberLoop(FakePuller([SECRET_SPACE_EVENT]), registry, inbox)
+    assert loop.poll_once() == 1
+    assert loop.suppressed_opt_out == 1, "the suppression under test did not happen"
+
+    body = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop)) \
+        .get("/healthz").json()
+    whole = json.dumps(body, ensure_ascii=False)
+    for leaked in ("spaces/SECRETSPACE", "eve@example.com", "Eve",
+                   "ps-secret-1", "job-secret", "verdict"):
+        assert leaked not in whole, f"{leaked!r} reached an unauthenticated endpoint"
+    assert "opted-out-tenant" not in json.dumps(body["subscriber"]), \
+        "the subscriber block must not attribute a suppression to an app"
+    assert "opted-out-tenant" in whole, \
+        "sanity: the registry block still names configured apps, as it always has"
+
+    # ...and the event genuinely went nowhere: not to the tenant, not to
+    # `_unrouted`, not to disk. The counter is the only thing that changed.
+    assert inbox.pending_counts() == {}
+    assert body["subscriber"]["suppressed_opt_out"] == 1
+
+
+def test_healthz_does_not_degrade_on_suppression_however_large(
+        env, tmp_path, monkeypatch):
+    """Suppression is CORRECT behaviour, so it must never colour `status`.
+
+    `opt_out` is hard rule #6 doing exactly its job and `not_authorized` is
+    jobhunt's R4 allowlist doing exactly its job. Degrading on either — or on a
+    threshold of either — would train an operator to read "degraded" as normal,
+    which is the ignored-warning failure mode rule #5 was written after. The
+    numbers here are deliberately huge: there is no magnitude at which a working
+    guarantee becomes a fault.
+    """
+    from chat_gateway.service import ROUTING_TARGET_ENV
+
+    monkeypatch.setenv(ROUTING_TARGET_ENV, "projects/p/topics/t")
+    _, inbox, adapter = env
+    registry, loop = _loop_with(
+        tmp_path, inbox,
+        last_poll_at=dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=1),
+        suppressed_opt_out=5000, suppressed_not_authorized=500,
+    )
+    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+    body = client.get("/healthz").json()
+
+    assert body["subscriber"]["suppressed_opt_out"] == 5000
+    assert body["subscriber"]["suppressed_not_authorized"] == 500
+    assert body["status"] == "ok", body["reasons"]
+    assert body["reasons"] == [], "suppression must not produce a reason"
 
 
 # --- the portable card convention (CG-13 / ADR-0001 D3) ----------------------

@@ -6,7 +6,9 @@ import datetime as dt
 import httpx
 import pytest
 
-from chat_gateway.adapters.pubsub import NOT_AUTHORIZED_TEXT, dispatch
+from chat_gateway.adapters.pubsub import (
+    NOT_AUTHORIZED_TEXT, FakePuller, SubscriberLoop, dispatch,
+)
 from chat_gateway.delivery import DeliveryLog
 from chat_gateway.forwarder import CallbackForwarder
 from chat_gateway.inbox import Inbox
@@ -159,6 +161,93 @@ def test_opted_out_tenant_receives_nothing(registry, tmp_path):
     inbox = Inbox()
     assert dispatch(CARD_CLICK, reg, inbox) == []
     assert inbox.poll("jobhunt") == []
+
+
+# --- CG-12: suppression is counted, never recorded --------------------------
+#
+# The counters live on SubscriberLoop, so these drive the real loop rather than
+# calling dispatch() directly: the wiring from the callback to the integer is
+# part of what has to hold, and a test that passed its own lambda would prove
+# the callback fires without proving anything reaches /healthz.
+
+
+def _opted_out_registry(tmp_path, monkeypatch):
+    """The aitrader shape: a space with a registered owner that will never
+    serve it. `callback_url` is stripped because the registry refuses to load
+    one on an `allow_inbound: false` app (hard rule #6, enforced at load)."""
+    monkeypatch.setenv("T_KEY_JOBHUNT", "cgk_jh")
+    quiet = JOBHUNT_YAML.replace("allow_inbound: true", "allow_inbound: false").replace(
+        '    callback_url: "http://127.0.0.1:9999/chat-callback"\n', "")
+    p = tmp_path / "quiet.yaml"
+    p.write_text(quiet, encoding="utf-8")
+    return load_registry(p)
+
+
+def test_opted_out_space_is_counted_and_still_receives_nothing(tmp_path, monkeypatch):
+    """CG-12: the one discard that used to leave NO trace at all.
+
+    A space with registered owners never reaches the `or [UNROUTED]` fallback,
+    and every owner here hits the opt-out `continue` — so before this counter
+    the event vanished with no inbox entry, no `_unrouted` record and nothing at
+    /healthz. Both halves are asserted: the discard is now visible, and it is
+    still a discard (hard rule #6 is observation-only here — nothing crosses,
+    and nothing about the event is written down either).
+    """
+    inbox = Inbox()
+    reg = _opted_out_registry(tmp_path, monkeypatch)
+    loop = SubscriberLoop(FakePuller([CARD_CLICK]), reg, inbox)
+
+    assert loop.poll_once() == 1
+    assert loop.suppressed_opt_out == 1
+    assert loop.suppressed_not_authorized == 0, "an opt-out is not a refusal"
+    assert loop.unparseable_seen == 0 and loop.dispatch_errors == 0
+    # Nothing delivered and nothing audited — not to the tenant, not to
+    # `_unrouted`. The counter is the ONLY new artifact.
+    assert inbox.pending_counts() == {}
+
+
+def test_refused_user_is_counted_separately_from_an_opted_out_tenant(registry):
+    """The reasons are two different investigations, so they are two integers.
+
+    `not_authorized` is a real human being turned away (jobhunt R4) — newly
+    reachable in production now that `job-hunter` carries an `allowed_users`
+    list, since any other member of that space who taps a card lands here. An
+    operator seeing one merged number could not tell that from "events keep
+    arriving in a space nobody serves".
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    refusals = []
+    fwd, _ = make_forwarder(lambda r: httpx.Response(200), clock)
+    inbox = Inbox()
+    event = {**CARD_CLICK, "user": {"displayName": "Eve", "email": "eve@example.com"}}
+    loop = SubscriberLoop(FakePuller([event]), registry, inbox, forwarder=fwd,
+                          reply_fn=lambda s, t, x: refusals.append((s, t, x)))
+
+    assert loop.poll_once() == 1
+    assert loop.suppressed_not_authorized == 1
+    assert loop.suppressed_opt_out == 0, "a refusal is not an opt-out"
+    # ...and every pre-existing guarantee of this branch is untouched: the user
+    # is still told in-thread, and the event still goes nowhere.
+    assert refusals == [("spaces/JH", "spaces/JH/threads/T1", NOT_AUTHORIZED_TEXT)]
+    assert fwd.pending() == 0
+    assert inbox.pending_counts() == {}
+
+
+def test_an_authorized_delivery_touches_neither_suppression_counter(registry):
+    """A counter must mean what it says or it is worse than nothing — the same
+    argument as `test_resolved_action_id_does_not_touch_the_counter`. If the
+    happy path incremented either of these, every deployment would show a
+    permanent non-zero suppression count and an operator would learn to ignore
+    both."""
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    fwd, _ = make_forwarder(lambda r: httpx.Response(200), clock)
+    inbox = Inbox()
+    loop = SubscriberLoop(FakePuller([CARD_CLICK]), registry, inbox, forwarder=fwd)
+
+    assert loop.poll_once() == 1
+    assert loop.suppressed_opt_out == 0
+    assert loop.suppressed_not_authorized == 0
+    assert len(inbox.poll("jobhunt")) == 1     # it really was a delivery
 
 
 def test_registry_directory_mode_one_file_per_tenant(tmp_path, monkeypatch):
