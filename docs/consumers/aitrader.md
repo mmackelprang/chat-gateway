@@ -173,10 +173,14 @@ carries a *combined* title+body limit (§11).
 The collapsed count rides on the **next delivered** message as
 `(×N since last notice)` — in the card header and the fallback text. It is not
 back-patched onto the first message, because one-way webhooks cannot edit an
-already-posted message (§11).
+already-posted message (§11). On an `info` notification long enough that the
+counter will not fit, it shortens to `(×N)` or is dropped rather than the
+message being truncated — see §11, and read the count off the log below.
 
 Every suppressed occurrence is still **logged**, so `GET /v1/deliveries` accounts
 for messages you never saw in Chat. That is acceptance criteria 2 and 4 together.
+The endpoint serves the last 200 entries per source; the complete record is the
+append-only JSONL under `<CHAT_GATEWAY_STATE_DIR>/deliveries/` (§6).
 
 ---
 
@@ -467,15 +471,35 @@ smoke test.
   combined limit) or split it — but you no longer have to guess, because the
   rejection tells you the limit and your size.
 
-- **One overflow is still a 500, and it is a narrower one: the dedupe counter.**
-  A deduped `info` re-delivery has `" (×N since last notice)"` appended by the
-  renderer, which can push an *accepted* payload back over the 4000-char field.
-  Request-time validation cannot reserve room for it without rejecting payloads
-  that succeed today, so CG-30 deliberately did not. Reproduced in-process at
-  combined 3989 with a `dedupe_key`, suppressed once, then re-delivered after
-  the window → 500. **Filed as CG-32.** It needs all three of a long `info`
-  body, a `dedupe_key`, and a suppressed repeat; leaving ~40 characters of slack
-  under 3989 avoids it entirely in the meantime.
+- **A very long deduped `info` message may show a shortened counter, or none at
+  all** (CG-32, 2026-07-30 — this step used to be a **500**). A deduped
+  re-delivery has the gateway's `" (×N since last notice)"` appended by the
+  renderer, and on an `info` payload near the 3989 bound there is nowhere to put
+  it: the message is already exactly as long as the field allows. The renderer
+  now degrades **its own** counter rather than overflowing — full form, then
+  `" (×N)"`, then nothing — so this sequence is 202 throughout where its last
+  step used to raise inside the renderer and surface as an uncaught 500:
+
+  | step (combined 3989, with a `dedupe_key`) | before | after |
+  |---|---|---|
+  | first delivery | 202 | 202 |
+  | repeats within the window (suppressed, counted) | 202 | 202 |
+  | after the window reopens, `occurrences=3` | **500** | **202** |
+
+  **Your content is never what gets shortened.** The counter is the gateway's
+  own accounting of its own dedupe window — transport decoration, not your
+  schema (hard rule #1) — so it is what yields; your title and body are
+  delivered byte-for-byte. The "leave ~40 characters of slack under 3989"
+  workaround this section used to recommend is **no longer needed**, and 3989 is
+  **unchanged**: nothing accepted before is rejected now.
+
+  **The count is not lost when the counter is dropped — it is in the log.**
+  Every suppressed occurrence is recorded as `deduped` / `occurrence N within
+  window` (§5). `GET /v1/deliveries` serves the last 200 per source (`limit`
+  defaults to 50); the complete record is the append-only JSONL under
+  `<CHAT_GATEWAY_STATE_DIR>/deliveries/`. Measured 250 suppressions deep: the
+  ordinal a dropped counter would have shown is the **highest**, hence the
+  newest entry, hence the last thing the ring buffer evicts.
 - **`action` and `timestamp` are dropped on `info`** (§4).
 - **`grace` is case-sensitive** — `2H` is a 422 (§7).
 - **`dedupe_key` ignores severity** — an `info` and an `alert` sharing a key

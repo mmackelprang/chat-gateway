@@ -1,6 +1,20 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-19 shipped**
+**Last updated:** 2026-07-30 (Builder — **CG-32 shipped**
+([PR #PRNUM](https://github.com/mmackelprang/chat-gateway/pull/PRNUM)): the
+dedupe counter now **yields to the app's content** instead of overflowing it.
+`render` appending `" (×N since last notice)"` to a deduped re-delivery could
+push an `info` payload the gateway had **already accepted with a 202** back over
+the field cap, and the uncaught `ValidationError` landed in the same place CG-30
+had just emptied — measured 202 / 202 / 202 / **500**, now 202 throughout. Per
+the user's option-1 decision: full form, then `" (×N)"`, then nothing. **Hard
+rule #1 is the justification and it is in the code** — the counter is the
+gateway's own transport decoration, so it is what gives, never the app's body.
+`info_max_combined_length()` is **unchanged at 3989** and a test pins the
+literal, because no request that succeeds today may start failing. Suite
+**144 → 151**. **CG-36 filed** from its docs pass.
+
+Previously: **CG-19 shipped**
 ([PR #30](https://github.com/mmackelprang/chat-gateway/pull/30)): the
 Marketplace-SDK comment is corrected in all three IaC paths, as a **warning that
 stays in the file** rather than a deletion — it is the exact sentence that put
@@ -28,8 +42,7 @@ size**, where it was an uncaught **500**. Scoped to `info` and derived, not
 hardcoded — `Notification.body`'s global `max_length` is untouched, because
 `alert`/`warning` at title-200 + body-4000 are **accepted today** and had to stay
 accepted. Measured before *and* after at the endpoint; suite **136 → 140**.
-**CG-32 filed** from its verification pass — a second, narrower overflow on the
-same path that request-time validation provably cannot cover.
+**CG-32 was filed** from its verification pass and has now shipped, above.
 
 Previously: **CG-11 + CG-20 shipped as ONE PR**
 ([PR #27](https://github.com/mmackelprang/chat-gateway/pull/27)), per the user's
@@ -197,12 +210,11 @@ CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-21 → CG-26** (CG-7, CG-4, CG-5, CG-24,
-CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23 and
-CG-19 have
-since shipped). **CG-29** was filed by Builder from CG-25's UAT, **CG-31** by
-Builder from CG-11+CG-20's pre-merge review, **CG-32** by Builder from CG-30's
-verification pass, **CG-33 + CG-34** by Builder from CG-23's pre-merge review
-and UAT, and **CG-35** by Builder from CG-19; all six are
+CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23, CG-19 and
+CG-32 have since shipped). **CG-29** was filed by Builder from CG-25's UAT, **CG-31** by
+Builder from CG-11+CG-20's pre-merge review, **CG-33 + CG-34** by Builder from CG-23's pre-merge review
+and UAT, **CG-35** by Builder from CG-19, and **CG-36** by Builder from
+CG-32's docs pass; all six are
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-21 and CG-35 carry **merge gates** — pause and report rather than
@@ -635,76 +647,31 @@ misleading way.
 
 ---
 
-### CG-32 · The dedupe counter can overflow an `info` payload the gateway just accepted  🔨 in flight
+### CG-36 · `integration-guide.md` states the dedupe counter unconditionally  📋 queued
 
 | | |
 |---|---|
-| **Origin** | filed by Builder 2026-07-30 from **CG-30's** verification pass — **measured, not predicted** |
-| **Depends on** | nothing (CG-30 shipped the guard that makes this the *only* remaining 500 on the path) |
-| **Touches** | `src/chat_gateway/notifications.py` (`render`'s info branch and/or the counter), plus a test |
+| **Origin** | filed by Builder 2026-07-30 from **CG-32's** docs pass |
+| **Depends on** | nothing (CG-32 shipped the behaviour this describes) |
+| **Touches** | `docs/integration-guide.md` (the `/v1/notify` summary paragraph) |
 | **Priority** | **appended last, unprioritized.** The user sets order. |
 
-CG-30 made the `info` path reject an unrenderable payload with a **422** instead
-of 500ing. It validates `len(title) + len(body)` against
-`info_max_combined_length()` — **3989**, derived as `TEXT_MAX` minus the rendered
-prefix minus the newline. What that budget does **not** reserve is the dedupe
-counter: `render` appends `" (×N since last notice)"` (23 characters at N=3) to
-the prefix when a suppressed notification is re-delivered (`notifications.py`,
-`render`'s `counter` local). So a payload the gateway
-**accepted with a 202** can be unrenderable by the time it is actually delivered,
-and the `pydantic.ValidationError` fires in the same uncaught place CG-30 just
-emptied.
+CG-32 made the dedupe counter degrade — full `" (×N since last notice)"`, then
+`" (×N)"`, then nothing — when an `info` payload leaves no room for it.
+`docs/consumers/aitrader.md` §5 and §11 say so. `docs/integration-guide.md`'s
+one-line notify summary still says the collapsed count *"rides on the next
+delivery (`×N since last notice`)"* with no qualification.
 
-Measured in-process at `/v1/notify` (`TestClient(..., raise_server_exceptions=False)`),
-combined 3989 with a `dedupe_key`, clock advanced past the window:
+**Small, and deliberately not fixed in passing.** It is a general-audience
+summary, not a guarantee a consumer would build against — the precise statement
+lives in the consumer doc, and this repo's standing discipline is that a summary
+which drifts should link rather than be re-summarized. It was also outside
+CG-32's stated file boundary while three Builders ran concurrently, which is why
+it is a row instead of a one-line diff someone else has to merge around.
 
-| Step | Result |
-|---|---|
-| first delivery | **202** |
-| repeat within the window (suppressed, counted) | **202** |
-| after the window reopens, `occurrences=3` | **500** |
-
-**Why CG-30 deliberately did not fix it, so this is not read as an oversight.**
-Reserving counter width in the request-time budget would lower the accepted
-bound below 3989 for *every* info notification — including the ones with no
-`dedupe_key` at all, which can never grow a counter and succeed today. The
-user's CG-30 decision was explicitly conditioned on **every request that
-succeeds today must still succeed**, so the guard could not cover this. It is
-not the same defect wearing a hat: CG-30's overflow was knowable at request
-time, and this one is **not** — it depends on delivery history that has not
-happened yet.
-
-**Three options, with different contracts — this is a design call, deliberately
-NOT decided here:**
-
-1. **Drop or shorten the counter when it would overflow.** Loses no *app*
-   content — the counter is gateway-generated dedupe decoration, which by hard
-   rule #1 is transport, not app domain — but it silently loses the count on
-   exactly the messages long enough to need it.
-2. **Truncate the body on the info path when the counter pushes it over.**
-   Silent loss of app content; the thing option 1 avoids.
-3. **Reserve a fixed counter width in `info_max_combined_length()`.** Honest and
-   simple, but it rejects payloads that succeed today, which is the constraint
-   CG-30 was built around. Would need the user to relax that.
-
-Option 1 looks right on rule-#1 grounds, but it changes what a delivered message
-says, so it is the user's/Planner's call, not Builder's. Filed with the
-observation, not a prescription.
-
-**Documented as a sharp edge in `docs/consumers/aitrader.md` §11 in the
-meantime**, with the avoidance (leave ~40 characters of slack under 3989, or
-skip `dedupe_key` on long info bodies). It needs all three of a long `info`
-body, a `dedupe_key`, and a suppressed repeat — which is why it is narrower than
-CG-30, not why it is imaginary.
-
-> **⚠ Same dev-box trap as CG-30 — read that row's warning box before
-> reproducing this.** This one still *is* an uncaught exception in a sync
-> endpoint, so on this Windows box it will hang the request and stop the server
-> answering everything, `/healthz` included, while the process stays alive.
-> **Reproduce it in-process with `TestClient(..., raise_server_exceptions=False)`,
-> never over TCP.** That is a property of this box, isolated during CG-27's UAT
-> against a minimal FastAPI app with no gateway code in it — not a gateway
-> defect, and not what this row is about.
+The fix is one clause plus a pointer at `docs/consumers/aitrader.md` §11 — or,
+if the reviewer prefers, deleting the parenthetical entirely and letting the
+consumer doc own the detail.
 
 ---
 
@@ -819,8 +786,8 @@ old one.)_
 
 ## In flight
 
-_(nothing — **CG-19 shipped** on 2026-07-30, and **CG-23** and **CG-30** before
-it, and **CG-11 + CG-20** as one PR before those. **CG-19, CG-23 and CG-30 were
+_(nothing — **CG-32 shipped** on 2026-07-30, and **CG-19**, **CG-23** and
+**CG-30** before it, and **CG-11 + CG-20** as one PR before those. **CG-19, CG-23 and CG-30 were
 worked concurrently** by three Builders, one worktree each; per the CG-25
 concurrency incident, one worktree per Builder and never a shared working
 directory. That is also why CG-19's finding is filed as **CG-35** and not CG-32 —
@@ -830,6 +797,102 @@ CG-32 through CG-34 were taken by the other two while it was in flight.)_
 
 ## Recently shipped
 
+### CG-32 · The dedupe counter overflowed an `info` payload the gateway had just accepted  ✅ shipped 2026-07-30 · [PR #PRNUM](https://github.com/mmackelprang/chat-gateway/pull/PRNUM)
+
+CG-30's request-time bound — `len(title) + len(body)` ≤ **3989** — deliberately
+did not reserve the dedupe counter, so `render` appending
+`" (×N since last notice)"` to a deduped re-delivery could push a payload the
+gateway had **already accepted with a 202** back over the field cap, and the
+`pydantic.ValidationError` fired in the same uncaught place CG-30 had just
+emptied. Suite **144 → 151**.
+
+**Measured at `/v1/notify` in-process, before and after** (combined 3989, with a
+`dedupe_key`, clock advanced past the window):
+
+| step | before | after |
+|---|---|---|
+| 1. first delivery | 202 | 202 |
+| 2. repeat within the window (suppressed) | 202 | 202 |
+| 3. repeat within the window (suppressed) | 202 | 202 |
+| 4. window reopens, `occurrences=3` | **500** | **202** |
+
+The filed row's table showed three steps; it takes **two** suppressions to reach
+`occurrences=3`, so the reproduction has four. Same defect, same numbers — the
+row's middle line was repeats plural.
+
+**The user's decision was option 1, "shorten then drop"** (2026-07-30). Three
+forms, tried in order: the full `" (×N since last notice)"`, the short `" (×N)"`
+(~5 characters instead of 23, so it fits in essentially every real case), then
+nothing at all. **Hard rule #1 is the justification, and it is written into the
+code rather than only into this row:** the counter is gateway-generated
+transport decoration — the gateway's accounting of its own dedupe window — not
+app-domain content. When something has to give against the transport's field
+cap, it is ours, not theirs. The app's title and body are delivered
+byte-for-byte, asserted by exact string equality rather than by a length check.
+
+**`info_max_combined_length()` is unchanged at 3989, and a test pins the
+literal.** That was the user's binding condition on CG-30 and it carried forward
+verbatim: no request that succeeds today may start failing. Every other boundary
+in the new test block is derived — this one is hardcoded deliberately, because a
+purely derived assert would happily follow the bound *downwards* if someone
+later reserved counter width, which is precisely the option (3) this decision
+rejected.
+
+**The room calculation cannot drift from what is emitted.** `render`'s info
+branch is split at the seam the counter goes into — `head` = prefix + title,
+`tail` = separator + body — and the room is `TEXT_MAX - len(head) - len(tail)`,
+computed from the very strings about to be concatenated rather than from a
+second copy of the arithmetic. N's width is measured from the rendered string,
+never reserved at a fixed size: `×3` and `×10000` differ, and a fixed allowance
+would be wrong the first time a count reached four digits.
+
+**The claim the decision rested on was verified rather than assumed — and it
+needed qualifying.** Option 1 was chosen partly because a dropped count is not
+actually lost: every suppressed occurrence is already recorded in the delivery
+log. True — `service.emit_notification` records `deduped` / `occurrence N within
+window` unconditionally. But pre-merge review caught the first docstring
+flattening **recording** and **retrieval** into one claim, and retrieval is two
+stores with different retention. Measured 250 suppressions deep:
+`GET /v1/deliveries` serves the in-memory ring buffer (200 per source, `limit`
+defaulting to 50) and **does** evict the oldest ordinals; the append-only JSONL
+under `<CHAT_GATEWAY_STATE_DIR>/deliveries/` that `__main__` configures held all
+250. Eviction is the benign direction here: the ordinal a dropped counter would
+have shown is the **highest**, hence the newest entry, hence the last thing a
+ring buffer discards. Now pinned by a test rather than left in a review note.
+
+**UAT ran over real TCP**, as CG-30's did and for the same reason: post-fix
+there is no unhandled exception left on this path, so the dev box's
+wedge-on-uncaught-exception trap no longer applies. The pre-fix 500 was driven
+**in-process only**, per the filed row's warning box. Live uvicorn, real
+`WebhookAdapter` posting to a local sink that captured what actually went on the
+wire, real dispatcher thread, real `DeliveryLog` with its JSONL audit dir. One
+injection only — `Deduper(window_seconds=3)`, a constructor argument with no env
+var, so "the window reopens" is reachable in a UAT rather than an hour away.
+
+**All three forms were observed on the wire, not inferred from the arithmetic**
+— the counter sits at the head/tail seam, so the sink captured the 40 characters
+following the 200-character title:
+
+| room left | seam on the wire | `len(text)` |
+|---|---|---|
+| 23 | `ttttt (×2 since last notice)\nbbbbbbbbbbb` | 4000 |
+| 6 | `ttttt (×2)\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` | 3999 |
+| 0 | `ttttt\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` | 4000 |
+
+The body starts immediately after the seam in every row — nothing of the app's
+content was moved aside to make room. **Zero 500s and zero tracebacks** across
+the whole run, `/healthz` 200 before and after, and CG-30's 422 still fires at
+3990 with the limit and the size named.
+
+**Flags: none cleared, none added, none reworded** — offline behaviour, no
+Google seam touched. `CLAUDE.md`'s verification ledger is untouched and not
+restated; only its test count moved.
+
+**CG-36 filed** from this item's docs pass: `docs/integration-guide.md`'s
+one-line notify summary still says the collapsed count "rides on the next
+delivery" with no mention of the degradation. A general-audience summary rather
+than a false guarantee, and outside this item's file boundary with three
+Builders running concurrently — so filed rather than fixed in passing.
 ### CG-19 · The Marketplace-SDK comment that chose this project's runtime  ✅ shipped 2026-07-30 · [PR #30](https://github.com/mmackelprang/chat-gateway/pull/30)
 
 All three IaC paths enabled `appsmarket-component.googleapis.com` under a comment
