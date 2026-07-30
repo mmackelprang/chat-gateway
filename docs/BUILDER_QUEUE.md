@@ -595,7 +595,7 @@ Every restatement of it in this repo has drifted within two PRs.
 
 ---
 
-### CG-28 · Consumer handoff doc — **jobhunt**  📋 queued
+### CG-28 · Consumer handoff doc — **jobhunt**  🔨 in flight
 
 | | |
 |---|---|
@@ -737,8 +737,11 @@ old one.)_
 
 ## In flight
 
-_(nothing from this Builder — note CG-12 was being worked in parallel; see the
-concurrency note in CG-25's shipped entry.)_
+**CG-28** — consumer handoff doc for jobhunt. Claimed 2026-07-30 on branch
+`docs/cg28-jobhunt-handoff`, in its own `git worktree`. **CG-27 is being worked
+in parallel** by a second Builder in a separate worktree; the two touch disjoint
+files apart from this queue. Per the CG-25 concurrency incident: one worktree per
+Builder, never a shared working directory.
 
 ---
 
