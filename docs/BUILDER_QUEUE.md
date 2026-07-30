@@ -515,7 +515,7 @@ accurate by saying the phrase comes off the wire. Not both, and not neither.
 
 ---
 
-### CG-26 · The fixture guard's remaining rules have never been proven to fire  📋 queued
+### CG-26 · The fixture guard's remaining rules have never been proven to fire  🚀 in-flight
 
 | | |
 |---|---|
