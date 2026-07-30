@@ -15,6 +15,7 @@ from chat_gateway.notifications import (
     INFO_BODY_SEPARATOR,
     Deduper,
     Notification,
+    dedupe_counter,
     info_max_combined_length,
     render,
     severity_prefix,
@@ -206,6 +207,156 @@ def test_guard_and_renderer_share_one_prefix_construction():
     msg = render(Notification(severity="info", title="x", body="y"), "aitrader")
     assert msg.text.startswith(severity_prefix("info") + "x")
     assert msg.text == severity_prefix("info") + "x" + INFO_BODY_SEPARATOR + "y"
+
+
+# --- the dedupe counter yields to the app's content (CG-32) ------------------
+#
+# Same derivation discipline as the CG-30 block above: every boundary here comes
+# from info_max_combined_length(), severity_prefix(), or the counter's own
+# rendered strings. The ONE deliberate exception is
+# test_the_accepted_bound_did_not_move, which pins the literal 3989 on purpose —
+# see its docstring.
+
+def _deduped_info_payload(combined: int, dedupe_key: str = "weekly-report") -> dict:
+    """`_info_payload` plus a dedupe_key, so repeats collapse and the next
+    delivered message carries a count."""
+    return {**_info_payload(combined), "dedupe_key": dedupe_key}
+
+
+def test_deduped_redelivery_at_the_limit_is_202_not_500(registry, tmp_path):
+    """CG-32's measured sequence, which used to end 202 / 202 / 202 / **500**.
+
+    A payload accepted at exactly info_max_combined_length() was rendered again
+    after the window reopened, this time with " (×3 since last notice)" appended
+    — 23 characters past a budget that was already exact — and the resulting
+    pydantic ValidationError fired inside the endpoint with nothing to catch it.
+    Step 4 is the one that used to be an uncaught 500.
+
+    raise_server_exceptions=False so a regression shows up as a 500 *response*
+    rather than blowing up the test itself."""
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    _, app, adapter = make_client(registry, clock, tmp_path)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    payload = _deduped_info_payload(info_max_combined_length())
+
+    r1 = client.post("/v1/notify", headers=AUTH, json=payload)
+    assert r1.status_code == 202 and r1.json()["status"] == "enqueued"
+    assert r1.json()["occurrences"] == 1
+
+    r2 = client.post("/v1/notify", headers=AUTH, json=payload)
+    assert r2.status_code == 202 and r2.json() == {"status": "deduped", "occurrences": 1}
+
+    r3 = client.post("/v1/notify", headers=AUTH, json=payload)
+    assert r3.status_code == 202 and r3.json() == {"status": "deduped", "occurrences": 2}
+
+    clock.now += dt.timedelta(seconds=3601)  # the window reopens
+    r4 = client.post("/v1/notify", headers=AUTH, json=payload)
+    assert r4.status_code != 500, r4.text
+    assert r4.status_code == 202
+    assert r4.json()["occurrences"] == 3  # the count that used to overflow
+
+    # and it really rendered — the 202 is not the whole claim
+    app.state.dispatcher.process_due()
+    assert len(adapter.sent) == 2
+    _, msg = adapter.sent[-1]
+    assert len(msg.text) <= TEXT_MAX
+
+
+def test_the_apps_body_survives_when_the_counter_is_dropped(registry, tmp_path):
+    """Hard rule #1: the counter is gateway-generated transport decoration, the
+    body is the application's content — so the counter is what yields.
+
+    Nothing of what the caller sent may be truncated to make room for the
+    gateway's own parenthetical accounting."""
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    _, app, adapter = make_client(registry, clock, tmp_path)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    payload = _deduped_info_payload(info_max_combined_length())
+    for _ in range(3):
+        assert client.post("/v1/notify", headers=AUTH, json=payload).status_code == 202
+    clock.now += dt.timedelta(seconds=3601)
+    assert client.post("/v1/notify", headers=AUTH, json=payload).status_code == 202
+
+    app.state.dispatcher.process_due()
+    _, msg = adapter.sent[-1]
+    assert payload["body"] in msg.text                      # body intact, not clipped
+    assert payload["title"] in msg.text                     # title too
+    assert msg.text == (severity_prefix("info") + payload["title"]
+                        + INFO_BODY_SEPARATOR + payload["body"])
+    assert len(msg.text) == TEXT_MAX                        # exactly full: no room left
+    assert "since last notice" not in msg.text              # the counter is what went
+
+
+def test_counter_degrades_full_then_short_then_gone():
+    """The three forms, driven directly at boundaries derived from the strings
+    themselves rather than from counted characters."""
+    full = " (×7 since last notice)"
+    short = " (×7)"
+    assert dedupe_counter(7, None) == full                 # unbounded -> full form
+    assert dedupe_counter(7, len(full)) == full            # exactly enough -> full
+    assert dedupe_counter(7, len(full) - 1) == short       # one short -> shorten
+    assert dedupe_counter(7, len(short)) == short          # exactly enough -> short
+    assert dedupe_counter(7, len(short) - 1) == ""         # one short -> drop
+    assert dedupe_counter(7, 0) == ""                      # no room at all -> drop
+
+    # a first occurrence has no count to carry, at any room
+    for room in (None, 0, len(short), len(full), 10_000):
+        assert dedupe_counter(1, room) == ""
+
+
+def test_counter_width_is_measured_not_assumed():
+    """`×3` and `×10000` are different lengths, so the room calculation must come
+    from the rendered string — a fixed-width reservation would be wrong the first
+    time a count reached four digits."""
+    assert len(dedupe_counter(10_000, None)) > len(dedupe_counter(3, None))
+
+    # a room where the narrow count still gets the full form and the wide one
+    # has already been pushed down to the short form — computed, not written down
+    room = len(dedupe_counter(3, None))
+    assert dedupe_counter(3, room) == dedupe_counter(3, None) == " (×3 since last notice)"
+    assert dedupe_counter(10_000, room) == " (×10000)"
+
+
+def test_the_accepted_bound_did_not_move(registry, tmp_path):
+    """CG-32 fixed the renderer, NOT the request-time bound — and this test pins
+    the actual number to prove it.
+
+    The literal 3989 is deliberate here and only here: every other boundary in
+    this block is derived, but a derivation assert alone would happily follow the
+    bound downwards if someone later reserved counter width in
+    info_max_combined_length(). That reservation is exactly what option 1
+    rejected, because it would shrink the accepted length of every info
+    notification including the ones with no dedupe_key that can never grow a
+    counter."""
+    assert info_max_combined_length() == (
+        TEXT_MAX - len(severity_prefix("info")) - len(INFO_BODY_SEPARATOR))
+    assert info_max_combined_length() == 3989
+
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    _, app, _ = make_client(registry, clock, tmp_path)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    limit = info_max_combined_length()
+    assert client.post("/v1/notify", headers=AUTH,
+                       json=_info_payload(limit)).status_code == 202     # still accepted
+    assert client.post("/v1/notify", headers=AUTH,
+                       json=_info_payload(limit + 1)).status_code == 422  # CG-30 intact
+
+
+def test_card_severities_keep_the_full_counter():
+    """Degradation is the info path's business only. A card severity's `text` is
+    the prefix plus a title capped at 200, thousands of characters clear of
+    TEXT_MAX, so its counter never has to give anything up — in the text line or
+    in the card header."""
+    full = " (×4 since last notice)"
+    for severity in ("alert", "warning"):
+        msg = render(Notification(severity=severity, title="t" * 200, body="b" * 4000),
+                     "aitrader", 4)
+        assert msg.text.endswith(full)
+        assert full in msg.cards[0]["card"]["header"]["title"]
+        assert len(msg.text) <= TEXT_MAX
 
 
 # --- dedupe (acceptance #2) --------------------------------------------------
