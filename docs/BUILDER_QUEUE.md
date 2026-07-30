@@ -1,8 +1,9 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-29 (Builder — CG-6, CG-3, CG-10, CG-13, CG-7 shipped.
-**Experiment E1 RAN AND PASSED and E2 is answered**, so the deferral below is
-superseded: see "What E1 and E2 settled". CG-20 … CG-22 filed.)
+**Last updated:** 2026-07-30 (Planner — **CG-9 is UNBLOCKED and rescoped**, CG-22
+corrected and merged with it into one PR with a written plan, CG-11 amended with
+new evidence, **CG-26 filed**. CG-4, CG-5, CG-8, CG-24 shipped; CG-14 closed as
+obsolete.)
 
 ## User decisions on ADR-0001 (2026-07-29) — final, do not re-ask
 
@@ -109,11 +110,21 @@ CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-25 → CG-12 → CG-11 → CG-20 →
-CG-22 → CG-19 → CG-21 → CG-23** (CG-7, CG-4, CG-5, CG-24 and CG-8 have since shipped). CG-14 is **✖ closed as obsolete**
+CG-22+CG-9 → CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24 and CG-8 have since shipped). CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
-auto-merging; CG-9 stays blocked on a human; CG-17 and CG-18 stay deferred and
-must not be executed.
+auto-merging; CG-17 and CG-18 stay deferred and must not be executed.
+
+**CG-9 is NO LONGER BLOCKED, and its slot in the order is not a promotion.**
+The human step it waited on happened on 2026-07-30 and the capture exists. It is
+merged into CG-22's slot because the two items land the same kind of artifact
+behind the same guard, and splitting them would mean touching
+`tests/test_fixtures_scrubbed.py` and `tests/fixtures/README.md` twice for one
+day's captures. Its scope changed as well as its status — see its row.
+
+**CG-26 was filed 2026-07-30 by Planner** while planning the above: fixture
+guard-coverage debt that no existing row owns. Appended last, not inserted —
+the user sets priority.
 
 **CG-23 and CG-24 were filed 2026-07-30 by Builder.** CG-23 is CG-7's review
 fallout; CG-24 exists because the 2026-07-30 live session clears a flag that **no
@@ -192,6 +203,16 @@ and much more precisely.
 **Planner/user call.** Either re-justify it as a general inbound-quietness
 detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
+</details>
+
+> **Markdown fix, 2026-07-30.** The `</details>` above used to sit ~350 lines
+> lower, after CG-23 — so **six live queued rows** (CG-12, CG-11, CG-20, CG-21,
+> CG-22+CG-9, CG-19, CG-23) rendered *collapsed inside CG-14's "kept for the
+> record" fold*, under a summary describing a closed item. On GitHub the queue
+> appeared to contain nothing but a closed row, CG-25 and CG-26, which
+> contradicted the order line at the top of this section. Content unchanged; only
+> the closing tag moved.
+
 ---
 
 ### CG-12 · Forensic trace for spaces owned only by opted-out tenants  📋 queued *(was ⏸ blocked · user decision)*
@@ -257,6 +278,40 @@ coordinating, because the ADR owns jobhunt's interaction model and `CLAUDE.md` i
 the constitution. ADR-0001 §7 supplies the replacement wording and agrees with
 this finding on all three labels (proven false / capture-verified / doc-derived
 inference), so Part G adopts §7 rather than paraphrasing it.
+
+> **⚠ AMENDED 2026-07-30 — Part G can no longer be a verbatim adoption of ADR
+> §7, and this row's own body is now half wrong.**
+>
+> A real capture from `chat-gateway-gw` shows a `CARD_CLICKED` produced by
+> changing a dropdown on a card with **no button on it at all**:
+> `action.actionMethodName == "onVerdictChanged"` — the widget's own
+> `onChangeAction.function` — with the changed value harvested into params.
+> Landing as `tests/fixtures/classic-cardclicked-onchange-event.json` in the
+> CG-22+CG-9 PR; pinned by
+> `test_normalize_real_classic_onchange_with_no_button_at_all`.
+>
+> **On the classic runtime a selection widget IS an interaction trigger.** So
+> two sentences below are correct only for the add-ons runtime and must be
+> re-scoped rather than adopted:
+>
+> - *"a widget is not an interaction trigger"* — true under add-ons (code 13),
+>   **false** under classic.
+> - *"the pattern is widgets for input, one button to submit"* — the supported
+>   pattern under add-ons and the **portable** one on both, but not the only one
+>   on classic, where a card with an `onChangeAction` fires on change *and*
+>   again on submit.
+>
+> ADR-0001 §7 was written from add-ons evidence and carries the same gap, so
+> §7 needs correcting *first* and then adopting. That may pull in CG-20 (which
+> owns ADR §5/§10/§12).
+>
+> Locations to fix when this ships: `CLAUDE.md`'s selection-widget sentence;
+> `docs/consumers/jobhunt.md` R6; the integration guide's producer convention
+> (CG-13); ADR-0001 §7; **and this row's own body**. The one location already
+> handled is `tests/test_adapters.py`'s *"one event per decision, not two"*
+> comment, removed by the CG-22+CG-9 PR because that PR rewrites the test it
+> sits in — see that plan §6 for why the rest was routed here rather than
+> absorbed.
 
 ---
 
@@ -341,30 +396,82 @@ Do not start this until CG-20 lands and the user says go.
 
 ---
 
-### CG-22 · Land the real **classic** `CARD_CLICKED` fixture  📋 queued
+### CG-22 + CG-9 · Land the real **classic** fixtures — `CARD_CLICKED` ×2 and `ADDED_TO_SPACE`  📋 queued
 
 | | |
 |---|---|
-| **Origin** | E1's capture — the first real classic-format event this project has ever had |
+| **Plan** | [`superpowers/plans/2026-07-30-classic-fixtures-cg22-cg9.md`](superpowers/plans/2026-07-30-classic-fixtures-cg22-cg9.md) — **one PR for both items** |
+| **Spec** | CG-9: [design §3 (CG-9)](superpowers/specs/2026-07-29-live-verification-followups-design.md). CG-22: this row. |
 | **Depends on** | nothing |
-| **Source** | `%LOCALAPPDATA%\Temp\cg-fixture\classic-cardclicked-event.json` (already redacted at capture time) |
+| **Merge gate** | **none** — tests, fixtures, docstrings and docs only; see the plan §7 |
 
 CG-1 built the classic parser from documentation and CG-3 could only land an
 add-ons capture, so `classic-message-event.json` is **CONSTRUCTED** and the
-classic `CARD_CLICKED` path had no real bytes at all. E1 produced them, and the
-normalizer handled them correctly live — but an unrecorded observation is
-indistinguishable from a guess in three weeks, which is exactly why the fixture
-README tracks provenance.
+classic paths had no real bytes at all. The 2026-07-30 live session produced
+three usable captures. An unrecorded observation is indistinguishable from a
+guess in three weeks, which is why the fixture README tracks provenance.
 
 Same handling rules as CG-3, no exceptions: **extend the guard first**, land the
-fixture second, never hand-scrub by path. The capture arrives pre-redacted,
-which is *not* a reason to skip the guard — run it and let it prove the file
-clean. Then pin `envelope_format == "classic"`, the natively-populated
-`action.id`, and the `onChangeAction` event shape (which has no add-ons
-equivalent and is therefore new coverage, not parity coverage).
+fixtures second, never hand-scrub by path.
 
-This also converts the classic normalizer from doc-derived to
-⚠ SHAPE-VERIFIED — a real upgrade, and the last one available before CG-21.
+**Three corrections to this row's earlier text, all verified — do not execute
+the struck version:**
+
+1. ~~*"Source: `classic-cardclicked-event.json` (already redacted at capture
+   time)"*~~ — **it is not redacted.** The current guard flags **nine** leaves in
+   that file: real user ids, a `googleusercontent.com` avatar, a real email, a
+   real `domainId` and `customer` twice. The row's "arrives pre-redacted"
+   parenthetical was wrong, and it is the second time on this project that a
+   capture believed clean was not.
+2. **A better capture exists.** `RAW-peek-01.json` (2026-07-30) is a
+   `CARD_CLICKED` produced by changing a dropdown on a card with **no button at
+   all** — the `onChangeAction` shape this row asks to pin, which E1's capture
+   does not contain. It came off the live subscription through the real
+   `PubSubPuller`, on the production project, in a real consumer space.
+   **E1's capture is structurally redundant** with the migration capture (diffed
+   by key/type tree: the only difference sits inside the echoed card definition)
+   and is not landed; the plan §3.1 makes Builder re-verify that rather than
+   trust it.
+3. ~~*"This also converts the classic normalizer from doc-derived to
+   ⚠ SHAPE-VERIFIED"*~~ — **too broad.** It converts `CARD_CLICKED` (both
+   trigger kinds) and `ADDED_TO_SPACE`. Classic **MESSAGE** stays CONSTRUCTED,
+   and classic `thread.threadKey`, APP_COMMAND, REMOVED_FROM_SPACE and
+   WIDGET_UPDATED remain unobserved. Plan §5.1 has the full scoping table. Per
+   hard rule #3 this **clears no ⚠ LIVE-UNVERIFIED flag.**
+
+**The guard does NOT need extending for the capability URL.** The
+`ADDED_TO_SPACE` capture carries a live `configCompleteRedirectUrl` bearer
+token, and the current guard already rejects it — twice over, via `SUSPECT_KEY`
+and `SUSPECT_VALUE`, verified five ways. What the guard genuinely lacks is a
+**regression test proving that rule fires**: the tenant rule has one, the
+capability rule — which exists because a path-guess scrub wrote a live token to
+disk — has none, and no real fixture had ever carried one before now. That, plus
+a structural email rule, is Task 1 of the plan.
+
+### CG-9's half — what changed beyond its status
+
+CG-9 asked for the **add-ons** `addedToSpacePayload` and named three doc-derived
+paths it would pin. The capture that arrived is **classic**, so two of those
+three do not apply (`ADDON_PAYLOAD_TYPES`, and the `chat.space`
+non-payload-sibling arm of the three-source space resolution are both add-ons
+only). The third — **`_shape` with an empty `message`** — is the one it cared
+most about and is covered.
+
+**The add-ons variant is now uncapturable, permanently.** `chat-gateway-prod` is
+deleted and `chat-gateway-gw` runs a classic app with no `gsuiteaddons`
+deployment, so no add-ons `addedToSpacePayload` can ever be produced again.
+Closed by circumstance, like the publisher-principal question — **not a gap, not
+a task, do not re-file it.**
+
+**Honest limit:** the capture is a **DM** (`spaceType: DIRECT_MESSAGE`,
+`singleUserBotDm: true`), not a `ROOM`. That is not a weaker case for the
+empty-message arm — a DM `ADDED_TO_SPACE` carries no `message` object at all —
+but the ROOM variant is genuinely uncovered, and whether a ROOM one can carry a
+`message` is **unobserved and asserted neither way**.
+
+The old recipe in
+[the CG-3…CG-12 plan](superpowers/plans/2026-07-29-live-verification-followups.md#cg-9--added_to_space-fixture--blocked-on-a-human)
+is **superseded** by the new plan.
 
 ---
 
@@ -439,10 +546,6 @@ the secret-handling path and therefore needs a pause.
 
 ---
 
-</details>
-
----
-
 ### CG-25 · `send_text()` has no transport-error guard, unlike `send()`  📋 queued
 
 | | |
@@ -476,6 +579,90 @@ driving a transport failure through `httpx.MockTransport`.
 Note this does **not** re-open CG-5's flag clear: both of `send_text()`'s
 *threading* branches were verified live. The transport-error branch was never
 exercised against Google and CG-5's docstring says so.
+
+---
+
+### CG-26 · The fixture guard's remaining rules have never been proven to fire  📋 queued
+
+| | |
+|---|---|
+| **Rule** | **hard rule #2** — no fixture may carry a live secret or real identity |
+| **Origin** | filed by Planner 2026-07-30 while planning CG-22+CG-9; **appended last, not prioritized** |
+| **Depends on** | CG-22+CG-9 (which adds the first two of these regression tests) |
+| **Touches** | `tests/test_fixtures_scrubbed.py`, `tests/fixtures/README.md`, `docs/superpowers/plans/2026-07-29-live-verification-followups.md` — tests and docs only |
+
+`test_fixtures_scrubbed.py` carries four rule families and, before CG-22+CG-9,
+had a negative test for exactly **one** of them (`TENANT_KEY`). Its own docstring
+makes the argument — *"A guard that has never failed is a guard nobody has
+tested"* — and then applies it once. CG-22+CG-9 adds regression tests for the
+capability-URL rule and the new email rule because both are load-bearing for the
+fixtures it lands. This item finishes the job:
+
+| Rule | Proven to fire? |
+|---|---|
+| `TENANT_KEY` | ✅ since CG-3 |
+| `SUSPECT_KEY` / `SUSPECT_VALUE` (capability URLs) | ✅ as of CG-22+CG-9 |
+| `EMAIL` / `EXAMPLE_DOMAIN` | ✅ as of CG-22+CG-9 |
+| `PII` — the `users/…` / `members/…` long-digit-id shape | ❌ never |
+| `PII` — the `googleusercontent.com` avatar host | ❌ never |
+| the `PLACEHOLDER` discrimination on a `BEGIN … PRIVATE KEY` value | ❌ never |
+| `fixture_files()`'s own must-not-pass-vacuously assertion | ❌ never |
+
+The last one is worth its own thought: `assert files, "no fixtures found — this
+guard must never pass vacuously"` protects against the whole guard silently
+passing on an empty directory, and nothing proves *that* assertion works either.
+
+**Also in scope, and it is a documentation task rather than a regex task:**
+record which anonymization obligations the guard genuinely **cannot** enforce,
+so review knows what it is responsible for. CG-22+CG-9 starts this list with
+display names and path-embedded capability tokens; it should also cover space /
+message / thread ids, which the README already declares deliberately unguarded
+(`docs/google-cloud-setup.md` step 8 classifies them non-secret) but does not
+list as a *review* obligation anywhere.
+
+**SCOPE WIDENED 2026-07-30 — the guard's blind spot is `docs/`, and it has now
+cost us twice.** The guard walks `tests/fixtures/` only. **Nothing scans
+`docs/`.** Both of this project's PII incidents landed in `docs/`, not in a
+fixture — so every rule family above, however well proven, was pointed at the
+wrong directory.
+
+| | Incident | Outcome |
+|---|---|---|
+| 1 | the **first draft of the CG-22+CG-9 plan** hardcoded the real→synthetic mapping — real name, email, Google user ids, tenant ids and a **live capability-URL bearer token** — in a file staged for this **public** repo | caught **before push**; rewritten to name source paths, nothing reached the remote |
+| 2 | `docs/superpowers/plans/2026-07-29-live-verification-followups.md:484` hardcodes the real `domainId` and `customers/C0…` as sample *"bad"* data — inside `test_guard_rejects_unmarked_tenant_identifiers` | **already public**; fix forward |
+
+`TENANT_KEY` would have flagged incident 2 instantly *in a fixture*. In a plan
+document nothing looks at it. That is the whole finding.
+
+Two tasks: **(a)** extend the guard (or add a sibling) to walk `docs/**/*.md` for
+the same rule families — fenced code blocks and table cells included, since both
+incidents hid there; **(b)** scrub `:484` to synthetic values.
+
+**User decision 2026-07-30: fix forward, do NOT rewrite public history.** A
+Workspace customer id is not a credential — there is nothing to rotate — and a
+force-push on a public repo breaks every clone, fork and PR ref to purge a value
+that may already be indexed. Rewriting is not the same as un-publishing. Recorded
+so this is not silently re-litigated.
+
+⚠ **The docs guard must tolerate what this repo deliberately publishes**, or it
+will be disabled within a week: space / message / thread ids (declared non-secret
+by `docs/google-cloud-setup.md` step 8) and the author's own name and email,
+which are in the authorship metadata of **every commit** and cannot be removed by
+scrubbing prose. Flagging those is the failure mode to design against, not an
+oversight to fix later.
+
+**What this item is NOT.** A prior session reported PII in already-landed
+fixtures. **That does not reproduce** — all four landed fixtures were swept on
+2026-07-30 and every identity leaf is synthetic (`users/000…001`,
+`agent-user@example.com`, `example1`, `customers/Cexample1`,
+`https://example.com/…`). The debt is that the guard's coverage is unproven, not
+that it failed. Recorded here so the claim is not carried forward unchallenged.
+
+A byte-identical duplicate capture in the staging directory was also reported and
+has already been deleted; there is nothing to fix. Filing a staging-directory
+manifest convention was considered and **rejected** — the staging directory is
+outside the repo, transient, and a convention nobody can enforce is worse than
+none. The guard is the control that matters, and it runs on what lands.
 
 ---
 
@@ -519,24 +706,9 @@ the add-ons deployment has to be lived with longer than expected.
 
 ## Blocked
 
-### CG-9 · `ADDED_TO_SPACE` regression fixture  ⏸ blocked · needs a human
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-9)](superpowers/specs/2026-07-29-live-verification-followups-design.md) |
-| **Plan** | [recipe](superpowers/plans/2026-07-29-live-verification-followups.md#cg-9--added_to_space-fixture--blocked-on-a-human) |
-| **Blocked by** | a human removing and re-adding the Chat app to a space — Builder cannot do this |
-
-The normalizer was run against a **live** `addedToSpacePayload` on 2026-07-29 and
-handled it correctly — `ADDED_TO_SPACE` derived, space and sender extracted — for
-an event type it had never seen. That exercised three doc-derived paths at once:
-the `ADDON_PAYLOAD_TYPES` entry, the `chat.space` non-payload-sibling arm of the
-three-source space resolution, and `_shape` with an empty `message`.
-
-**The bytes were not kept**, so there is nothing to scrub. Filed rather than
-dropped because an unrecorded observation is indistinguishable from a guess three
-weeks from now — which is the whole reason the fixture README tracks provenance.
-~60 seconds of human time; see the recipe.
+_(nothing — **CG-9 moved out on 2026-07-30**: the human step it waited on
+happened, the capture exists, and it now ships with CG-22. Its scope changed as
+well as its status; read the combined row rather than assuming the old one.)_
 
 ---
 
