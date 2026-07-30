@@ -102,8 +102,15 @@ ADDON_ACTION_KEY = "__action_method_name__"
 # a card that wants to reach us must put the Pub/Sub topic path there. Google
 # then sends no __action_method_name__, no invokedFunction and no
 # payload.action — the identity has nowhere to ride. Either the gateway
-# supplies a replacement slot or action.id is permanently dead under the
-# runtime we are actually deployed on.
+# supplies a replacement slot or action.id is permanently dead THERE.
+#
+# THERE means ADD-ONS — not "the runtime we are actually deployed on", which is
+# how this sentence read until CG-37. Production cut over to a CLASSIC Chat app
+# on 2026-07-29 and classic supplies action.id natively, so everything above
+# this line is add-ons history, not a description of what we run. The key stays
+# regardless: `_resolve_action_id` checks it FIRST and unconditionally, so a
+# card that carries it still resolves through it on either runtime. Not needed
+# is not unused, and that sameness is D3's portability payoff (CLAUDE.md).
 #
 # HARD RULE #1 CHECK, because this is the subtlest thing in this module.
 # Rule #1 forbids the gateway interpreting or owning an APPLICATION's schema.
