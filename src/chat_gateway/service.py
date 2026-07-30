@@ -39,9 +39,12 @@ from .registry import Registry, RegistryError
 #: Where a producer's card must point its `onClick.action.function` for the
 #: interaction to reach this gateway. DEPLOYMENT-level, not per-app: there is
 #: one inbound route. Declared in the environment rather than derived from
-#: CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, because the two are only coincidentally
-#: related today — under a classic deployment it is any constant, and under an
-#: HTTP-endpoint deployment it is a URL (ADR-0001 D3's portability table).
+#: CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, because the two were only ever
+#: coincidentally related, and only under ADD-ONS at that: topic-as-function
+#: made the routing target look like it fell out of the subscription. On
+#: CLASSIC — production since 2026-07-29 — it is any constant, and under an
+#: HTTP-endpoint deployment it splits by runtime too: the endpoint URL under
+#: add-ons, a function name under classic (ADR-0001 D3's portability table).
 ROUTING_TARGET_ENV = "CHAT_GATEWAY_INTERACTION_ROUTING_TARGET"
 
 #: Consecutive failed polls before /healthz calls inbound dead. Three at the
