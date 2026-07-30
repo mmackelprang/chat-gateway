@@ -1,7 +1,8 @@
 # Builder queue — chat-gateway
 
 **Last updated:** 2026-07-30 (Builder — **CG-11 + CG-20 shipped as ONE PR**
-(PR #TBD), per the user's combine decision: CG-11's job was to adopt ADR-0001
+([PR #27](https://github.com/mmackelprang/chat-gateway/pull/27)), per the user's
+combine decision: CG-11's job was to adopt ADR-0001
 §7, and §7 carried the very error CG-11 existed to fix, so the ADR had to be
 corrected before it could be adopted — and the ADR is CG-20's file.
 
@@ -739,7 +740,7 @@ never a shared working directory.)_
 
 ## Recently shipped
 
-### CG-11 + CG-20 · The selection-widget claim, E1/E2, and a deleted project  ✅ shipped 2026-07-30 · PR #TBD
+### CG-11 + CG-20 · The selection-widget claim, E1/E2, and a deleted project  ✅ shipped 2026-07-30 · [PR #27](https://github.com/mmackelprang/chat-gateway/pull/27)
 
 One PR, per the user's combine decision: CG-11's job was to adopt ADR-0001 §7,
 and §7 carried the very error CG-11 existed to fix, so §7 had to be corrected
