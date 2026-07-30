@@ -245,7 +245,7 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
-### CG-11 + CG-20 · Correct the selection-widget claim, and document E1/E2  📋 queued · **ONE PR**
+### CG-11 + CG-20 · Correct the selection-widget claim, and document E1/E2  🔨 in flight · **ONE PR**
 
 > **SHIPS AS A SINGLE PR WITH CG-20 BELOW — user decision 2026-07-30.** Claim
 > both rows together. CG-11 adopts ADR-0001 §7; §7 is itself wrong; correcting
@@ -335,7 +335,7 @@ inference), so Part G adopts §7 rather than paraphrasing it.
 
 ---
 
-### CG-20 · Document E1 + E2: the create-time-only toggle and the two capability tables  📋 queued · **ships with CG-11 above, as ONE PR**
+### CG-20 · Document E1 + E2: the create-time-only toggle and the two capability tables  🔨 in flight · **ships with CG-11 above, as ONE PR**
 
 > **Not an independent item any more — user decision 2026-07-30.** See the banner
 > on CG-11 for why. This row's own scope is unchanged and its widened half (the
@@ -788,7 +788,12 @@ old one.)_
 
 ## In flight
 
-_(nothing from this Builder — CG-28 shipped. **CG-27 was being worked in
+**CG-11 + CG-20** — claimed 2026-07-30 on branch
+`docs/cg11-cg20-widget-claim-and-e1-e2`, single worktree, one Builder. Ships as
+**one PR** per the user decision in the decisions table. Both rows above are
+flipped to `🔨 in flight`.
+
+_(nothing else — CG-27 and CG-28 shipped. **CG-27 was being worked in
 parallel** by a second Builder in its own worktree; per the CG-25 concurrency
 incident, one worktree per Builder and never a shared working directory.)_
 
