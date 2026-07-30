@@ -432,20 +432,29 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **the prioritized list is now empty** (CG-7, CG-4, CG-5, CG-24,
-CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23, CG-19,
-CG-32, CG-21, CG-34, CG-31, CG-29, CG-36, CG-42 and CG-26 have since shipped).
-What remains — CG-35 and CG-50 — was **appended last and unprioritized**;
-the user sets their order. **CG-33** was filed
-by Builder from CG-23's pre-merge review, **CG-35** by Builder from CG-19,
-**CG-36** by Builder from CG-32's docs pass, **CG-37** by Builder from
-CG-21's inventory, and **CG-42** by Builder from CG-31's UAT; all five were
-appended last, unprioritized — the user sets priority. **CG-36, CG-42, CG-33 and
-CG-37 have since shipped**; **CG-35** remains queued, joined by **CG-50** (filed
-by Builder 2026-07-30 from CG-37's sweep). CG-14 is **✖ closed as obsolete**
-(user decision 2026-07-30 — the migration removed its premise; never built);
-CG-35 carries a **merge gate** — pause and report rather than
-auto-merging; CG-17 and CG-18 stay deferred and must not be executed.
+**Remaining, and the prioritized list is empty — the user sets the order:**
+
+| Item | State | Note |
+|---|---|---|
+| **CG-51** | 📋 queued · ⏸ merge gate | derive `KEY_FILE` from `PROJECT_ID` (**user decision 2026-07-30**) — changes emitted script behaviour |
+| **CG-35** | 📋 queued · ⏸ merge gate | two IaC leftovers CG-19 was forbidden to touch |
+| **CG-50** | 📋 queued | `pubsub.py`'s module docstring states CG-10's defect as current |
+| **CG-52** | 📋 queued | `integration-guide.md`'s *"retries span ~10s"* |
+
+**Everything else has shipped.** CG-1 through CG-13, CG-19 through CG-34, CG-36,
+CG-37 and CG-42 — 27 items on 2026-07-29/30, suite 37 → **202**.
+
+**Three rows are closed rather than shipped**, each with its premise recorded so
+"obsolete" is never a bare status word: **CG-14** (the migration removed the
+failure mode its detector was designed for), and **CG-17 / CG-18** (user decision
+2026-07-30 — both probe the add-ons runtime, which is deleted, so neither can be
+run as written; see their rows for what was worth keeping).
+
+⚠ **Both remaining gated rows are IaC.** CG-51 and CG-35 touch the same two setup
+scripts and CG-35 additionally needs **explicit hard-rule-#3 sign-off to reword a
+⚠ flag**, so it is not Builder-claimable without the user. If both are dispatched
+at once they will collide — CG-51 changes emitted behaviour in the files CG-35
+comments.
 
 > **CG-34 carried a merge gate its row did not declare.** The Coordinator imposed
 > one at dispatch, on the ground that it is the **secret-handling path** — the same
@@ -556,6 +565,416 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 > appeared to contain nothing but a closed row, CG-25 and CG-26, which
 > contradicted the order line at the top of this section. Content unchanged; only
 > the closing tag moved.
+
+---
+
+
+### CG-35 · Two IaC leftovers CG-19 was forbidden to touch  📋 queued · ⏸ merge gate
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-19** — both found while editing these files, both **measured** |
+| **Depends on** | nothing (CG-19 shipped the sweep that surfaced them) |
+| **Touches** | `iac/gcloud-setup.sh`, `iac/gcloud-setup.ps1` |
+| **Merge gate** | **touches the IaC path — Builder must pause and report before merging** |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
+
+Two defects in the files CG-19 owned. Neither was fixed there, and the reason is
+the same in both cases: CG-19's scope was **comments and illustrative defaults
+only**, and each of these needs something CG-19 was explicitly barred from doing.
+
+**(a) The `⚠ LIVE-UNVERIFIED` comment now contradicts `CLAUDE.md`.**
+`iac/gcloud-setup.sh:40` and `iac/gcloud-setup.ps1:93` say the Chat events
+publisher *"stays ⚠ LIVE-UNVERIFIED until the principal is confirmed on the Chat
+API Connection settings page"*. `CLAUDE.md` records that question as **CLOSED BY
+CIRCUMSTANCE, not answered** — both principals were bound in `chat-gateway-prod`,
+that project is deleted, so it *"is not a flag, not a gap to close, and not a
+task"*. The IaC therefore still presents as open work something the project has
+closed, under the one flag word hard rule #3 caps.
+
+**Why CG-19 left it:** resolving it means clearing or rewording a `⚠` flag, and
+CG-19 was told to clear, add and reword none. **This is a hard-rule-#3 change and
+needs the user's explicit sign-off** — which is exactly why it is a row and not a
+Builder fix.
+
+**Do not "fix" it by deleting the comment.** `CLAUDE.md` notes the IaC binds
+**both** principals *"and its comments explain why, so a fresh-project operator is
+not stranded by this being closed"* — the explanation is load-bearing. What is
+stale is the *pending-work framing*, not the content.
+
+**(b) The `.sh` and `.ps1` diverge on an absolute `KEY_FILE`.** The two scripts
+are meant to be siblings — the `.ps1`'s own header says *"same steps, same order,
+same output"*. They are not, for one input:
+
+| | Emits, for an absolute key path |
+|---|---|
+| `.ps1` | `GOOGLE_APPLICATION_CREDENTIALS=/srv/chat-gateway/<basename>` — it does `Split-Path -Leaf` |
+| `.sh` | `GOOGLE_APPLICATION_CREDENTIALS=/srv/chat-gateway/C:/…/key.json` — it concatenates `${KEY_FILE}` raw |
+
+**Measured, not derived from reading.** Both scripts were run end to end during
+CG-19's UAT against a stubbed `gcloud` with an absolute `KEY_FILE`; the mangled
+line is copied from the `.sh`'s real output.
+
+Low severity on its own — the `.env` block is a convenience the operator edits
+anyway — but it is a **parity** defect in a file pair whose entire contract is
+parity, and CG-19's new comments actively encourage passing a per-project
+`KEY_FILE`, which makes the input more likely, not less.
+
+**Why CG-19 left it:** fixing it changes emitted output, i.e. behaviour, which
+CG-19 forbade.
+
+**Not prescribed here:** whether the `.sh` should adopt `basename` or the `.ps1`
+should stop stripping. The `.ps1`'s behaviour looks more useful, but the `.env`
+block is a **host** path, and the two scripts may reasonably differ on whether a
+caller-supplied absolute path means *"the key is here now"* or *"the key will be
+there on the host"*. Filed with the observation, not the answer.
+
+---
+
+
+### CG-50 · `pubsub.py`'s module docstring states CG-10's defect as current, and CG-10 shipped  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-37's** sweep — **measured against the real fixture, not read** |
+| **Depends on** | nothing |
+| **Touches** | `src/chat_gateway/adapters/pubsub.py` — module docstring, comment only |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
+
+**A third comment of exactly the family CG-37 was filed for, which CG-21's
+inventory missed.** CG-37 corrected the two comments that named the wrong
+*runtime*; this one names a *defect* that has since been fixed.
+`adapters/pubsub.py:27-29` says:
+
+> The interaction capture found a DEFECT rather than confirming the mapping: the
+> real event yields `action.id == ""` (see `ADDON_ACTION_KEY` below and queue
+> item CG-10).
+
+**Both halves are stale.** CG-10 shipped, and what it shipped is precisely this:
+`CLAUDE.md` records *"Unresolvable identity is `None`, never `""`"*. Measured
+here by feeding that exact fixture — `tests/fixtures/addon-buttonclicked-event.json`
+— through the real `normalize_event`: `action.id` is **`None`**, `id_source` is
+`None`. So the docstring states a value the code no longer produces, and points
+a reader at a queue item that is closed.
+
+**Why CG-37 did not fix it.** Two reasons, and both are why this is a row rather
+than a Builder fix. It is outside CG-37's declared scope — that row named exactly
+two comments and the dispatch was explicit that a small accurate PR was the
+wanted outcome. And it sits **between two ⚠ SHAPE-VERIFIED blocks** in the
+module docstring, which is hard-rule-#3 territory: the sentence immediately above
+it scopes the 2026-07-29 add-ons capture and the one below opens the 2026-07-30
+classic block.
+
+**Do not fix it by deleting the sentence.** What it records is still true and
+still load-bearing — the add-ons capture *did* find a defect rather than confirm
+the mapping, and *"Nothing about jobhunt R3/R4 is verified by it"* (the next line)
+is unaffected either way. What is stale is the **value** and the **open-work
+pointer**, not the finding. **No flag may be cleared, added or reworded**;
+`jobhunt` R3/R4 remain unverified regardless.
+
+---
+
+### CG-51 · Derive `KEY_FILE` from `PROJECT_ID` in both setup scripts  📋 queued · ⏸ merge gate
+
+| | |
+|---|---|
+| **Decision** | **user, 2026-07-30** — chosen over "leave it" and over hardcoding `chat-gateway-sa-gw.json` |
+| **Origin** | CG-19 deliberately did NOT do this and asked; this row is the answer |
+| **Touches** | `iac/gcloud-setup.sh`, `iac/gcloud-setup.ps1` — **emitted behaviour, not comments** |
+| **Merge gate** | **touches the IaC / secret-handling path — pause and report before merging** |
+
+CG-19's scope line told it to update the illustrative key filename. It **declined,
+with evidence**, and the reasoning is why this is its own gated row rather than a
+one-line diff: `iac/chat-gateway-sa.json` belongs to the **deleted**
+`chat-gateway-prod` (confirmed by reading `project_id` out of the file), and the
+scripts' existence check is **filename-only** — so the trap is real. But the live
+key is `chat-gateway-sa-gw.json`, so *any* fixed new default stops matching on a
+host holding the old one and **mints a second service-account key**. Key sprawl
+is a worse outcome than a documented trap, which is why CG-19 documented it and
+stopped.
+
+**The decision: derive the filename from `PROJECT_ID`** so it can never name a
+project that does not exist. That is the only option of the three that fixes the
+trap without hardcoding a project-specific name into a parameterized script.
+
+Three things this must get right:
+
+1. **It changes emitted script behaviour.** CG-19 proved its own change inert by
+   showing both scripts produce byte-identical output against a stubbed `gcloud`.
+   **That proof cannot be reused here** — output *will* differ, deliberately. Show
+   the new output and say what changed.
+2. **Do not silently mint a key.** If the derived filename is absent but a
+   plausible predecessor is present, the script should **say so** rather than
+   quietly create a second credential. Recovery from a leaked webhook URL is
+   delete-and-recreate by hand (§8a); extra SA keys are the same class of mess.
+3. **`.sh` and `.ps1` must stay at parity.** CG-35 already records that they
+   diverge on an absolute `KEY_FILE`; do not widen that gap. If the two rows
+   collide, say so rather than half-fixing both.
+
+Terraform is **not** in scope and cannot be validated here anyway — it is not
+installed on this box and that path has never been applied.
+
+---
+
+### CG-52 · `integration-guide.md`'s *"retries span ~10s"* is the same defect one audience up  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-42's** sweep — reported, not fixed, because CG-36 owned the file at the time |
+| **Depends on** | nothing (CG-36 and CG-42 both shipped; the file is free) |
+| **Touches** | `docs/integration-guide.md` — the interaction rules-of-the-road paragraph, **not** the `/v1/notify` one CG-36 shipped |
+
+The guide tells a producer *"if your callback is down, retries span ~10s and then
+the gateway posts your unreachable message"*. **`~10s` is the contract, not what a
+user waits** — exactly the confusion CG-42 corrected in the two jobhunt docs, one
+audience up and in a different paragraph.
+
+Measured on a real `SubscriberLoop` (CG-42, first-hand, four setups):
+
+| How the callback fails | attempts land at |
+|---|---|
+| `process_due()` called freely | 0s / 3s / 10s — the contract |
+| refuses fast (`ConnectError`, closed port) | 0.0 / 7.1 / 14.1, notice at **16.2s** |
+| hangs to the production 10s client timeout | 0.0 / 15.0 / 30.1, notice at **40.1s** |
+
+A producer sizing a timeout against `~10s` is wrong by **4×** in the case that
+actually matters — exhaustion is the only route to the in-thread notice, and an
+unreachable host times out rather than refusing.
+
+**Link, do not restate.** `docs/consumers/jobhunt-handoff.md` §7 owns the measured
+table and the rule that predicts it. This is a general-audience summary; qualify
+the claim in a clause and point there, exactly as CG-36 did for the dedupe
+counter. Reproducing the table here creates a second thing to drift.
+
+⚠ **Do not record a line number.** It was 109, then 114 under CG-36's merge. Find
+the paragraph by its text.
+
+---
+
+## Experiments
+
+CG-15 and CG-16 **ran on 2026-07-29** and are recorded below with their results.
+CG-17 and CG-18 remain deferred — and E1 lowered their value, since both probe
+limitations of the add-ons runtime this project **left on 2026-07-29**.
+
+> **Their premise weakened further than "lower value", and CG-21 is recording
+> that rather than acting on it (2026-07-30).** Both rows were written while
+> add-ons was production. It is not: every project that ran it is deleted, so
+> neither experiment is *runnable* even if wanted. **Status unchanged — both stay
+> `⏸ deferred` and must not be executed.** Whether a deferred item whose runtime
+> no longer exists should be closed like CG-14 or kept filed for its
+> classic-shaped residue is a **Planner/user call**, not Builder's; the tense
+> below is corrected, the decision is not.
+
+### CG-15 · E1 — does a classic Pub/Sub Chat app receive `CARD_CLICKED`?  ✅ RAN 2026-07-29 · **PASSED**
+
+Executed by the user in a throwaway project. **Yes** — natively, with
+`action.id` populated and `onChangeAction` firing. Results in "What E1 and E2
+settled" above; ADR §11 trigger 1 has fired. Nothing further to build here; the
+consequences are tracked as CG-14 (blocked), CG-20 and CG-21.
+
+### CG-16 · E2 — is the add-on toggle reversible?  ✅ RAN 2026-07-29 · **NO**
+
+Answered definitively: the add-on toggle is **create-time only**. Add-on →
+classic cannot be toggled on an existing app, so a migration needs a new Chat
+app and therefore a new GCP project. ADR D7's parallel-project path was the only
+available one, not merely the prudent one.
+
+### CG-17 · E3 — do slash commands reach the topic?  ✖ CLOSED AS OBSOLETE · user decision 2026-07-30
+
+**The premise is unrunnable, and that is why this closes rather than staying
+deferred.** E3 asked whether slash commands reach the topic **under the add-ons
+bridge**. Production cut over to a classic Chat app on 2026-07-29 and
+`chat-gateway-prod` was deleted on 2026-07-30, so there is no add-ons deployment
+left to run the experiment on. Running it would require standing up a third
+project to measure a runtime this repo no longer targets.
+
+**What was genuinely useful in it is preserved, because it is not the
+experiment.** Slash commands land differently on classic — a MESSAGE carrying
+`message.slashCommand`, versus add-ons' `appCommandPayload`. So if slash commands
+are ever wanted, the normalizer needs **the classic shape**, and that is a new
+item with its own justification, not this one resumed. Do not reopen this row to
+get at that fact; it is written here.
+
+<details>
+<summary>Original deferred text, kept for the record</summary>
+
+Was the bridge's escape hatch. Less interesting now: the escape hatch is the
+classic migration, which is proven and **done** (2026-07-29). Keep filed — slash commands
+land differently on classic (a MESSAGE carrying `message.slashCommand`, versus
+add-ons' `appCommandPayload`) so if they are ever wanted, the normalizer needs
+the classic shape, not this one.
+
+</details>
+
+### CG-18 · E4 — does `onChangeAction` work with the topic path as its function?  ✖ CLOSED AS OBSOLETE · user decision 2026-07-30
+
+**Closed for the same reason as CG-17, and its own text already said so.** Its
+stated condition was *"only worth running if the add-ons deployment has to be
+lived with longer than expected"* — that condition **can no longer be met**. The
+add-ons deployment is gone, not merely superseded.
+
+**And the question it existed to answer has been answered by better evidence than
+the experiment would have produced.** E4 asked whether select-to-act was
+recoverable *under the bridge*. On 2026-07-30 a real classic capture showed a
+selection widget's `onChangeAction` firing on a card with **no button at all** —
+`action.id='onVerdictChanged'`, populated natively, value harvested into params.
+Landed as `tests/fixtures/classic-cardclicked-onchange-event.json` and pinned by
+`test_normalize_real_classic_onchange_with_no_button_at_all`. So the two-tap cost
+E4 was scoped to price disappeared at migration, and the prose that said
+otherwise was corrected by CG-11+CG-20.
+
+An experiment whose question is settled and whose runtime is deleted is not
+deferred work. It is history.
+
+<details>
+<summary>Original deferred text, kept for the record</summary>
+
+Asked whether select-to-act is recoverable *under the bridge*. E1 answered the
+question that actually mattered: `onChangeAction` **fires natively on classic**,
+so the two-tap cost disappeared at migration regardless. Its remaining condition
+— *"only worth running if the add-ons deployment has to be lived with longer
+than expected"* — **can no longer be met**: the add-ons deployment is gone, not
+merely superseded.
+
+</details>
+
+---
+
+
+## Blocked
+
+_(nothing — **CG-9 moved out on 2026-07-30** and has since shipped with CG-22.
+Its scope changed as well as its status: the capture that arrived is **classic**,
+not add-ons. Read the entry under **Recently shipped** rather than assuming the
+old one.)_
+
+---
+
+## In flight
+
+_(nothing — **CG-21 shipped** on 2026-07-30 as reconciliation only, and
+**CG-32**, **CG-19**, **CG-23** and **CG-30** before it, with **CG-11 + CG-20**
+as one PR before those.
+
+**Four Builders ran concurrently at the peak**, one git worktree each, per the
+CG-25 concurrency incident: one worktree per Builder, never a shared working
+directory. Two costs of that parallelism are recorded rather than glossed:
+queue-row **number collisions** — CG-32 through CG-37 were each claimed as "the
+next free number" by a different Builder, and every collision surfaced only at
+rebase — and repeated `docs/BUILDER_QUEUE.md` conflicts, resolved by keeping
+every item's content and re-applying only the resolver's own row.)_
+
+---
+
+## Recently shipped
+
+### CG-37 · Two `src/` comments still name **add-ons** as the runtime we are deployed on  ✅ shipped 2026-07-30 · [PR #40](https://github.com/mmackelprang/chat-gateway/pull/40)
+
+> **Renumbered from CG-35 on merge, 2026-07-30.** CG-19 had already taken CG-35
+> and CG-32 took CG-36 while all three ran in parallel. Queue numbers have no
+> allocator; each Builder takes "the next free one" and collisions surface only
+> at rebase.
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-21's** inventory — found, deliberately not fixed |
+| **Depends on** | nothing |
+| **Touches** | `src/chat_gateway/adapters/pubsub.py`, `src/chat_gateway/service.py` — comments only, no behaviour |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
+
+**Shipped as two comments and nothing else.** Both were **re-scoped, not
+deleted** — the add-ons statements were *true of add-ons*, so the correction
+names the runtime each sentence is about and then says which one we run. The
+shipped text, verbatim:
+
+`adapters/pubsub.py` — the last sentence of the topic-as-function paragraph now
+ends *"…or action.id is permanently dead THERE"*, followed by:
+
+> THERE means ADD-ONS — not "the runtime we are actually deployed on", which is
+> how this sentence read until CG-37. Production cut over to a CLASSIC Chat app
+> on 2026-07-29 and classic supplies action.id natively, so everything above
+> this line is add-ons history, not a description of what we run. The key stays
+> regardless: `_resolve_action_id` checks it FIRST and unconditionally, so a
+> card that carries it still resolves through it on either runtime. Not needed
+> is not unused, and that sameness is D3's portability payoff (CLAUDE.md).
+
+`service.py` — `ROUTING_TARGET_ENV`:
+
+> …because the two were only ever coincidentally related, and only under ADD-ONS
+> at that: topic-as-function made the routing target look like it fell out of
+> the subscription. On CLASSIC — production since 2026-07-29 — it is any
+> constant, and under an HTTP-endpoint deployment it splits by runtime too: the
+> endpoint URL under add-ons, a function name under classic (ADR-0001 D3's
+> portability table).
+
+**"Comments only" was PROVEN, not asserted.** `ast.parse` output of both files
+is byte-identical to `main`'s — `#` comments are not AST nodes, and a docstring
+edit *would* have shown up, so this is a real check and not a tautology. Suite
+**202 → 202**, unmoved.
+
+**UAT for a comment-accuracy PR is the accuracy of the sentences**, so each
+clause was driven through the real code rather than reasoned about — 6/6:
+
+| Claim in the new text | Measured |
+|---|---|
+| classic supplies `action.id` natively | real classic capture → `action.id='approve'`, `id_source='google'` |
+| under add-ons the native slot was dead — the paragraph's subject | real add-ons capture → `action.id=None`, `id_source=None` |
+| `__cg_action__` is checked first and still WINS | beat a live native `'approve'` → `('verdict', 'cg_param')` |
+| the same card behaves identically on either runtime (D3) | both runtimes → `'verdict'` |
+| the key is POPPED, so no plumbing reaches a tenant | `params` after resolution: `{'jobId': …}` |
+| on classic the routing target is unrelated to the subscription | env constant `'handleInteraction'` vs a wholly different resource path |
+
+**Pre-merge review's one MEDIUM was PRE-EXISTING text inside the comment being
+corrected, and it was fixed rather than deferred** — recorded because it is the
+one place this PR went past its two stale sentences. `service.py`'s
+HTTP-endpoint clause read *"under an HTTP-endpoint deployment it is a URL"*,
+flat, where ADR-0001 D3's option-C row it cites says *"the endpoint URL
+(add-ons) or a function name (classic)"*. Untouched by the first draft — the
+diff's removed lines stop at *"and under an"*. It was fixed anyway because the
+correction made every **other** clause in that comment carefully runtime-split,
+which left this one as the only flat claim in a sentence about exactly that
+distinction. One clause; still AST-identical; suite still 202.
+
+**Flags: none cleared, added or reworded.** Neither edited region contains a ⚠
+flag — every `⚠` in `pubsub.py` lives in the module docstring, the
+`PubSubPuller`/`pull`/`acknowledge` docstrings, `ADDON_ACTION_KEY`'s comment and
+`_normalize_addon`'s docstring, all untouched. `CLAUDE.md`'s verification ledger
+is untouched and **not restated** anywhere in this PR.
+
+**`CLAUDE.md`'s test-count line was checked and needed nothing** — it already
+read 202, which is what the suite measures. It had been stale all day (136, 140,
+190 against a moving suite) because parallel Builders kept moving it; this is
+the first cycle with only one Builder running, and it was already correct.
+
+**CG-50 filed** from this row's sweep — `pubsub.py`'s module docstring states
+CG-10's defect as current (`action.id == ""`) and points at CG-10 as open work.
+CG-10 shipped, and the same fixture now yields `None`. A third comment of this
+exact family that CG-21's inventory missed; left alone here because it sits
+between two ⚠ SHAPE-VERIFIED blocks and this row was scoped to two comments.
+
+<details><summary>The row as filed</summary>
+
+CG-21 reconciled every *document* that still described the add-ons → classic
+migration as pending. Two **source comments** say the same stale thing and were
+left alone, because CG-21 was a docs-only row and `adapters/` is hard-rule-#3
+territory where the flag discipline lives.
+
+| Location | Text | Why it is wrong |
+|---|---|---|
+| `src/chat_gateway/adapters/pubsub.py:104-105` | *"…or `action.id` is permanently dead under the **runtime we are actually deployed on**."* | The runtime we are actually deployed on is **classic**, where `action.id` arrives natively. The sentence is true of **add-ons**, which production left on 2026-07-29. |
+| `src/chat_gateway/service.py:42-44` | *"the two are only coincidentally related **today** — **under a classic deployment** it is any constant"* | Mechanically correct, but it positions classic as the hypothetical alternative when classic **is** production. Milder than the first. |
+
+**Neither is a defect in behaviour** — the guard and the env indirection both do
+the right thing, and `TOPIC_PATH_RE` (`pubsub.py:136`) is explicitly written for
+the classic runtime already. This is comment tense only.
+
+**Fixing them must not disturb the surrounding reasoning.** The `pubsub.py` block
+is the `__cg_action__` rule-#1 justification, which is load-bearing prose; the
+correction is that add-ons is where `action.id` was dead, not "the runtime we are
+deployed on". **No verification flag is involved and none may be touched.**
+
+</details>
 
 ---
 
@@ -795,295 +1214,6 @@ while a second Builder had docs open. CG-31's docstring states the caveat and
 links here; the fix is to add the same qualification to §7's worked example.
 
 ---
-
-### CG-35 · Two IaC leftovers CG-19 was forbidden to touch  📋 queued · ⏸ merge gate
-
-| | |
-|---|---|
-| **Origin** | filed by Builder 2026-07-30 from **CG-19** — both found while editing these files, both **measured** |
-| **Depends on** | nothing (CG-19 shipped the sweep that surfaced them) |
-| **Touches** | `iac/gcloud-setup.sh`, `iac/gcloud-setup.ps1` |
-| **Merge gate** | **touches the IaC path — Builder must pause and report before merging** |
-| **Priority** | **appended last, unprioritized.** The user sets order. |
-
-Two defects in the files CG-19 owned. Neither was fixed there, and the reason is
-the same in both cases: CG-19's scope was **comments and illustrative defaults
-only**, and each of these needs something CG-19 was explicitly barred from doing.
-
-**(a) The `⚠ LIVE-UNVERIFIED` comment now contradicts `CLAUDE.md`.**
-`iac/gcloud-setup.sh:40` and `iac/gcloud-setup.ps1:93` say the Chat events
-publisher *"stays ⚠ LIVE-UNVERIFIED until the principal is confirmed on the Chat
-API Connection settings page"*. `CLAUDE.md` records that question as **CLOSED BY
-CIRCUMSTANCE, not answered** — both principals were bound in `chat-gateway-prod`,
-that project is deleted, so it *"is not a flag, not a gap to close, and not a
-task"*. The IaC therefore still presents as open work something the project has
-closed, under the one flag word hard rule #3 caps.
-
-**Why CG-19 left it:** resolving it means clearing or rewording a `⚠` flag, and
-CG-19 was told to clear, add and reword none. **This is a hard-rule-#3 change and
-needs the user's explicit sign-off** — which is exactly why it is a row and not a
-Builder fix.
-
-**Do not "fix" it by deleting the comment.** `CLAUDE.md` notes the IaC binds
-**both** principals *"and its comments explain why, so a fresh-project operator is
-not stranded by this being closed"* — the explanation is load-bearing. What is
-stale is the *pending-work framing*, not the content.
-
-**(b) The `.sh` and `.ps1` diverge on an absolute `KEY_FILE`.** The two scripts
-are meant to be siblings — the `.ps1`'s own header says *"same steps, same order,
-same output"*. They are not, for one input:
-
-| | Emits, for an absolute key path |
-|---|---|
-| `.ps1` | `GOOGLE_APPLICATION_CREDENTIALS=/srv/chat-gateway/<basename>` — it does `Split-Path -Leaf` |
-| `.sh` | `GOOGLE_APPLICATION_CREDENTIALS=/srv/chat-gateway/C:/…/key.json` — it concatenates `${KEY_FILE}` raw |
-
-**Measured, not derived from reading.** Both scripts were run end to end during
-CG-19's UAT against a stubbed `gcloud` with an absolute `KEY_FILE`; the mangled
-line is copied from the `.sh`'s real output.
-
-Low severity on its own — the `.env` block is a convenience the operator edits
-anyway — but it is a **parity** defect in a file pair whose entire contract is
-parity, and CG-19's new comments actively encourage passing a per-project
-`KEY_FILE`, which makes the input more likely, not less.
-
-**Why CG-19 left it:** fixing it changes emitted output, i.e. behaviour, which
-CG-19 forbade.
-
-**Not prescribed here:** whether the `.sh` should adopt `basename` or the `.ps1`
-should stop stripping. The `.ps1`'s behaviour looks more useful, but the `.env`
-block is a **host** path, and the two scripts may reasonably differ on whether a
-caller-supplied absolute path means *"the key is here now"* or *"the key will be
-there on the host"*. Filed with the observation, not the answer.
-
----
-
-### CG-37 · Two `src/` comments still name **add-ons** as the runtime we are deployed on  ✅ shipped 2026-07-30 · [PR #40](https://github.com/mmackelprang/chat-gateway/pull/40)
-
-> **Renumbered from CG-35 on merge, 2026-07-30.** CG-19 had already taken CG-35
-> and CG-32 took CG-36 while all three ran in parallel. Queue numbers have no
-> allocator; each Builder takes "the next free one" and collisions surface only
-> at rebase.
-
-| | |
-|---|---|
-| **Origin** | filed by Builder 2026-07-30 from **CG-21's** inventory — found, deliberately not fixed |
-| **Depends on** | nothing |
-| **Touches** | `src/chat_gateway/adapters/pubsub.py`, `src/chat_gateway/service.py` — comments only, no behaviour |
-| **Priority** | **appended last, unprioritized.** The user sets order. |
-
-**Shipped as two comments and nothing else.** Both were **re-scoped, not
-deleted** — the add-ons statements were *true of add-ons*, so the correction
-names the runtime each sentence is about and then says which one we run. The
-shipped text, verbatim:
-
-`adapters/pubsub.py` — the last sentence of the topic-as-function paragraph now
-ends *"…or action.id is permanently dead THERE"*, followed by:
-
-> THERE means ADD-ONS — not "the runtime we are actually deployed on", which is
-> how this sentence read until CG-37. Production cut over to a CLASSIC Chat app
-> on 2026-07-29 and classic supplies action.id natively, so everything above
-> this line is add-ons history, not a description of what we run. The key stays
-> regardless: `_resolve_action_id` checks it FIRST and unconditionally, so a
-> card that carries it still resolves through it on either runtime. Not needed
-> is not unused, and that sameness is D3's portability payoff (CLAUDE.md).
-
-`service.py` — `ROUTING_TARGET_ENV`:
-
-> …because the two were only ever coincidentally related, and only under ADD-ONS
-> at that: topic-as-function made the routing target look like it fell out of
-> the subscription. On CLASSIC — production since 2026-07-29 — it is any
-> constant, and under an HTTP-endpoint deployment it splits by runtime too: the
-> endpoint URL under add-ons, a function name under classic (ADR-0001 D3's
-> portability table).
-
-**"Comments only" was PROVEN, not asserted.** `ast.parse` output of both files
-is byte-identical to `main`'s — `#` comments are not AST nodes, and a docstring
-edit *would* have shown up, so this is a real check and not a tautology. Suite
-**202 → 202**, unmoved.
-
-**UAT for a comment-accuracy PR is the accuracy of the sentences**, so each
-clause was driven through the real code rather than reasoned about — 6/6:
-
-| Claim in the new text | Measured |
-|---|---|
-| classic supplies `action.id` natively | real classic capture → `action.id='approve'`, `id_source='google'` |
-| under add-ons the native slot was dead — the paragraph's subject | real add-ons capture → `action.id=None`, `id_source=None` |
-| `__cg_action__` is checked first and still WINS | beat a live native `'approve'` → `('verdict', 'cg_param')` |
-| the same card behaves identically on either runtime (D3) | both runtimes → `'verdict'` |
-| the key is POPPED, so no plumbing reaches a tenant | `params` after resolution: `{'jobId': …}` |
-| on classic the routing target is unrelated to the subscription | env constant `'handleInteraction'` vs a wholly different resource path |
-
-**Pre-merge review's one MEDIUM was PRE-EXISTING text inside the comment being
-corrected, and it was fixed rather than deferred** — recorded because it is the
-one place this PR went past its two stale sentences. `service.py`'s
-HTTP-endpoint clause read *"under an HTTP-endpoint deployment it is a URL"*,
-flat, where ADR-0001 D3's option-C row it cites says *"the endpoint URL
-(add-ons) or a function name (classic)"*. Untouched by the first draft — the
-diff's removed lines stop at *"and under an"*. It was fixed anyway because the
-correction made every **other** clause in that comment carefully runtime-split,
-which left this one as the only flat claim in a sentence about exactly that
-distinction. One clause; still AST-identical; suite still 202.
-
-**Flags: none cleared, added or reworded.** Neither edited region contains a ⚠
-flag — every `⚠` in `pubsub.py` lives in the module docstring, the
-`PubSubPuller`/`pull`/`acknowledge` docstrings, `ADDON_ACTION_KEY`'s comment and
-`_normalize_addon`'s docstring, all untouched. `CLAUDE.md`'s verification ledger
-is untouched and **not restated** anywhere in this PR.
-
-**`CLAUDE.md`'s test-count line was checked and needed nothing** — it already
-read 202, which is what the suite measures. It had been stale all day (136, 140,
-190 against a moving suite) because parallel Builders kept moving it; this is
-the first cycle with only one Builder running, and it was already correct.
-
-**CG-50 filed** from this row's sweep — `pubsub.py`'s module docstring states
-CG-10's defect as current (`action.id == ""`) and points at CG-10 as open work.
-CG-10 shipped, and the same fixture now yields `None`. A third comment of this
-exact family that CG-21's inventory missed; left alone here because it sits
-between two ⚠ SHAPE-VERIFIED blocks and this row was scoped to two comments.
-
-<details><summary>The row as filed</summary>
-
-CG-21 reconciled every *document* that still described the add-ons → classic
-migration as pending. Two **source comments** say the same stale thing and were
-left alone, because CG-21 was a docs-only row and `adapters/` is hard-rule-#3
-territory where the flag discipline lives.
-
-| Location | Text | Why it is wrong |
-|---|---|---|
-| `src/chat_gateway/adapters/pubsub.py:104-105` | *"…or `action.id` is permanently dead under the **runtime we are actually deployed on**."* | The runtime we are actually deployed on is **classic**, where `action.id` arrives natively. The sentence is true of **add-ons**, which production left on 2026-07-29. |
-| `src/chat_gateway/service.py:42-44` | *"the two are only coincidentally related **today** — **under a classic deployment** it is any constant"* | Mechanically correct, but it positions classic as the hypothetical alternative when classic **is** production. Milder than the first. |
-
-**Neither is a defect in behaviour** — the guard and the env indirection both do
-the right thing, and `TOPIC_PATH_RE` (`pubsub.py:136`) is explicitly written for
-the classic runtime already. This is comment tense only.
-
-**Fixing them must not disturb the surrounding reasoning.** The `pubsub.py` block
-is the `__cg_action__` rule-#1 justification, which is load-bearing prose; the
-correction is that add-ons is where `action.id` was dead, not "the runtime we are
-deployed on". **No verification flag is involved and none may be touched.**
-
-</details>
-
----
-
-### CG-50 · `pubsub.py`'s module docstring states CG-10's defect as current, and CG-10 shipped  📋 queued
-
-| | |
-|---|---|
-| **Origin** | filed by Builder 2026-07-30 from **CG-37's** sweep — **measured against the real fixture, not read** |
-| **Depends on** | nothing |
-| **Touches** | `src/chat_gateway/adapters/pubsub.py` — module docstring, comment only |
-| **Priority** | **appended last, unprioritized.** The user sets order. |
-
-**A third comment of exactly the family CG-37 was filed for, which CG-21's
-inventory missed.** CG-37 corrected the two comments that named the wrong
-*runtime*; this one names a *defect* that has since been fixed.
-`adapters/pubsub.py:27-29` says:
-
-> The interaction capture found a DEFECT rather than confirming the mapping: the
-> real event yields `action.id == ""` (see `ADDON_ACTION_KEY` below and queue
-> item CG-10).
-
-**Both halves are stale.** CG-10 shipped, and what it shipped is precisely this:
-`CLAUDE.md` records *"Unresolvable identity is `None`, never `""`"*. Measured
-here by feeding that exact fixture — `tests/fixtures/addon-buttonclicked-event.json`
-— through the real `normalize_event`: `action.id` is **`None`**, `id_source` is
-`None`. So the docstring states a value the code no longer produces, and points
-a reader at a queue item that is closed.
-
-**Why CG-37 did not fix it.** Two reasons, and both are why this is a row rather
-than a Builder fix. It is outside CG-37's declared scope — that row named exactly
-two comments and the dispatch was explicit that a small accurate PR was the
-wanted outcome. And it sits **between two ⚠ SHAPE-VERIFIED blocks** in the
-module docstring, which is hard-rule-#3 territory: the sentence immediately above
-it scopes the 2026-07-29 add-ons capture and the one below opens the 2026-07-30
-classic block.
-
-**Do not fix it by deleting the sentence.** What it records is still true and
-still load-bearing — the add-ons capture *did* find a defect rather than confirm
-the mapping, and *"Nothing about jobhunt R3/R4 is verified by it"* (the next line)
-is unaffected either way. What is stale is the **value** and the **open-work
-pointer**, not the finding. **No flag may be cleared, added or reworded**;
-`jobhunt` R3/R4 remain unverified regardless.
-
----
-
-## Experiments
-
-CG-15 and CG-16 **ran on 2026-07-29** and are recorded below with their results.
-CG-17 and CG-18 remain deferred — and E1 lowered their value, since both probe
-limitations of the add-ons runtime this project **left on 2026-07-29**.
-
-> **Their premise weakened further than "lower value", and CG-21 is recording
-> that rather than acting on it (2026-07-30).** Both rows were written while
-> add-ons was production. It is not: every project that ran it is deleted, so
-> neither experiment is *runnable* even if wanted. **Status unchanged — both stay
-> `⏸ deferred` and must not be executed.** Whether a deferred item whose runtime
-> no longer exists should be closed like CG-14 or kept filed for its
-> classic-shaped residue is a **Planner/user call**, not Builder's; the tense
-> below is corrected, the decision is not.
-
-### CG-15 · E1 — does a classic Pub/Sub Chat app receive `CARD_CLICKED`?  ✅ RAN 2026-07-29 · **PASSED**
-
-Executed by the user in a throwaway project. **Yes** — natively, with
-`action.id` populated and `onChangeAction` firing. Results in "What E1 and E2
-settled" above; ADR §11 trigger 1 has fired. Nothing further to build here; the
-consequences are tracked as CG-14 (blocked), CG-20 and CG-21.
-
-### CG-16 · E2 — is the add-on toggle reversible?  ✅ RAN 2026-07-29 · **NO**
-
-Answered definitively: the add-on toggle is **create-time only**. Add-on →
-classic cannot be toggled on an existing app, so a migration needs a new Chat
-app and therefore a new GCP project. ADR D7's parallel-project path was the only
-available one, not merely the prudent one.
-
-### CG-17 · E3 — do slash commands reach the topic?  ⏸ deferred · lower value after E1
-
-Was the bridge's escape hatch. Less interesting now: the escape hatch is the
-classic migration, which is proven and **done** (2026-07-29). Keep filed — slash commands
-land differently on classic (a MESSAGE carrying `message.slashCommand`, versus
-add-ons' `appCommandPayload`) so if they are ever wanted, the normalizer needs
-the classic shape, not this one.
-
-### CG-18 · E4 — does `onChangeAction` work with the topic path as its function?  ⏸ deferred · largely answered sideways
-
-Asked whether select-to-act is recoverable *under the bridge*. E1 answered the
-question that actually mattered: `onChangeAction` **fires natively on classic**,
-so the two-tap cost disappeared at migration regardless. Its remaining condition
-— *"only worth running if the add-ons deployment has to be lived with longer
-than expected"* — **can no longer be met**: the add-ons deployment is gone, not
-merely superseded.
-
----
-
-
-## Blocked
-
-_(nothing — **CG-9 moved out on 2026-07-30** and has since shipped with CG-22.
-Its scope changed as well as its status: the capture that arrived is **classic**,
-not add-ons. Read the entry under **Recently shipped** rather than assuming the
-old one.)_
-
----
-
-## In flight
-
-_(nothing — **CG-21 shipped** on 2026-07-30 as reconciliation only, and
-**CG-32**, **CG-19**, **CG-23** and **CG-30** before it, with **CG-11 + CG-20**
-as one PR before those.
-
-**Four Builders ran concurrently at the peak**, one git worktree each, per the
-CG-25 concurrency incident: one worktree per Builder, never a shared working
-directory. Two costs of that parallelism are recorded rather than glossed:
-queue-row **number collisions** — CG-32 through CG-37 were each claimed as "the
-next free number" by a different Builder, and every collision surfaced only at
-rebase — and repeated `docs/BUILDER_QUEUE.md` conflicts, resolved by keeping
-every item's content and re-applying only the resolver's own row.)_
-
----
-
-## Recently shipped
 
 ### CG-26 · The fixture guard's remaining rules have never been proven to fire  ✅ shipped 2026-07-30 · [PR #38](https://github.com/mmackelprang/chat-gateway/pull/38)
 

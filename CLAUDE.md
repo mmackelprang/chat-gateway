@@ -72,8 +72,10 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   defaulting on anything it does not recognize. Unparseable events are audited
   under `_unrouted` as `UNPARSEABLE`, counted at `/healthz`, and still acked so
   they cannot wedge the subscription.
-- Core + all adapters + service + client built and tested offline (98
-  tests), including the aitrader contract surface: /v1/notify (severity
+- Core + all adapters + service + client built and tested offline (the count
+  lives in **one** place — the Layout section above; it was stale at `98` here
+  while that line read `202`, which is what a second copy of a moving number
+  always does), including the aitrader contract surface: /v1/notify (severity
   routing/rendering, dedupe windows, async dispatcher with retry backoff +
   per-source delivery log, titles-only logging) and /v1/heartbeat (dead-man
   monitor; tz-aware `weekdays` schedule rolls weekend due-dates to Monday;
