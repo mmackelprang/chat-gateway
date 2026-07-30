@@ -334,7 +334,7 @@ secret-handling path, which is exactly the class of change that pauses.
 
 ---
 
-### CG-19 · Correct the Marketplace-SDK comment in all three IaC paths  📋 queued · ⏸ merge gate
+### CG-19 · Correct the Marketplace-SDK comment in all three IaC paths  🔨 in flight · ⏸ merge gate
 
 | | |
 |---|---|
