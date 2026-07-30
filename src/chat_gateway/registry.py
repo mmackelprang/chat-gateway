@@ -41,6 +41,36 @@ class RegistryError(ValueError):
     pass
 
 
+def _require_id_str(kind: str, value) -> None:
+    """Registry keys must be clean strings, and say so as a config error.
+
+    Two failure modes, both invisible in a YAML diff and neither worth debugging
+    twice:
+
+    * **Not a string.** YAML coerces unquoted keys, so `1:` is an `int`, `true:`
+      a `bool`, `null:` a `None`, `1.5:` a `float`. Every id is compared as text
+      — against an API key's owner, against reserved prefixes, against an app's
+      identity allowlist — so a non-string id cannot be validated at all.
+    * **Surrounding whitespace.** `" aitrader"` is a different key from
+      `"aitrader"` and looks identical in review. It would silently fail to match
+      the id the consuming app sends, and a per-app allowlist that quietly
+      matches nothing is precisely the shape hard rule #4 exists to prevent.
+    """
+    if not isinstance(value, str):
+        raise RegistryError(
+            f"{kind} id {value!r} must be a string, not {type(value).__name__} — "
+            "YAML coerces unquoted keys (`1:`, `true:`, `null:`), so quote it. "
+            "Ids are matched as text everywhere, including against the reserved "
+            "prefix and each app's identity allowlist."
+        )
+    if value != value.strip():
+        raise RegistryError(
+            f"{kind} id {value!r} has leading or trailing whitespace. It is a "
+            "different key from the trimmed form and identical in review, so it "
+            "would silently fail to match the id the app actually sends."
+        )
+
+
 @dataclass
 class Identity:
     name: str
@@ -175,6 +205,10 @@ def load_registry(path: str | Path) -> Registry:
 
     identities: dict[str, Identity] = {}
     for name, spec in (data["identities"] or {}).items():
+        # Same coercion trap as app ids below. An identity name is cross-referenced
+        # from each app's `identities:` list, so a coerced or whitespace-padded name
+        # fails that lookup for a reason nobody can see in the file.
+        _require_id_str("identity", name)
         spec = spec or {}
         ident = Identity(
             name=name,
@@ -196,6 +230,13 @@ def load_registry(path: str | Path) -> Registry:
 
     apps: dict[str, App] = {}
     for app_id, spec in (data["apps"] or {}).items():
+        # Type-check BEFORE the prefix check, because YAML coerces unquoted keys:
+        # `1:`, `true:`, `null:` and `1.5:` arrive as int / bool / None / float,
+        # and calling .startswith on any of them raises AttributeError — which
+        # escapes load_registry as an unhandled traceback instead of the config
+        # error an operator can act on. Found by adversarially testing the prefix
+        # guard this function gained in CG-8; the guard introduced the crash.
+        _require_id_str("app", app_id)
         if app_id.startswith(RESERVED_APP_ID_PREFIX):
             raise RegistryError(
                 f"app id {app_id!r} is reserved: ids beginning with "

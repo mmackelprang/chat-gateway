@@ -227,3 +227,45 @@ def test_the_hole_CG8_closes_is_real_and_now_shut(tmp_path, monkeypatch):
         "    allow_inbound: true\n", encoding="utf-8")
     with pytest.raises(RegistryError):
         load_registry(p)
+
+
+def test_registry_ids_must_be_clean_strings(tmp_path):
+    """A REGRESSION GUARD, and the regression was CG-8's own.
+
+    CG-8 added `app_id.startswith(RESERVED_APP_ID_PREFIX)`. YAML coerces
+    unquoted mapping keys, so `1:` is an int, `true:` a bool, `null:` a None and
+    `1.5:` a float — and `.startswith` on any of those raises AttributeError,
+    which escapes load_registry as an unhandled traceback rather than the config
+    error an operator can act on. Adding a validation guard must not turn a
+    tolerable misconfiguration into a crash at startup.
+
+    Whitespace is checked in the same place for a related reason: `" aitrader"`
+    is a different dict key from `"aitrader"` and looks identical in review, so
+    it would silently fail to match the id the consuming app sends — a per-app
+    allowlist that quietly matches nothing (hard rule #4).
+    """
+    head = ("identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n")
+    coerced = ["  1:\n    key_env: KEY\n", "  true:\n    key_env: KEY\n",
+               "  null:\n    key_env: KEY\n", "  1.5:\n    key_env: KEY\n"]
+    for body in coerced:
+        p = tmp_path / "r.yaml"
+        p.write_text(head + "apps:\n" + body, encoding="utf-8")
+        with pytest.raises(RegistryError) as exc:      # NOT AttributeError
+            load_registry(p)
+        assert "must be a string" in str(exc.value)
+
+    for bad in (" _sneaky", "aitrader ", " pm"):
+        p = tmp_path / "r.yaml"
+        p.write_text(head + f'apps:\n  "{bad}":\n    key_env: KEY\n', encoding="utf-8")
+        with pytest.raises(RegistryError) as exc:
+            load_registry(p)
+        assert "whitespace" in str(exc.value)
+
+    # identities get the same treatment — they are cross-referenced by each
+    # app's `identities:` list, so a coerced name breaks that lookup invisibly.
+    p = tmp_path / "r.yaml"
+    p.write_text("identities:\n  1:\n    display: X\n    webhook_url_env: H\napps: {}\n",
+                 encoding="utf-8")
+    with pytest.raises(RegistryError) as exc:
+        load_registry(p)
+    assert "identity id" in str(exc.value) and "must be a string" in str(exc.value)

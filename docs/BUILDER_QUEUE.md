@@ -539,9 +539,28 @@ demonstrates it lands in that app's inbox as a pollable `InboundReply` with
 `GET /v1/inbox` would hand anyone holding that app's key, with no rule-#6 check
 having run. Then it shows the registry rejecting the same config.
 
+**The guard introduced a crash, and adversarial testing of it caught that before
+review did.** `app_id.startswith(...)` assumes a string, but **YAML coerces
+unquoted mapping keys** — `1:` is an `int`, `true:` a `bool`, `null:` a `None`,
+`1.5:` a `float`. All four raised `AttributeError`, which escapes
+`load_registry` as an unhandled traceback instead of the config error an operator
+can act on. Before CG-8 those configs loaded; after it they crashed the process at
+startup. **A validation guard must not convert a tolerable misconfiguration into a
+boot failure.**
+
+Fixed with `_require_id_str`, applied to **both** app ids and identity names
+(identities are cross-referenced from every app's `identities:` list, so a
+coerced name breaks that lookup for a reason invisible in the file). It also
+rejects **surrounding whitespace**: `" aitrader"` is a different dict key from
+`"aitrader"`, looks identical in review, and would silently fail to match the id
+the consuming app sends — a per-app allowlist that quietly matches nothing, which
+is the shape hard rule #4 exists to prevent. Whitespace is *not* a route to the
+`_unrouted` bucket (`" _unrouted"` is simply a different key), so this is
+correctness rather than a second security hole.
+
 Hard rule #6 in `CLAUDE.md` gained a sentence, since this closes a hole in it.
 
-98 → **102** tests.
+98 → **103** tests.
 
 ### CG-24 · Clear `PubSubPuller`'s flag — `pull()` **and** `acknowledge()`  ✅ shipped 2026-07-30 · PR-PENDING
 
