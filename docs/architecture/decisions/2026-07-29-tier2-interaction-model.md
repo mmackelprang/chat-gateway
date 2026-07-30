@@ -488,14 +488,22 @@ gateway-published constant, **the same card works under every option in §5**:
 
 | Deployment | `interaction_routing_target` | Where `action.id` comes from |
 |---|---|---|
-| Add-ons + Pub/Sub (today) | the topic path — an undocumented destination form | `__cg_action__` |
-| Classic + Pub/Sub (option D) | any constant — classic echoes `action.function` and invokes nothing | `__cg_action__`; step 2 would also work, and the topic-path guard makes a stale card's echo harmless |
+| Add-ons + Pub/Sub (production **until** 2026-07-29) | the topic path — an undocumented destination form | `__cg_action__` |
+| Classic + Pub/Sub (option D — production **since** 2026-07-29) | any constant — classic echoes `action.function` and invokes nothing | `__cg_action__`; step 2 would also work, and the topic-path guard makes a stale card's echo harmless |
 | HTTP endpoint (option C) | the endpoint URL (add-ons) or a function name (classic) | `__cg_action__` still wins; step 2 available as a native fallback |
 
 A migration between deployment models therefore requires **zero producer card
 changes** — one registry/config value moves. That is the payoff that justifies
 defining a reserved key at all, and it is why D2 is worth doing even under
 options that do not need it.
+
+> **The two runtime rows carried the label `(today)` on add-ons until CG-21
+> (2026-07-30); they are dated now.** This table is not settled history like the
+> rest of §5 — it is cited as live producer guidance by
+> `docs/integration-guide.md` and by step 8 of `docs/google-cloud-setup.md`,
+> both of which CG-21 corrected. A row reading "(today)" would have contradicted
+> them the day they shipped. **The prediction in the sentence above held:** the
+> migration cost zero producer card changes, observed rather than argued.
 
 The topic path is not a secret: `docs/google-cloud-setup.md` step 8 explicitly
 classifies topic and subscription names as safe to paste. Rule #2 is unaffected.
@@ -581,6 +589,33 @@ classic from the start, verify it end to end, then cut over — leaving
 
 This converts a possibly-one-way door into a reversible migration, which is what
 makes recommending D at all responsible.
+
+> ## ⚠ D7 was followed, and its reversibility has since been SPENT — 2026-07-30 (CG-21)
+>
+> The plan above is what happened: `chat-gateway-gw` was stood up classic from
+> the start, verified end to end, and cut over on **2026-07-29**. What follows
+> is the one bullet whose truth has changed.
+>
+> **"Rollback is switching two env values back" is no longer available.**
+> `chat-gateway-prod` was **deleted on 2026-07-30**, so there is no project for
+> `CHAT_GATEWAY_PUBSUB_SUBSCRIPTION` and `GOOGLE_APPLICATION_CREDENTIALS` to
+> point back at, and E2 established that a classic app cannot be toggled back to
+> add-ons. Reverting now would mean **provisioning a third project** and
+> re-doing the console work — a fresh migration, not a rollback.
+>
+> That is not a defect in D7. Reversibility was real for the day both projects
+> existed, and it was the point: it is what made cutting over safe. It was then
+> **deliberately spent** by deleting the old project. Recorded because the bullet
+> above, read today, promises an escape hatch that no longer exists — and because
+> the sentence *"All bounded, none irreversible"* two lines up is now the
+> opposite of the situation.
+>
+> | D7 bullet | Outcome |
+> |---|---|
+> | parallel project, cut over, never toggle production | **followed exactly** — and E2 later proved toggling was never available anyway |
+> | rollback by switching two env values | **expired 2026-07-30** with the deletion of `chat-gateway-prod` |
+> | tier-1 webhook identities entirely unaffected | **held**, and is now empirical rather than predicted — see `CLAUDE.md`'s verification ledger for the evidence and its exact scope |
+> | console costs: re-add the app per space, new tier-2 sender identity | **still outstanding, and console-only.** What is actually deployed is a dated console observation in [step 6 of the setup doc](../../google-cloud-setup.md) — not something this repo can prove. |
 
 ---
 
