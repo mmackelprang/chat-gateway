@@ -56,6 +56,7 @@ from typing import Iterable, Protocol
 import httpx
 
 from ..envelope import CG_ACTION_KEY, CG_RESERVED_PREFIX, InboundReply
+from ..errors import GatewayAuthoredError, describe_exception
 from ..inbox import Inbox
 # UNROUTED is imported, not defined here: core must own it (hard rule #3).
 # Re-exported by this import so `from ...adapters.pubsub import UNROUTED`
@@ -147,6 +148,16 @@ REDACTED = "<redacted-by-gateway>"
 CAPABILITY_FIELDS = ("configCompleteRedirectUri", "configCompleteRedirectUrl")
 
 
+# DELIBERATELY NOT a GatewayAuthoredError, and the omission is the design
+# working rather than an oversight (CG-29). That marker means "every byte of
+# this message was written here", which entitles `describe_exception` to print
+# it in full — and this one is not: `_post` passes `resp.reason_phrase`, which
+# httpcore populates from the literal HTTP status line, so a server can put
+# arbitrary bytes in `.reason` and in `str()`. Measured, not inferred: a
+# response built with `extensions={"reason_phrase": b"..."}` returns exactly
+# that. The docstring below still claims otherwise; making the two agree is
+# CG-33's row, and `tests/test_error_surfaces.py` pins the exclusion so
+# whoever ships CG-33 has to decide, explicitly, whether this now qualifies.
 class PubSubError(RuntimeError):
     """A Pub/Sub REST call failed, carrying the HTTP status.
 
@@ -167,12 +178,18 @@ class PubSubError(RuntimeError):
         self.reason = reason
 
 
-class UnrecognizedEventError(ValueError):
+class UnrecognizedEventError(GatewayAuthoredError, ValueError):
     """The pulled bytes are not any Chat event envelope this gateway knows.
 
     Raised, never defaulted. Before 2026-07-29 an unparsed event silently
     normalized into a valid-looking empty MESSAGE — the exact class of silent
     failure hard rule #5 exists to prevent.
+
+    Marked gateway-authored, which is only a formalisation: `dispatch` has
+    printed this message in full since that fix, on the strength of the same
+    property the marker now names — its raise sites interpolate field NAMES
+    (top-level keys, `type(event).__name__`) and never a payload VALUE.
+    `ValueError` stays second so `except ValueError` still catches this.
     """
 
 
@@ -614,10 +631,11 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
         # echo. `except Exception` is broader than that by design, and another
         # exception's message could carry a payload VALUE — a capability URL,
         # a user's text — so anything else is named by type alone (rule #2).
-        detail = f"{type(exc).__name__}: {exc}" if isinstance(
-            exc, UnrecognizedEventError) else type(exc).__name__
+        # That rule used to be an `isinstance(exc, UnrecognizedEventError)`
+        # ternary written out here; it is `describe_exception` now, because the
+        # second copy of it (in poll_once) is what CG-29 was filed against.
         print(f"subscriber: UNPARSEABLE event, audited under {UNROUTED}: "
-              f"{detail}", flush=True)
+              f"{describe_exception(exc)}", flush=True)
         inbox.put(InboundReply(app=UNROUTED, received_at=now, raw=raw,
                                **_unparseable_core(event)))
         if on_unparseable is not None:
@@ -855,12 +873,20 @@ class SubscriberLoop:
                 # the outage this module exists to prevent. Count it, name it,
                 # ack it, keep going.
                 #
-                # TYPE NAME ONLY: a pydantic ValidationError embeds the
-                # offending input value in its message, and these events carry
-                # capability URLs (hard rule #2 — names, never values).
+                # TYPE NAME ONLY for anything foreign: a pydantic
+                # ValidationError embeds the offending input value in its
+                # message, and these events carry capability URLs (hard rule
+                # #2 — names, never values). CG-29: it used to be type-name
+                # only for EVERYTHING, which threw away the distinction CG-25
+                # had just created one layer down — `reply_fn` is
+                # `ChatApiAdapter.send_text` in production, and after CG-25 a
+                # transport failure and a non-200 both arrive here as
+                # `ChatApiError`, distinguishable only by the message this line
+                # was discarding. `describe_exception` prints it for the marked
+                # types and nothing but the type name for the rest.
                 self.dispatch_errors += 1
                 print(f"subscriber: dispatch failed, event acked and dropped: "
-                      f"{type(exc).__name__}", flush=True)
+                      f"{describe_exception(exc)}", flush=True)
             self.events_seen += 1
             if ack_id:
                 acks.append(ack_id)
@@ -883,6 +909,16 @@ class SubscriberLoop:
                     f"{type(exc).__name__} HTTP {exc.status_code}"
                     if isinstance(exc, PubSubError) else type(exc).__name__
                 )
+                # NOT `describe_exception`, on purpose, and for two independent
+                # reasons — do not "unify" this with the two sites above (CG-29).
+                # First, `PubSubError` is not in the marked set (see its class
+                # comment: CG-33), so describe_exception would give a bare type
+                # name and DROP the HTTP status, which is the one thing an
+                # operator can act on here. Second, this string is `/healthz`'s
+                # `last_poll_error` and /healthz is UNAUTHENTICATED — its
+                # audience is not the console's, so its field format is a
+                # published surface rather than a log line.
+                #
                 # Type + status only. The previous version printed the exception
                 # message, which for a Pub/Sub failure embedded resp.text[:200].
                 print(f"subscriber: poll error (will retry): {self.last_poll_error}",

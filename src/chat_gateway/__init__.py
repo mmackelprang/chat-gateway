@@ -2,6 +2,7 @@
 
 One concern per module:
   envelope.py   — the channel-agnostic message envelope (the ONLY shared shape)
+  errors.py     — which exception messages may be printed in full (hard rule #2)
   registry.py   — identities + apps config, env-name indirection for secrets
   auth.py       — per-app API keys
   inbox.py      — inbound-reply queue per app (memory + JSONL audit)
