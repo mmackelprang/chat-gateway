@@ -95,12 +95,18 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-4 → CG-5 → CG-8 → CG-12 → CG-11 → CG-20 →
+Remaining order: **CG-4 → CG-5 → CG-24 → CG-8 → CG-12 → CG-11 → CG-20 →
 CG-22 → CG-19 → CG-21 → CG-23** (CG-7 has since shipped). CG-14 is now
 `⏸ blocked` (E1 removed its rationale, so it needs a decision, not code);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
 auto-merging; CG-9 stays blocked on a human; CG-17 and CG-18 stay deferred and
 must not be executed.
+
+**CG-23 and CG-24 were filed 2026-07-30 by Builder.** CG-23 is CG-7's review
+fallout; CG-24 exists because the 2026-07-30 live session clears a flag that **no
+existing queue item owns** — CG-4 is `webhook.py` and CG-5 is `chat_api.py`, so
+`adapters/pubsub.py`'s module flag had no home. Neither is a re-plan: CG-23 is
+one file's error text, CG-24 is a docstring whose evidence already exists.
 
 **CG-11 is still open, and was omitted from the user's 2026-07-30 priority
 list** — recorded here rather than silently skipped or silently built. The wrong
@@ -429,6 +435,47 @@ the secret-handling path and therefore needs a pause.
 
 ---
 
+### CG-24 · Clear `PubSubPuller`'s flag — `pull()` **and** `acknowledge()`  📋 queued
+
+| | |
+|---|---|
+| **Rule** | **hard rule #3** — remove a ⚠ LIVE-UNVERIFIED flag only after a real round-trip, and note the verification date |
+| **Origin** | filed by CG-7: the 2026-07-30 live session clears this, and no existing item owns it (CG-4 is `webhook.py`, CG-5 is `chat_api.py`) |
+| **Depends on** | nothing |
+| **Touches** | docstrings + `CLAUDE.md` status block only; the suite must not move |
+
+`adapters/pubsub.py` has carried *"The 2026-07-29 live pull used an ad-hoc
+client, NOT PubSubPuller — this class is still unexercised against Google"*
+since CG-1. **That is no longer true.** On 2026-07-30 the real class was driven
+against the live subscription and returned real `(ack_id, event)` tuples —
+196-character ack ids, `_pubsub_message_id` injected, output fed straight into
+`normalize_event`.
+
+**The `acknowledge()` half is the stronger evidence, and it is worth stating
+precisely** because a batch smoke test would not have earned it: acking message
+id `20755182577634163` removed **only** that message, while two other unacked ids
+(`21328572002996378`, `21339851456542226`) kept redelivering across a 60-second
+poll. That is a **selective** ack — it proves the *right* message was acked, not
+merely that the subscription drained. Both halves of the module flag are
+therefore real.
+
+Scope the clear honestly, as CG-4 and CG-5 do:
+
+- **Cleared:** the success path of `pull()` and of `acknowledge()`, including the
+  base64/JSON decode, the `_pubsub_message_id` injection and selective ack
+  semantics.
+- **NOT cleared:** the non-200 branch of `_post` (`PubSubError`) — CG-7's test
+  drives it with `httpx.MockTransport`, and a UAT against the real REST endpoint
+  with a junk token returned a genuine HTTP 401, which proves a request was
+  *formed and dispatched* but says nothing about pull/ack semantics; the
+  `_undecodable` branches; and the `SubscriberLoop` thread's long-run behaviour.
+
+Do **not** widen this into the `chat-api-push@system.gserviceaccount.com` grant —
+that question is permanently unresolvable (both principals were bound in
+`chat-gateway-prod`, which is deleted) and is recorded as closed, not open.
+
+---
+
 ## Experiments
 
 CG-15 and CG-16 **ran on 2026-07-29** and are recorded below with their results.
@@ -543,9 +590,54 @@ phrase and `resp.text[:200]` is gone, so `last_poll_error` is a TYPE and a
 STATUS, never a message body — load-bearing, because `/healthz` is
 unauthenticated.
 
+**Then review found the same defect one layer in, and it is the more
+interesting half.** The two counter-based reasons above are blind to a loop that
+has stopped **raising** as well as stopped working. A dead polling thread — or
+one wedged where it never returns — increments nothing: `consecutive_poll_failures`
+sits at `0`, `last_poll_error` stays `None`, `last_poll_at` holds a real recent
+timestamp. Every field reads healthy and inbound is dead **forever**. That is
+rule #5's founding shape rebuilt inside the fix for rule #5's founding shape.
+
+The root cause was that `last_poll_at` was *reported* but never compared to the
+clock, so a three-week-old timestamp read exactly like a three-second-old one on
+an endpoint whose docstring claims "real liveness". Closed with two signals that
+are deliberately independent of the counters:
+
+| Signal | Catches | Why the others miss it |
+|---|---|---|
+| `thread_alive` + `thread_started` | a thread that was started and is **not running** | direct liveness; the only non-inferential field in the block. Reported as a pair because `thread_alive: false` alone cannot distinguish a corpse from a loop nobody started — and every offline test constructs the latter |
+| `seconds_since_last_poll` vs `stale_after_seconds` | a thread that is **alive but wedged** | `thread_alive` says the thread exists, not that it is progressing |
+
+The staleness budget is `max(300s, 6 × interval)`, and the floor is chosen
+against a real bound rather than taste: `PubSubPuller`'s client timeout is 90s,
+so the longest a *healthy* poll can leave the timestamp untouched is ~90s plus
+dispatch. 300s clears that with room and still surfaces a silent death inside one
+coffee break. It scales with the interval so a deliberately slow deployment does
+not alarm forever. `stop()` deliberately does **not** clear `thread_started`: a
+subscriber still enabled in configuration and no longer polling is dead
+regardless of who asked for it, and during a real shutdown nobody is reading
+`/healthz`.
+
+Found twice independently — by Builder while reasoning about the threshold
+window, and by the pre-merge reviewer, which scored it below its reporting bar
+but named it anyway as "the one theoretical way this design could still repeat
+the claude-mem shape". Two independent paths to the same hole settled it.
+
+**Verification.** All five health signals mutation-tested: neutering any one
+fails exactly its own test and nothing else, and replacing
+`seconds_since_last_poll` with a hardcoded `0.0` — the rule-#5 smell itself —
+fails two. UAT was **40/40 against real Google endpoints**: a real `PubSubPuller`
+against the real Pub/Sub REST API with a junk token returns HTTP 401, the real
+`_run` loop records the failure run as `PubSubError HTTP 401`, `/healthz` on a
+real uvicorn server degrades, the still-running loop then recovers on its own and
+clears **only** the subscriber reasons, and finally killing the thread degrades
+again with every counter still reading perfectly healthy.
+
 **Flags: nothing cleared.** The new `PubSubPuller` test uses a mock transport,
-which is not a live round-trip; ⚠ LIVE-UNVERIFIED stands everywhere it stood.
-89 → 95 tests.
+and the UAT's real 401 proves only that a request was formed and dispatched — not
+that pull/ack *semantics* work, since no message was returned and nothing was
+acked. ⚠ LIVE-UNVERIFIED stands everywhere it stood; clearing it is CG-24.
+89 → 98 tests.
 
 ### CG-13 · Publish `interaction_routing_target`; the portable card convention  ✅ shipped 2026-07-29 · [PR #12](https://github.com/mmackelprang/chat-gateway/pull/12)
 

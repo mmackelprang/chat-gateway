@@ -615,6 +615,48 @@ class SubscriberLoop:
         # "<ExceptionType> HTTP <status>" — a TYPE and a STATUS, never a message
         # body (rule #2). Cleared on the first success so recovery is visible.
         self.last_poll_error: str | None = None
+        # Was start() ever called? Distinct from "is the thread alive", and the
+        # distinction is what makes the two health reasons unambiguous: a loop
+        # that was never started has never polled either (already a reason),
+        # whereas a loop that WAS started and is now dead is a different and
+        # much more alarming fact. Without this flag /healthz could not tell
+        # them apart, and every offline test — none of which starts a thread —
+        # would look like a corpse.
+        self._started = False
+
+    @property
+    def interval_seconds(self) -> float:
+        """The configured poll interval, readable by /healthz.
+
+        Public because staleness is only judgeable relative to how often this
+        loop is *supposed* to poll; `service.py` must not guess it or hardcode
+        a copy that drifts.
+        """
+        return self._interval
+
+    @property
+    def started(self) -> bool:
+        """Was `start()` ever called? NOT cleared by `stop()` — see below."""
+        return self._started
+
+    def is_alive(self) -> bool:
+        """Is the polling thread actually running right now?
+
+        The DIRECT liveness signal, and the one hard rule #5 names explicitly
+        ("monitor/subscriber liveness"). Every other subscriber field is
+        inferential: counters tell you what happened when a poll last ran, not
+        whether any poll will ever run again. A daemon thread that has died —
+        `_run` catches `Exception`, so a `BaseException` such as `MemoryError`
+        escaping, or an interpreter-shutdown race, kills it silently — leaves
+        every counter frozen at a plausible value and `last_poll_at` fixed at a
+        real timestamp. That reads as perfect health forever, which is the exact
+        11-day-silent-failure shape rule #5 was written after.
+
+        Read TOGETHER with `started`, never alone: alone it cannot tell a loop
+        that was never started from one that was started and died, and those are
+        very different facts. `/healthz` only complains about the second.
+        """
+        return self._thread is not None and self._thread.is_alive()
 
     def _count_unparseable(self, exc: Exception) -> None:
         self.unparseable_seen += 1
@@ -677,9 +719,17 @@ class SubscriberLoop:
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="pubsub-subscriber", daemon=True)
+        self._started = True
         self._thread.start()
 
     def stop(self) -> None:
+        # `_started` is deliberately NOT cleared here. It would be tempting —
+        # "an intentional stop is not a failure" — but it would make /healthz lie
+        # in the one case that matters: a subscriber that is still enabled in
+        # configuration and is no longer polling. Whether that happened by
+        # accident or on purpose does not change the fact that inbound is dead,
+        # and during a real shutdown nobody is reading /healthz anyway. Reporting
+        # it is the honest choice (hard rule #5).
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=5)

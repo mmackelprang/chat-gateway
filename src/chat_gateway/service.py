@@ -16,6 +16,7 @@ Contract notes baked in here:
 
 from __future__ import annotations
 
+import datetime as dt
 import os
 from typing import Any
 
@@ -47,6 +48,30 @@ ROUTING_TARGET_ENV = "CHAT_GATEWAY_INTERACTION_ROUTING_TARGET"
 #: default 5s interval is ~15s — long enough to ride out a blip, short enough
 #: that a real outage is visible within one dashboard refresh.
 POLL_FAILURE_THRESHOLD = 3
+
+#: Silence — as opposed to failure — before /healthz calls inbound dead.
+#:
+#: This exists because failure counters cannot detect a loop that has stopped
+#: RAISING as well as stopped working. A dead thread, or one wedged somewhere
+#: that never returns, increments nothing: `consecutive_poll_failures` sits at 0
+#: and `last_poll_at` stays frozen at a real timestamp. Counter-based reasons
+#: alone therefore reproduce rule #5's founding failure — green health over a
+#: dead input — one layer further in than the defect CG-7 was filed for.
+#:
+#: Five minutes, and the floor is chosen against a real bound rather than taste:
+#: `PubSubPuller`'s client timeout is 90s, so the slowest a HEALTHY poll can
+#: leave this timestamp untouched is ~90s plus dispatch. 300s clears that with
+#: room and still surfaces a silent death inside one coffee break. Scaled by the
+#: configured interval too, so a deployment that deliberately polls slowly does
+#: not get permanent false alarms.
+POLL_STALE_AFTER_SECONDS = 300.0
+POLL_STALE_INTERVAL_MULTIPLE = 6
+
+
+def _stale_after(subscriber) -> float:
+    """Seconds of silence tolerated before the last poll is called stale."""
+    return max(POLL_STALE_AFTER_SECONDS,
+               POLL_STALE_INTERVAL_MULTIPLE * subscriber.interval_seconds)
 
 
 def _interaction_config(registry: Registry, app_id: str) -> dict | None:
@@ -269,7 +294,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         make this endpoint degraded must be able to say so in words, because an
         operator seeing "degraded" and no reason has to diff the body against a
         known-good copy to learn anything.
+
+        Inbound is judged three independent ways, because each one is blind to
+        the others' failure mode: whether polls have ever SUCCEEDED, whether
+        they are currently FAILING (counters), and whether they are still
+        HAPPENING AT ALL (thread liveness + wall-clock staleness). Counters see
+        nothing when a loop stops raising as well as stops working.
         """
+        now = dt.datetime.now(dt.timezone.utc)
         hb_all = [c for s in registry.apps for c in checks.list_for(s)]
         body = {
             "version": __version__,
@@ -295,6 +327,32 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                  "poll_failures": subscriber.poll_failures,
                  "consecutive_poll_failures": subscriber.consecutive_poll_failures,
                  "last_poll_error": subscriber.last_poll_error,
+                 # DIRECT liveness, not inferred from counters. Every field above
+                 # describes what happened the last time a poll ran; none of them
+                 # says whether a poll will ever run again. A dead thread freezes
+                 # all of them at plausible values (rule #5's founding failure).
+                 "thread_alive": subscriber.is_alive(),
+                 # Reported alongside, because `thread_alive: false` alone is
+                 # ambiguous — a loop that was never started looks identical to
+                 # one that died. Only the second is a fault worth shouting
+                 # about; the first is already covered by "never completed a
+                 # poll", and every offline test constructs a loop it never
+                 # starts.
+                 "thread_started": subscriber.started,
+                 # How stale the last completed poll is, in seconds. Reported as
+                 # a NUMBER rather than left for the reader to subtract two
+                 # timestamps: `last_poll_at` was already being reported before
+                 # this and it was never compared to the clock, which is how a
+                 # three-week-old timestamp read exactly like a three-second-old
+                 # one on an endpoint whose docstring claims "real liveness".
+                 "seconds_since_last_poll": (
+                     round((now - subscriber.last_poll_at).total_seconds(), 1)
+                     if subscriber.last_poll_at else None),
+                 "stale_after_seconds": _stale_after(subscriber),
+                 # Reported so the staleness budget above is checkable rather
+                 # than magic: an operator can see the interval it was derived
+                 # from instead of trusting the number.
+                 "poll_interval_seconds": subscriber.interval_seconds,
                  # DECLARED, not detected — the field name says so. Detecting it
                  # means calling Cloud Billing / Service Usage: more scopes, more
                  # IAM, more calls. And on 2026-07-29 Google's own
@@ -334,6 +392,35 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                     f"poll failures (last: {sub['last_poll_error']}) — inbound is "
                     "DOWN. Revoked key, deleted subscription, wrong subscription "
                     "name, or quota exhaustion all look like this and all fail closed"
+                )
+            # The two silence checks. Ordered after the failure check because a
+            # loop that is loudly failing has a more actionable reason already,
+            # and a dead thread will also look stale — reporting both would be
+            # two reasons for one fault.
+            #
+            # A LOOP THAT WAS STARTED AND IS NO LONGER RUNNING increments no
+            # counter and moves no timestamp, so nothing above can see it.
+            elif sub["thread_started"] and not sub["thread_alive"]:
+                reasons.append(
+                    "subscriber: the polling thread was started and is NOT "
+                    "RUNNING — inbound is dead and no counter will ever move "
+                    "again. Every field in this block is frozen at its last "
+                    "value, so they look healthy; restart the service"
+                )
+            # ...and a thread that is alive but no longer completing polls.
+            # Gated on `thread_alive` because staleness is only meaningful for a
+            # loop that is actually running: for one that is not, the reason
+            # above (or "never completed a poll") is the accurate diagnosis, and
+            # a second reason for one fault is noise.
+            elif sub["thread_alive"] and (
+                    sub["seconds_since_last_poll"] > sub["stale_after_seconds"]):
+                reasons.append(
+                    f"subscriber: the thread is alive but the last completed poll "
+                    f"was {sub['seconds_since_last_poll']}s ago, over the "
+                    f"{sub['stale_after_seconds']}s budget for a "
+                    f"{sub['poll_interval_seconds']}s-interval loop — polls are "
+                    "neither succeeding nor raising, so it is wedged rather than "
+                    "erroring"
                 )
             # CG-13 left this to CG-7 rather than colliding with the rewrite.
             # It DEGRADES, deliberately: with tier 2 on and no routing target,
