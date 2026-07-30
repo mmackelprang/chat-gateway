@@ -111,7 +111,21 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
     `*@system.gserviceaccount.com` principals **without validating they exist**,
     so a clean apply was never evidence either.) It is not a flag, not a gap to
     close, and not a task — it is an unanswerable question about a system that no
-    longer exists.
+    longer exists. The IaC still binds **both** principals and its comments
+    explain why, so a fresh-project operator is not stranded by this being closed.
+  - **Narrowed by architecture on the live project, though — labelled as
+    inference, not verification.** `chat-gateway-gw` runs a **classic** Chat app
+    with **no `gsuiteaddons` deployment at all**, so the add-ons service agent has
+    nothing to publish through there. Events demonstrably arrive (proven through
+    our own `PubSubPuller`, 2026-07-30). It therefore follows that the
+    **Chat-API-side publisher is the operative one on `gw`**, and that the
+    add-ons binding the setup script also applies is **vestigial** on a classic
+    project. That is a deduction from the deployment model, not an observation of
+    which principal wrote the message — it does not clear anything, and it does
+    not retroactively answer the `prod` question. It is recorded because it is
+    the actionable half: a fresh classic project needs the Chat-API publisher
+    binding, and the add-ons one is carried only for a runtime we no longer
+    deploy on (see CG-19).
   - `PubSubPuller.pull()` / `.acknowledge()` — ⚠ flag CLEARED 2026-07-30, both
     halves, through the real class. `pull()` returned real `(ack_id, event)`
     tuples fed straight into `normalize_event`. `acknowledge()` was proven
