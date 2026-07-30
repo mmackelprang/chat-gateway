@@ -706,7 +706,7 @@ incident, one worktree per Builder and never a shared working directory.)_
 
 ## Recently shipped
 
-### CG-28 · Consumer handoff doc — **jobhunt**  ✅ shipped 2026-07-30 · PR-PENDING
+### CG-28 · Consumer handoff doc — **jobhunt**  ✅ shipped 2026-07-30 · [PR #24](https://github.com/mmackelprang/chat-gateway/pull/24)
 
 `docs/consumers/jobhunt-handoff.md` — the gateway's answer back to jobhunt's
 R1–R9. Landed as a **sibling** of `docs/consumers/jobhunt.md` rather than an
