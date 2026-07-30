@@ -129,7 +129,7 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
-### CG-7 · `/healthz`: subscriber liveness + quota exhaustion must affect `status`  📋 queued
+### CG-7 · `/healthz`: subscriber liveness + quota exhaustion must affect `status`  🔨 in flight
 
 | | |
 |---|---|
