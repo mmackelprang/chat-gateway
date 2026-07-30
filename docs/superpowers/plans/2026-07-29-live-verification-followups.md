@@ -481,7 +481,7 @@ def test_guard_rejects_unmarked_tenant_identifiers(tmp_path, monkeypatch):
     Both spellings, because the buttonClicked capture carries both and a scrub
     that fixed only one would still ship a real tenant id.
     """
-    for key, value in (("domainId", "29vd573"), ("customer", "customers/C029vd573")):
+    for key, value in (("domainId", _TENANT_BAIT), ("customer", _CUSTOMER_ID_BAIT)):
         bad = tmp_path / f"bad-{key}.json"
         bad.write_text(json.dumps({"chat": {"user": {key: value}}}), encoding="utf-8")
         data = json.loads(bad.read_text(encoding="utf-8"))
@@ -489,6 +489,13 @@ def test_guard_rejects_unmarked_tenant_identifiers(tmp_path, monkeypatch):
                      if TENANT_KEY.search(p) and "example" not in v.lower()]
         assert offenders, f"guard failed to flag a real {key}"
 ```
+
+> [**Scrubbed forward 2026-07-30 under queue item CG-26.** The two bait values in
+> the loop above were the real Workspace tenant identifiers off the capture; they
+> are now the invented constants the landed test composes at import time. Fix
+> forward, not a history rewrite — the user's decision, and the reasoning, are in
+> the CG-26 row of `docs/BUILDER_QUEUE.md`. This line is *why* the guard now scans
+> `docs/**/*.md` and `tests/**/*.py` and not only `tests/fixtures/`.]
 
 ### Task D.2 — land the anonymized fixture
 
