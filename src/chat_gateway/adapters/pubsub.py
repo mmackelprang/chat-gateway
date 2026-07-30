@@ -172,8 +172,9 @@ class PubSubError(GatewayAuthoredError, RuntimeError):
     because `_post` looks it up in `httpx.codes`. The obvious spelling,
     `resp.reason_phrase`, is NOT fixed: httpx returns the bytes off the HTTP/1.1
     status line whenever the server sends any. This docstring asserted the safe
-    property for a week while the code did the unsafe thing (CG-33); read the
-    raise site, not this line, if you are checking.
+    property while the code did the unsafe thing — landed with CG-7 on
+    2026-07-29, corrected by CG-33 the next day. Read the raise site, not this
+    line, if you are checking.
 
     The cost is honest: we lose Google's error prose. Status + phrase is what
     the loop can act on.
@@ -258,8 +259,8 @@ class PubSubPuller:
             # HTTP/1.1 status line). See webhook.py's raise site for the full
             # note. This is the last of the three adapters to be brought onto
             # the local lookup; CG-23 did the other two and could not touch this
-            # file, which is why the docstring below spent a week claiming a
-            # property the code did not have.
+            # file — a concurrent Builder owned it — which is why the class
+            # docstring above claimed a property this line did not have.
             reason = httpx.codes.get_reason_phrase(resp.status_code)
             raise PubSubError(verb, resp.status_code, reason)
         return resp.json() if resp.text else {}
