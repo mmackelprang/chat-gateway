@@ -21,7 +21,7 @@ its review UI) if the gateway is down or never ships (R9).
 | R4 | AuthZ at the gateway | events arrive only via our private topic/subscription (only Chat's publisher is granted); per-tenant `allowed_users` email allowlist — anyone else gets an in-thread "⛔ Not authorized" and is **never forwarded**. Tenant re-enforces downstream (its own verdict write-path) |
 | R5 | Digest / instant lane / retro / health | all producer-side; instant lane = `POST /v1/messages` (synchronous) or `/v1/notify` |
 | R6 | Structured reject reason | in-card `selectionInput` — the chosen value arrives merged into `action.params` (e.g. `reject_reason`), capture-verified on both runtimes. Default to *widgets for input, one button to submit*: it is portable across runtimes and yields **one event per user decision**. On classic (the runtime we run) a widget's `onChangeAction` is **itself** an interaction trigger and fires on change as well — a card carrying both fires twice. True modal dialogs are **believed** impossible over Pub/Sub transport (they need a synchronous HTTP interaction endpoint) — **doc-derived inference, never tested on either runtime**, not an observation. Full wording: [ADR-0001 §7](../architecture/decisions/2026-07-29-tier2-interaction-model.md) |
-| R7 | Fail loudly in-thread | callback retries are short — three attempts at **0s / 3s / 10s** (`BACKOFF_S = (0, 3, 7)` is a sequence of *gaps*, not attempt times), and **0s / 5s / 15s** as actually measured in the running gateway, because `process_due()` only runs after a poll and the subscriber's default interval is 5s; on exhaustion the gateway posts the tenant's `unreachable_message` into the thread and logs `failed`. Tier-1-only deployments can't post the notice (no Chat app) — logged as `failed-silent`; full R7 requires tier 2 |
+| R7 | Fail loudly in-thread | callback retries are short — three attempts at **0s / 3s / 10s** (`BACKOFF_S = (0, 3, 7)` is a sequence of *gaps*, not attempt times). What an operator observes is later and **variable**: attempts fire on subscriber poll ticks, and a poll cycle costs the attempt's own duration *plus* the 5s interval. **`0s / 5s / 15s` is a fast-failure illustration, not a schedule — and it is optimistic for the unreachable-callback case this requirement is about**, because an unreachable host times out rather than refusing (measured 0s/15s/30s, notice at ~40s). Worked figures: [handoff §7](jobhunt-handoff.md). On exhaustion the gateway posts the tenant's `unreachable_message` into the thread and logs `failed`. Tier-1-only deployments can't post the notice (no Chat app) — logged as `failed-silent`; full R7 requires tier 2 |
 | R8/R9 | Separability / migration | HTTP-only; tier-1 webhook identity works today; adopting tier 2 changes transport + adds the callback, nothing else |
 
 > **Runtime note (updated 2026-07-29, after a real capture).** Interactions were
@@ -122,7 +122,9 @@ Encoded as deterministic tests (`tests/test_callbacks.py`): authorized tap →
 whole-event callback with dedupe key and structured reason; unauthorized tap
 → in-thread refusal only; callback down → visible in-thread failure after
 ~10s of retries; opted-out tenants receive nothing and can't even configure
-a callback.
+a callback. That `~10s` is the forwarder's contract — these tests drive
+`process_due()` on a fake clock, so it is what the retry schedule guarantees,
+**not** what a user waits in the running gateway. For that, see R7 above.
 
 **The end-to-end run is no longer blocked on unverified seams or missing
 infrastructure — it is blocked on one config value.** The Chat app

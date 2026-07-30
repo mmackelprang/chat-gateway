@@ -137,7 +137,9 @@ write-path is the natural place to enforce "record this verdict once".
 
 Return **any 2xx quickly** and do the work asynchronously. A 2xx is what stops
 the retry clock; anything else, including a slow success that trips the 10s
-client timeout, counts as a failure and moves the job toward R7's loud failure.
+client timeout, counts as a failure and moves the job toward R7's loud failure —
+and it is the *slowest* route there, because each timed-out attempt also delays
+the next one. §7 sizes that.
 
 ### The one field that is not forwarded whole
 
@@ -299,11 +301,38 @@ prevents it.
 
 **That schedule is a floor, not a timer.** Due jobs are processed by the
 subscriber loop, immediately after each successful poll — so an attempt fires on
-the first poll tick at or after its due time, never earlier. Measured at the
-loop's default 5s interval, the three attempts land at **0s / 5s / 15s**, so the
-in-thread notice arrives around 15 seconds after the tap rather than 10. Short
-and human-shaped either way: a person is standing there having just tapped a
-button.
+the first poll tick at or after its due time, never earlier.
+
+**That rule is exact. The numbers it produces are not, and the illustration used
+to read as a timetable.** `_run` polls, *then* calls `process_due()`, *then*
+waits the interval, so a poll cycle costs **the attempt's own duration plus the
+interval** — not the interval. How long an attempt takes to fail therefore
+shifts every tick after it:
+
+| How the callback fails | attempts land at | in-thread notice |
+|---|---|---|
+| fails faster than the next gap, `process_due()` called freely — the forwarder's own contract | 0s / 3s / 10s | — |
+| duration cannot count — `process_due()` driven on exact 5s ticks of a fake clock | 0s / 5s / 15s | ~15s |
+| **refuses fast** — `ConnectError` to a closed port, ~2s on the dev box | **0s / 7s / 14s** | ~16s |
+| **hangs** — accepted but never answered, to the forwarder's 10s client timeout | **0s / 15s / 30s** | **~40s** |
+
+**All four rows are measured, not modelled** — every one through the real
+`CallbackForwarder` over real `httpx`, 2026-07-30. The bottom two ran on a real
+`SubscriberLoop` thread at its real 5.0s `interval_seconds`, with a `FakePuller`
+and a local TCP port standing in for the callback: this is loop arithmetic, and
+nothing here was measured against Google. The notice column stops the moment the
+forwarder hands off to `reply_fn`; in tier 2 that is a real Chat API round-trip,
+which lands on top of it.
+
+**So `0s / 5s / 15s` is systematically optimistic in the case this section is
+about.** Exhaustion is the only route to the in-thread notice, and a host that is
+genuinely unreachable — a hung process, a firewall that blackholes rather than
+rejects — **times out** instead of refusing, which makes every attempt in that
+scenario a slow one by definition. Size a timeout, or answer *"why hasn't the
+notice appeared yet?"*, from the bottom row rather than the second. The fast row
+is short and human-shaped; the slow one is not, and that gap is the reason this
+table replaced a single worked example — a person is standing there having just
+tapped a button, and 40 seconds of silence is what they experience.
 
 **Failure of the failure notice is itself typed and logged, as of 2026-07-30**
 (CG-25). If the in-thread notice cannot be posted either, the log records
