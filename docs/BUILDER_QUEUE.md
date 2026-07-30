@@ -744,7 +744,7 @@ concurrency note in CG-25's shipped entry.)_
 
 ## Recently shipped
 
-### CG-12 · Suppressed inbound is COUNTED, and still recorded nowhere  ✅ shipped 2026-07-30 · PR-PENDING
+### CG-12 · Suppressed inbound is COUNTED, and still recorded nowhere  ✅ shipped 2026-07-30 · [PR #23](https://github.com/mmackelprang/chat-gateway/pull/23)
 
 **Option A**, user decision 2026-07-29, implemented as decided — a bare counter
 at `/healthz`. Options B and C were not built and nothing was added "while we
