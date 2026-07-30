@@ -11,9 +11,10 @@ attempts, and `BACKOFF_S` holds the **gaps between them, not the times they
 land at**: the last is due about **10s** after the tap (0s / 3s / 10s), and in
 the running gateway they land at **0s / 5s / 15s**, because `process_due()`
 only runs after a subscriber poll and each due time therefore rounds up to the
-next tick. Both numbers are measured; the second assumes the default 5s
-interval. Full treatment, including why the schedule is a floor and not a
-timer: `docs/consumers/jobhunt-handoff.md` §7.
+next tick. Both numbers are measured. The second is an observation, not a
+timetable: it assumes the default 5s interval AND a fast-failing attempt,
+because a poll cycle is the attempt's own duration plus the interval — a slow
+one stretches it. Full treatment: `docs/consumers/jobhunt-handoff.md` §7.
 
 When the attempts exhaust, the user must SEE the failure (jobhunt R7), so the
 forwarder posts the tenant's `unreachable_message` into the thread via
