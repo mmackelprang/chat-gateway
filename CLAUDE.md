@@ -60,7 +60,7 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
 `python` is 3.13.7) — offline, 140 passing.
 
-## Current status (2026-07-29)
+## Current status (2026-07-30)
 
 - **First real Chat event received 2026-07-29.** It arrived in the Workspace
   Add-ons envelope (`commonEventObject` + `chat.messagePayload`), which the
@@ -87,6 +87,18 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   **dead** — it belongs to the deleted project; do not try to authenticate with
   it and do not treat its presence as configuration.
   **Provisioning is not verification** — see below.
+- **The add-ons → classic migration is DONE, and it is now IRREVERSIBLE**
+  (ADR-0001 D7; reconciled 2026-07-30 as CG-21). Production cut over
+  **2026-07-29** to a classic Chat app; `action.id` arrives natively and the
+  undocumented topic-as-function dependency is gone from the live path. D7's
+  stated rollback — *"switching two env values back"* — **expired** when
+  `chat-gateway-prod` was deleted a day later: there is nothing left to point
+  `CHAT_GATEWAY_PUBSUB_SUBSCRIPTION` and `GOOGLE_APPLICATION_CREDENTIALS` at,
+  and E2 proved a classic app cannot be toggled back. Reverting now means a
+  **third project** plus fresh console work — a new migration, not a rollback.
+  Reversibility was real while both projects existed, which is what made cutting
+  over safe; it was then spent deliberately. Env-var NAMES only here — values
+  live in the runtime env (hard rule #2).
 - **Verification ledger** (was "⚠ LIVE-UNVERIFIED"; renamed 2026-07-30 because
   most of it is now cleared and a list titled after the flag invites a reader to
   assume everything under it still carries one).
@@ -211,12 +223,28 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   **Reframed 2026-07-29 after experiment E1 passed: this is a FALLBACK, not the
   primary mechanism.** A classic (non-add-on) Chat app on Pub/Sub supplies
   action identity *natively* — live-verified, an ordinary function name
-  `approve` arrived as `action.id: 'approve'`. Classic is the preferred
-  destination and a migration is underway; `__cg_action__` stays supported
-  because it is load-bearing on the runtime deployed **today**, and because it
-  still outranks the native slot, so one card behaves identically on both sides
-  of the migration. Same support-both posture as the two envelope formats — do
-  not rip it out.
+  `approve` arrived as `action.id: 'approve'`.
+  **The migration is DONE — corrected 2026-07-30 (CG-21).** This paragraph said
+  classic was "the preferred destination", that "a migration is underway", and
+  that `__cg_action__` was "load-bearing on the runtime deployed **today**".
+  Classic is not a destination, it is **production, since 2026-07-29**. Every
+  project that ran add-ons is deleted, so nothing in production *depends* on
+  this key.
+  **It stays anyway, and the reason is now the weaker one — say so rather than
+  keep quoting the strong one.** On classic it is **not needed**: identity
+  arrives natively without it. **"Not needed" is not "not used", and the two
+  must not be collapsed** — ADR-0001 (D2 row, §12) and
+  `docs/integration-guide.md` all say *"inert"*, always paired in the same
+  breath with *"still wins when present"*, and that pairing is load-bearing. The
+  key is checked **first and unconditionally** — *"app-declared, authoritative
+  when present"* (`adapters/pubsub.py:376`) — so on a card that carries it, it
+  is still the operative source of `action.id` on classic. Read *"inert"*
+  anywhere in this repo as *"a producer need not add it"*, never as *"the
+  gateway ignores it"*. That is exactly why it stays: one card behaves
+  identically on either runtime, which is the whole D3 portability payoff and
+  what made the migration cost zero producer card changes. Same support-both
+  posture as the two envelope formats — **do not rip it out**, but do not
+  justify it as load-bearing either.
 - **Card `parameters` shapes — outbound is fixed, inbound is a property of the
   RUNTIME.** Confusing them ships a broken card.
 

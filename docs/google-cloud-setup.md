@@ -352,13 +352,31 @@ restart, and check `/healthz` — it reports real resolvability per identity
 and subscriber liveness, so a wrong env name shows up immediately.
 
 **Also set `CHAT_GATEWAY_INTERACTION_ROUTING_TARGET`** if any tenant sends
-interactive cards. It is the **topic** path (`projects/<PROJECT_ID>/topics/
-chat-gateway-events`) — *not* the subscription — and the gateway publishes it to
-opted-in apps on `GET /v1/identities` so no producer hardcodes it. Leave it
-unset and interactive cards cannot work: `/v1/identities` will report
-`interaction.enabled: false` with the reason, which is the intended failure —
-a producer that guesses ships cards whose taps go nowhere. See
+interactive cards. The gateway publishes it to opted-in apps on
+`GET /v1/identities` so no producer hardcodes it. Leave it unset and interactive
+cards cannot work: `/v1/identities` will report `interaction.enabled: false`
+with the reason, which is the intended failure — a producer that guesses ships
+cards whose taps go nowhere. See
 [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) D3.
+
+> **Its value depends on the deployment model, and this paragraph used to give
+> only the add-ons answer.** It read *"It is the **topic** path … — not the
+> subscription"*, unconditionally. That was right for the runtime this project
+> ran until 2026-07-29 and is not the classic answer, so an operator setting up
+> the **live** project from this document was being handed the wrong shape.
+>
+> | Deployment | Value |
+> |---|---|
+> | **classic + Pub/Sub — production since 2026-07-29** | **any constant.** Classic echoes `action.function` back as `action.id` and invokes nothing. |
+> | add-ons + Pub/Sub — production until 2026-07-29 | the **topic** path, `projects/<PROJECT_ID>/topics/chat-gateway-events` — ***not*** the subscription. The original caution, kept because it is the trap that made this paragraph worth writing. |
+> | HTTP endpoint | the endpoint URL (add-ons) or a function name (classic) |
+>
+> A card still carrying the **topic path under classic is harmless**, not
+> broken: the gateway discards topic-path-shaped values arriving from
+> Google-native sources rather than promote `projects/…/topics/…` into an action
+> name. It costs the native identity slot, so identity must then ride in
+> `__cg_action__`. Neither shape is a secret — step 8 classifies topic names as
+> safe to paste.
 
 ### 8a. Verifying locally — where the secrets go on *your* machine
 
