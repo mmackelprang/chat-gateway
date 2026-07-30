@@ -331,19 +331,49 @@ Read carefully, because two things about them are easy to get wrong:
 **What this means for aitrader specifically, stated precisely rather than
 reassuringly.** A "candidate" is an app owning an identity **homed in the event's
 space** (`registry.apps_for_space`, `registry.py:161-172`), and an identity with
-an empty `space` is homed nowhere. **Both aitrader identities ship with
-`space: ""`** — they are one-way webhooks — so as the registry is committed,
-**aitrader cannot increment either counter at all.** No inbound event ever names
-it as a candidate.
+an empty `space` is homed nowhere.
 
-That changes only if an operator both fills in a `space:` for an aitrader
-identity *and* adds the Chat app to that space. In that configuration each event
-in that space would add 1 to `suppressed_opt_out` — a bare volume integer,
-pooled with any other opted-out tenant, on an unauthenticated endpoint. Still no
-attribution, still nothing persisted, and marginal next to `events_seen`, which
-already publishes total inbound volume on the same endpoint. Recorded because
-"nothing about aitrader is observable" should be true for a stated reason, not by
-assumption.
+⚠ **CORRECTED 2026-07-30, and the correction matters more than the original
+claim.** This section first said *"both aitrader identities ship with
+`space: ""` … so aitrader cannot increment either counter at all"*, and derived
+the guarantee from that. **The premise is true only of the committed template.**
+`config/registry.example.yaml` ships `space: ""`; the live `config/registry.yaml`
+(gitignored) homes **both** aitrader identities:
+
+| Registry | `apps_for_space("spaces/…")` for either aitrader space | Effect |
+|---|---|---|
+| `registry.example.yaml` (committed) | `[]` | never nominated |
+| `registry.yaml` (**live**) | `['aitrader']`, `allow_inbound: false` | **would increment `suppressed_opt_out`** |
+
+Verified by running the real `apps_for_space` against both files, not by reading
+them. This is the second time in one day a claim about this project was derived
+from the committed example while the live registry said otherwise — check which
+file you are looking at.
+
+**What actually holds today, and why.** No inbound event has ever named aitrader
+as a candidate, but the reason is **not** the registry — it is that the tier-2
+Chat app is not in aitrader's spaces, so no Pub/Sub event originates from them.
+Those identities are `mode: webhook`, and a webhook is one-way: it needs no app
+membership to deliver, and produces no inbound events. That is a **console**
+fact, not a config one, and it is not verifiable from this repo.
+
+So the safeguard is **one step away, not two.** The original text said this
+changes only if an operator both fills in a `space:` *and* adds the Chat app to
+that space. In the live registry the `space:` is **already filled** — adding the
+Chat app to an aitrader space would be sufficient on its own, and it is a console
+action that leaves no trace in version control.
+
+In that configuration each event in that space would add 1 to
+`suppressed_opt_out` — a bare volume integer, pooled with any other opted-out
+tenant, on an unauthenticated endpoint. Still no attribution, still nothing
+persisted, and marginal next to `events_seen`, which already publishes total
+inbound volume on the same endpoint. **`allow_inbound: false` is unaffected
+throughout** — nothing crosses to aitrader in any of these configurations; the
+only question is whether a bare integer moves.
+
+Recorded because "nothing about aitrader is observable" should be true for a
+**stated and correct** reason, not by assumption — and the first stated reason
+was wrong.
 
 **Nothing about aitrader's traffic is persisted anywhere, in any configuration.**
 

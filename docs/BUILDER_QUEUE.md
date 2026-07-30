@@ -45,6 +45,8 @@ unblocks half this queue.
 | **Migration to option D** | **APPROVED IN PRINCIPLE** if E1 later passes — and it did. Migration is now **underway** (a fresh project is provisioned; see below). D3's portable card convention shipped as CG-13, so the exit stays cheap and must be kept that way. |
 | **DEC-1** (CG-4 threadKey) | Keep the body `thread.threadKey`, drop the query parameter. The `messageReplyOption` caveat is mandatory in the docstring. |
 | **CG-12** shape | **Option A** — a bare counter on `/healthz`. No space id, no app id, no content. Pure rule-5 visibility, zero rule-6 surface change; note in code that `/healthz` is unauthenticated. |
+| **CG-12** — one counter or two? *(2026-07-30)* | **KEEP BOTH.** CG-12 shipped `suppressed_opt_out` and `suppressed_not_authorized` while the row above says "a bare counter" (singular). Reviewed and settled: the spec sanctions the split explicitly, option A's constraint governs what is **stored** (no space, no app id, no content — which two ints satisfy), and one number cannot distinguish *"500 people were refused"* from *"500 events landed in a space nobody serves"*. Two different investigations. **Do not collapse them.** |
+| **CG-11 + CG-20** — combine? *(2026-07-30)* | **YES — ONE PR.** CG-11 adopts ADR-0001 §7, but §7 carries the same add-ons-derived error the no-button `onChangeAction` capture disproved, so §7 must be corrected *before* it is adopted — and correcting the ADR overlaps CG-20, which owns §5/§10/§12. Two sequential PRs would mean the second contradicts the first. Same reasoning that made CG-22+CG-9 one PR. |
 
 ## What E1 and E2 settled (2026-07-29) — supersedes the deferral above
 
@@ -135,7 +137,7 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-11 → CG-20 →
+Remaining order: **CG-11+CG-20 (ONE PR — user decision 2026-07-30) →
 CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24, CG-8, CG-22+CG-9,
 CG-25, CG-12, CG-27 and CG-28 have since shipped). **CG-29** was filed by Builder from CG-25's UAT and
 **CG-30** by Builder from CG-27's verification pass; both are
@@ -243,7 +245,33 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
-### CG-11 · Correct `CLAUDE.md`'s selection-widget claim  📋 queued *(was ⏸ blocked · ADR)*
+### CG-11 + CG-20 · Correct the selection-widget claim, and document E1/E2  📋 queued · **ONE PR**
+
+> **SHIPS AS A SINGLE PR WITH CG-20 BELOW — user decision 2026-07-30.** Claim
+> both rows together. CG-11 adopts ADR-0001 §7; §7 is itself wrong; correcting
+> the ADR is CG-20's file. Sequential PRs would have the second contradict the
+> first. Read both bodies in full before starting — they are kept separate below
+> rather than spliced, so neither is lost to an editing accident.
+>
+> ⚠ **CG-11's "locations to fix" list (in its amendment block) is WRONG. Re-derive
+> it from the files.** CG-28's Builder copied that list on trust, and nearly
+> shipped a paragraph telling consumers to distrust a section of the integration
+> guide that is already correct. Caught in review. Verified actual state,
+> 2026-07-30:
+>
+> | Location | Actual state |
+> |---|---|
+> | **ADR-0001 §7 body** (~`:598-599`, `:606-607`) | **The real target.** Carries *"A selection widget is not an interaction trigger"* unqualified — while §7's own status banner (~`:30`) already records E1's opposite result. The file contradicts itself. |
+> | `docs/integration-guide.md` (~`:231-262`) | **Already correct.** Runtime-scoped (*"Under the add-ons runtime (deployed today)"*) and already records at `:244-246` that `onChangeAction` fires on classic, live-verified. Its **only** staleness is the parenthetical *"(deployed today)"*, now that classic is the deployed runtime. **Do not rewrite this section.** |
+> | `CLAUDE.md` (~`:268-270`) and `docs/consumers/jobhunt.md` R6 | A **different** defect — the modal-dialog inference stated as settled fact. Related, not the same error. Fix on its own terms. |
+> | `docs/consumers/jobhunt-handoff.md` (CG-28) | Already correct and already carries a per-location table. **Do not contradict it.** |
+>
+> Also carry forward: **`BACKOFF_S = (0, 3, 7)` is a sequence of GAPS, not attempt
+> times.** Attempts land at absolute 0s/3s/10s in isolation, and at 0s/**5s**/**15s**
+> in the running gateway because `process_due()` only executes after a poll and
+> `SubscriberLoop`'s default `interval_seconds` is `5.0`. Any doc stating
+> "0s/3s/7s" as attempt times is wrong (`forwarder.py:28`, `pubsub.py:695`).
+
 
 | | |
 |---|---|
@@ -307,7 +335,13 @@ inference), so Part G adopts §7 rather than paraphrasing it.
 
 ---
 
-### CG-20 · Document E1 + E2: the create-time-only toggle and the two capability tables  📋 queued
+### CG-20 · Document E1 + E2: the create-time-only toggle and the two capability tables  📋 queued · **ships with CG-11 above, as ONE PR**
+
+> **Not an independent item any more — user decision 2026-07-30.** See the banner
+> on CG-11 for why. This row's own scope is unchanged and its widened half (the
+> `chat-gateway-prod`-is-deleted corrections to `docs/google-cloud-setup.md`) is
+> still the **more urgent** of the two, so do not let the ADR work crowd it out.
+
 
 | | |
 |---|---|
