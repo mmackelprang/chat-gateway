@@ -18,7 +18,9 @@ Dedupe: identical (source, dedupe_key) within the window collapses — the
 first occurrence delivers, repeats are counted, and the count is carried on
 the *next* delivered message after the window reopens (one-way webhooks
 cannot edit an already-posted message; the delivery log records every
-occurrence either way).
+occurrence either way) — and on an info notification long enough to leave no
+room for it, that carried count is what shortens or drops, never the app's
+body (`dedupe_counter`, CG-32).
 """
 
 from __future__ import annotations
@@ -56,8 +58,16 @@ def info_max_combined_length() -> int:
     Info is the one severity whose body does NOT become a card widget — prefix,
     title and body are concatenated into the envelope's single plain-text field,
     which the transport caps at `TEXT_MAX`. Derived, never hardcoded, so this
-    and `render` are the same arithmetic. (The dedupe counter `render` may also
-    append is deliberately NOT reserved here — see `Notification`'s validator.)
+    and `render` are the same arithmetic.
+
+    The dedupe counter `render` may also append is still deliberately NOT
+    reserved here — and does not need to be, because `render` fits it into
+    whatever this bound leaves rather than appending it unconditionally
+    (`dedupe_counter`, CG-32). **The bound is therefore unchanged, which is the
+    point:** reserving width here would lower the accepted length of every info
+    notification, including the ones sent with no `dedupe_key`, which can never
+    grow a counter at all. The counter yields to the app's content; the app's
+    content does not yield to a counter that may never exist.
 
     One deliberate approximation, checked rather than assumed: the separator is
     subtracted unconditionally, while `render` only emits it when `body` is
@@ -103,10 +113,13 @@ class Notification(BaseModel):
         nothing catches it and the caller gets a 500. Here, it is a 422 like
         every other malformed request.
 
-        Not covered: `render` also appends a "(×N since last notice)" counter to
-        deduped re-deliveries, which can push an accepted payload back over the
-        cap. Request-time validation cannot reserve room for it without
-        rejecting payloads that succeed today — filed separately.
+        That gap was CG-32, and it is **closed in the renderer, not here.**
+        `render` also appends a "(×N since last notice)" counter to deduped
+        re-deliveries, which used to push an accepted payload back over the cap;
+        it now shortens that counter to " (×N)" and then drops it entirely
+        rather than overflowing (`dedupe_counter`). So this bound stays exactly
+        where CG-30 put it, and nothing that is accepted today is rejected —
+        which is precisely what request-time reservation could not have managed.
         """
         if self.severity != "info":
             return self
@@ -126,18 +139,76 @@ class Notification(BaseModel):
         return self
 
 
+def dedupe_counter(occurrences: int, room: int | None = None) -> str:
+    """The suppressed-repeat counter `render` appends, degraded to fit (CG-32).
+
+    Three forms, tried in order: the full `" (×N since last notice)"`, the
+    short `" (×N)"`, then nothing at all. `room` is how many characters are
+    left in the rendered message once the app's own content is placed; `None`
+    means unbounded, which is the card severities' case (their `text` is the
+    prefix plus a title capped at 200, thousands of characters clear of the
+    limit).
+
+    **Hard rule #1 is why the COUNTER is the thing that yields.** It is
+    gateway-generated transport decoration — the gateway's own accounting of
+    its own dedupe window — not application content. The body is the app's.
+    When something has to give against the transport's `TEXT_MAX` field, it is
+    ours, not theirs: the app's body is never truncated to make room for our
+    parenthetical.
+
+    Degrading loses no count, which is what makes dropping it acceptable at
+    all. Every suppressed occurrence is recorded as it happens — status
+    `deduped`, detail `occurrence N within window` (`service.emit_notification`)
+    — and the suppressed request's own 202 hands `occurrences` back to the
+    caller besides. The counter is a convenience in the message, never the
+    record of it.
+
+    Where that number still lives, stated precisely because "the delivery log"
+    is two stores with different retention (measured 250 suppressions deep, not
+    reasoned): `GET /v1/deliveries` serves the **in-memory ring buffer** — last
+    200 per source, `limit` defaulting to 50 — so the oldest ordinals do evict.
+    The **complete** record is the append-only JSONL under
+    `<CHAT_GATEWAY_STATE_DIR>/deliveries/` that `__main__` configures. Eviction
+    is the benign direction here: the ordinal a dropped counter would have shown
+    is the *highest* one, hence the most recent entry, which is the last thing a
+    ring buffer discards.
+
+    N's width is measured, never allowed for at a fixed size: `×3` and
+    `×10000` are different lengths, so a hardcoded reservation would be wrong
+    the first time a count reached four digits.
+    """
+    if occurrences <= 1:
+        return ""
+    full = f" (×{occurrences} since last notice)"
+    if room is None or len(full) <= room:
+        return full
+    short = f" (×{occurrences})"
+    return short if len(short) <= room else ""
+
+
 def render(n: Notification, app_id: str, occurrences: int = 1) -> OutboundMessage:
     """Notification -> envelope. Alerts/warnings get a card; info is text.
 
     The info branch spends the envelope's whole plain-text budget on title +
-    body, which is why `Notification` guards it at `info_max_combined_length()`.
+    body, which is why `Notification` guards it at `info_max_combined_length()`
+    — and why the dedupe counter is fitted into whatever that leaves rather
+    than appended unconditionally (`dedupe_counter`, CG-32).
     """
     emoji = SEVERITY_EMOJI[n.severity]
-    counter = f" (×{occurrences} since last notice)" if occurrences > 1 else ""
-    text = f"{severity_prefix(n.severity)}{n.title}{counter}"
     if n.severity == "info":
-        body_text = text + (f"{INFO_BODY_SEPARATOR}{n.body}" if n.body else "")
-        return OutboundMessage(identity="-", text=body_text, thread_key=n.thread_key)
+        # Split at the seam the counter goes into, and derive its room from the
+        # very strings that are about to be concatenated — so the allowance and
+        # the emitted message cannot drift apart.
+        head = f"{severity_prefix(n.severity)}{n.title}"
+        tail = f"{INFO_BODY_SEPARATOR}{n.body}" if n.body else ""
+        counter = dedupe_counter(occurrences, room=TEXT_MAX - len(head) - len(tail))
+        return OutboundMessage(identity="-", text=f"{head}{counter}{tail}",
+                               thread_key=n.thread_key)
+
+    # Card severities cannot overflow: `text` is the prefix plus a title capped
+    # at 200, so the counter always fits and never needs to degrade.
+    counter = dedupe_counter(occurrences)
+    text = f"{severity_prefix(n.severity)}{n.title}{counter}"
 
     widgets: list[dict] = []
     if n.body:
