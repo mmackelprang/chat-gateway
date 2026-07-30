@@ -589,7 +589,7 @@ exercised against Google and CG-5's docstring says so.
 | **Rule** | **hard rule #2** — no fixture may carry a live secret or real identity |
 | **Origin** | filed by Planner 2026-07-30 while planning CG-22+CG-9; **appended last, not prioritized** |
 | **Depends on** | CG-22+CG-9 (which adds the first two of these regression tests) |
-| **Touches** | `tests/test_fixtures_scrubbed.py`, `tests/fixtures/README.md` — tests and docs only |
+| **Touches** | `tests/test_fixtures_scrubbed.py`, `tests/fixtures/README.md`, `docs/superpowers/plans/2026-07-29-live-verification-followups.md` — tests and docs only |
 
 `test_fixtures_scrubbed.py` carries four rule families and, before CG-22+CG-9,
 had a negative test for exactly **one** of them (`TENANT_KEY`). Its own docstring
@@ -619,6 +619,37 @@ display names and path-embedded capability tokens; it should also cover space /
 message / thread ids, which the README already declares deliberately unguarded
 (`docs/google-cloud-setup.md` step 8 classifies them non-secret) but does not
 list as a *review* obligation anywhere.
+
+**SCOPE WIDENED 2026-07-30 — the guard's blind spot is `docs/`, and it has now
+cost us twice.** The guard walks `tests/fixtures/` only. **Nothing scans
+`docs/`.** Both of this project's PII incidents landed in `docs/`, not in a
+fixture — so every rule family above, however well proven, was pointed at the
+wrong directory.
+
+| | Incident | Outcome |
+|---|---|---|
+| 1 | the **first draft of the CG-22+CG-9 plan** hardcoded the real→synthetic mapping — real name, email, Google user ids, tenant ids and a **live capability-URL bearer token** — in a file staged for this **public** repo | caught **before push**; rewritten to name source paths, nothing reached the remote |
+| 2 | `docs/superpowers/plans/2026-07-29-live-verification-followups.md:484` hardcodes the real `domainId` and `customers/C0…` as sample *"bad"* data — inside `test_guard_rejects_unmarked_tenant_identifiers` | **already public**; fix forward |
+
+`TENANT_KEY` would have flagged incident 2 instantly *in a fixture*. In a plan
+document nothing looks at it. That is the whole finding.
+
+Two tasks: **(a)** extend the guard (or add a sibling) to walk `docs/**/*.md` for
+the same rule families — fenced code blocks and table cells included, since both
+incidents hid there; **(b)** scrub `:484` to synthetic values.
+
+**User decision 2026-07-30: fix forward, do NOT rewrite public history.** A
+Workspace customer id is not a credential — there is nothing to rotate — and a
+force-push on a public repo breaks every clone, fork and PR ref to purge a value
+that may already be indexed. Rewriting is not the same as un-publishing. Recorded
+so this is not silently re-litigated.
+
+⚠ **The docs guard must tolerate what this repo deliberately publishes**, or it
+will be disabled within a week: space / message / thread ids (declared non-secret
+by `docs/google-cloud-setup.md` step 8) and the author's own name and email,
+which are in the authorship metadata of **every commit** and cannot be removed by
+scrubbing prose. Flagging those is the failure mode to design against, not an
+oversight to fix later.
 
 **What this item is NOT.** A prior session reported PII in already-landed
 fixtures. **That does not reproduce** — all four landed fixtures were swept on
