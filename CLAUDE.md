@@ -94,8 +94,16 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
     (including selection-widget values) are correct. Not a live-round-trip clear
     — the capture was pulled with an ad-hoc client. jobhunt R3/R4 remain
     unverified; see queue item CG-10.
-  - Chat API **send** and webhook **send** (including the threadKey
-    param-vs-body question) — unchanged, still unverified.
+  - Webhook **send** — ⚠ flag CLEARED 2026-07-29, re-confirmed 2026-07-30.
+    Verified through the real `WebhookAdapter`: text delivered, Cards v2 passed
+    through and confirmed rendering. The threadKey param-vs-body question is
+    settled — both work, we keep the body form. **Tier 1 is
+    project-independent, now empirically:** all four webhook identities returned
+    `delivered` through the real class *immediately after* `chat-gateway-prod`
+    was deleted, so no tier-2 deployment change can take the notification path
+    down. Not covered: the non-200 and transport-error branches. Whether
+    `messageReplyOption` is required at all was NOT isolated.
+  - Chat API **send** — see CG-5.
   - The add-on **MESSAGE** and **buttonClicked** shapes are ⚠ SHAPE-VERIFIED
     2026-07-29 (real captured bytes replayed offline,
     `tests/fixtures/addon-message-event.json`,

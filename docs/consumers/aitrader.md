@@ -50,7 +50,23 @@ semantics.
 
 Criteria 2–4 (dedupe 10×→1, weekday dead-man incl. weekend silence + daily
 repeat, full delivery-log accounting) are encoded as deterministic tests in
-`tests/test_notify_heartbeat.py` — passing. Criterion 1 (curl → loud card in
-the alert space within seconds) needs the live webhook (LIVE-UNVERIFIED seam)
-— run it as the first smoke test once the `aitrader-alerts` webhook URL is in
-the env.
+`tests/test_notify_heartbeat.py` — passing.
+
+**Criterion 1's transport is no longer an unverified seam.** The webhook send
+path was verified live through the real `WebhookAdapter` on 2026-07-29 and
+re-confirmed 2026-07-30, when all four webhook identities — `aitrader-alerts`
+among them — returned `delivered`. So the flag that used to qualify this
+criterion is **cleared** (success path; the non-200 and transport-error branches
+remain unexercised).
+
+What is left of criterion 1 is the end-to-end assertion itself — *curl → loud
+card visible in the alert space within seconds* — which is a human observation of
+rendering and latency, not a code seam. Run it as the first smoke test.
+
+Worth stating for this consumer specifically, because it is the one with **no
+inbound path at all** (`allow_inbound: false`, hard rule #6): tier 1 is
+project-independent. A webhook URL is issued by the space, not by a Cloud
+project, and that was observed on 2026-07-30 by re-running all four identities
+immediately after a Cloud project was deleted. **No tier-2 change can take this
+consumer's alerting down** — which is exactly the property a real-money system
+needs from its alert channel.
