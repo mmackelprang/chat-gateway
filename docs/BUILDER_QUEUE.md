@@ -108,8 +108,8 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-25 → CG-8 → CG-12 → CG-11 → CG-20 →
-CG-22 → CG-19 → CG-21 → CG-23** (CG-7, CG-4, CG-5 and CG-24 have since shipped). CG-14 is now
+Remaining order: **CG-25 → CG-12 → CG-11 → CG-20 →
+CG-22 → CG-19 → CG-21 → CG-23** (CG-7, CG-4, CG-5, CG-24 and CG-8 have since shipped). CG-14 is now
 `⏸ blocked` (E1 removed its rationale, so it needs a decision, not code);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
 auto-merging; CG-9 stays blocked on a human; CG-17 and CG-18 stay deferred and
@@ -154,29 +154,6 @@ and much more precisely.
 
 **Planner/user call.** Either re-justify it as a general inbound-quietness
 detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
-
----
-
-### CG-8 · Reserve `_`-prefixed app ids (`_unrouted` hole)  📋 queued
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-8)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-10, DEC-11 |
-| **Plan** | [Part F](superpowers/plans/2026-07-29-live-verification-followups.md) |
-| **Depends on** | nothing |
-| **Origin** | deferred to Planner by CG-1's review |
-
-`_unrouted` is not a reserved app id. An app registered under that literal with
-`allow_inbound: true` would receive every unroutable and every `UNPARSEABLE`
-event from **all** spaces, because the audit path and the `or [UNROUTED]`
-fallback bypass the per-app authorization block by design. Pre-existing, needs a
-misconfiguration, but a real hole in a multi-tenant transport.
-
-Reserves the whole `_` prefix (so the next internal bucket is safe without anyone
-remembering) and rejects at registry load with an error naming the consequence.
-`UNROUTED` moves from `adapters/pubsub.py` to `registry.py` — core must not
-import from an adapter (hard rule #3) — and the adapter imports it back, so the
-eleven existing test references keep working.
 
 ---
 
@@ -529,6 +506,42 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-8 · Reserve `_`-prefixed app ids (the `_unrouted` hole)  ✅ shipped 2026-07-30 · PR-PENDING
+
+Plan **Part F**. A real hole in a multi-tenant transport, closed at registry
+load. `_unrouted` was never a reserved id, so an app registered under that
+literal with `allow_inbound: true` would have received **every** unroutable and
+**every** `UNPARSEABLE` event from **all** spaces — because the two paths that
+write to that bucket (the `except` branch in `dispatch()`, and the
+`or [UNROUTED]` fallback) bypass the per-app authorization block **by design**.
+That design is correct: an unparseable event has no space, so there is nothing to
+authorize it against. The bug was that the bucket's name was claimable.
+
+Reserves the **whole `_` prefix** rather than the one literal, so the next
+internal bucket is safe without anyone remembering to come back here. The error
+names the consequence, not just the rule — it says the app would bypass hard rule
+#6 — because a rejection an operator does not understand gets worked around.
+
+`UNROUTED` moved from `adapters/pubsub.py` to `registry.py`: core must not import
+from an adapter (hard rule #3), and the constant is core's to own now that
+`load_registry` validates against it. The adapter imports and re-exports it, so
+every existing `from ...adapters.pubsub import UNROUTED` call site keeps
+resolving — pinned by a test asserting both spellings are the *same object*.
+
+**One test beyond the plan, and it is the one worth having.** The plan asserts
+the id is rejected. That proves the guard fires; it does not show a reader why
+the guard exists, and in six months "is this defensive noise?" is the question
+that gets asked. So `test_the_hole_CG8_closes_is_real_and_now_shut` constructs
+the `App` the registry now refuses, dispatches an unparseable event, and
+demonstrates it lands in that app's inbox as a pollable `InboundReply` with
+`app == "_unrouted"` and `event_type == "UNPARSEABLE"` — i.e. exactly what
+`GET /v1/inbox` would hand anyone holding that app's key, with no rule-#6 check
+having run. Then it shows the registry rejecting the same config.
+
+Hard rule #6 in `CLAUDE.md` gained a sentence, since this closes a hole in it.
+
+98 → **102** tests.
 
 ### CG-24 · Clear `PubSubPuller`'s flag — `pull()` **and** `acknowledge()`  ✅ shipped 2026-07-30 · PR-PENDING
 

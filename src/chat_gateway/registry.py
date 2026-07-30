@@ -17,6 +17,25 @@ import yaml
 CHANNELS = ["google_chat"]
 MODES = ["webhook", "app"]
 
+# App ids the gateway reserves for its own audit buckets. `_unrouted` is where
+# unroutable and UNPARSEABLE events are filed, and the paths that write to it —
+# the except branch in dispatch(), and the `or [UNROUTED]` fallback — bypass the
+# per-app authorization block BY DESIGN, because an unparseable event has no
+# space and cannot be authorized against anything. An app registered under that
+# id with allow_inbound: true would therefore drain every unroutable and every
+# UNPARSEABLE event from every space through /v1/inbox, with no hard-rule-#6
+# check ever running.
+#
+# The whole `_` prefix is reserved, not just the one literal, so the next
+# internal bucket is safe without anyone remembering to add it here.
+#
+# This constant lives in core, not in adapters/pubsub.py where it started:
+# registry.py must not import from an adapter (hard rule #3 puts Google-facing
+# code in adapters/, and core reaching into it inverts the layering). The
+# adapter imports it from here, which is the direction that already exists.
+UNROUTED = "_unrouted"
+RESERVED_APP_ID_PREFIX = "_"
+
 
 class RegistryError(ValueError):
     pass
@@ -177,6 +196,14 @@ def load_registry(path: str | Path) -> Registry:
 
     apps: dict[str, App] = {}
     for app_id, spec in (data["apps"] or {}).items():
+        if app_id.startswith(RESERVED_APP_ID_PREFIX):
+            raise RegistryError(
+                f"app id {app_id!r} is reserved: ids beginning with "
+                f"{RESERVED_APP_ID_PREFIX!r} are gateway-internal audit buckets "
+                f"(e.g. {UNROUTED!r}). An app registered under one would receive "
+                "every unroutable and every UNPARSEABLE event from every space, "
+                "bypassing the per-app inbound authorization check (hard rule #6)."
+            )
         spec = spec or {}
         if not spec.get("key_env"):
             raise RegistryError(f"app {app_id!r}: key_env is required")
