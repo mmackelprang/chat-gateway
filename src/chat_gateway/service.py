@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .auth import AuthError, authenticate
 from .delivery import DeliveryLog, Dispatcher
-from .envelope import DeliveryResult, OutboundMessage
+from .envelope import CG_ACTION_KEY, DeliveryResult, OutboundMessage
 from .heartbeat import (
     DEFAULT_TZ, HeartbeatError, HeartbeatMonitor, HeartbeatStore,
 )
@@ -52,8 +52,6 @@ def _interaction_config(registry: Registry, app_id: str) -> dict | None:
     endpoint exists to prevent.
     """
     import os
-
-    from .adapters.pubsub import CG_ACTION_KEY
 
     if not registry.apps[app_id].allow_inbound:
         return {"enabled": False,

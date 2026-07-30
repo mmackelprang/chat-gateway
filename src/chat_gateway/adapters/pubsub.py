@@ -39,7 +39,7 @@ from typing import Iterable, Protocol
 
 import httpx
 
-from ..envelope import InboundReply
+from ..envelope import CG_ACTION_KEY, CG_RESERVED_PREFIX, InboundReply
 from ..inbox import Inbox
 from ..registry import Registry
 
@@ -99,8 +99,12 @@ ADDON_ACTION_KEY = "__action_method_name__"
 # The `__cg_` prefix is RESERVED for gateway transport metadata; apps must not
 # use it. Unknown `__cg_*` keys are passed THROUGH, not eaten: the gateway must
 # not silently discard what it does not understand.
-CG_RESERVED_PREFIX = "__cg_"
-CG_ACTION_KEY = "__cg_action__"
+#
+# The two constants are DEFINED in envelope.py and imported at the top of this
+# module — core must not import from an adapter, and service.py has to publish
+# the key name on /v1/identities. The import binds the names here too, so
+# `from chat_gateway.adapters.pubsub import CG_ACTION_KEY` keeps working; same
+# pattern as UNROUTED.
 
 # A Pub/Sub topic resource path, e.g. projects/p/topics/t.
 #

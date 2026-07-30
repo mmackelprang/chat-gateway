@@ -8,6 +8,27 @@
 | **Unblocks** | `CG-10` (empty `action.id`), `CG-11` (selection-widget wording) — both filed `⏸ blocked · ADR` |
 | **Hard rules engaged** | #1 (transport, never schemas), #2 (secrets), #3 (adapters + flag discipline), #5 (honest `/healthz`), #6 (inbound opt-in) |
 
+> ## ⚠ Status update — 2026-07-29, later the same day
+>
+> **All five §12 open questions are answered, and the two experiments this ADR
+> said would decide option D have RUN.** Read this before acting on anything
+> below; several sections are now historical rather than open.
+>
+> | Item | Outcome |
+> |---|---|
+> | **D2** `__cg_action__` | **APPROVED** and shipped (CG-10). But **reframed to a FALLBACK** — see E1. |
+> | **D6** third flag word | **NO.** `⚠ SHAPE-VERIFIED` stays the only addition. |
+> | **D3** portable card convention | Shipped (CG-13). The card `parameters` example in D2 was **wrong** and is corrected in place — see the callout there. |
+> | **§8** interaction dead-man | Approved, then **superseded before being built.** E1 removed its rationale; **nothing was implemented.** Now `⏸ blocked` pending a decision on whether a general inbound-quietness detector is wanted instead. |
+> | **E1** classic + Pub/Sub `CARD_CLICKED` | **PASSED.** Native delivery, `action.id` populated (`'approve'`), and `onChangeAction` **fires**. §11 trigger 1 has fired. |
+> | **E2** add-on toggle reversibility | **Answered: NO.** The toggle is **create-time only** — §5 option D's "contradictory" note is settled, and D7's parallel-project path was the *only* available one, not merely the prudent one. |
+> | **Migration to option D** | Approved in principle, and now **underway** — `chat-gateway-gw` (`#860649224827`) provisioned. Tracked as CG-21. |
+>
+> The load-bearing consequence: **§3's risk calculus is obsolete in our favour.**
+> The undocumented dependency has a proven, documented destination, so
+> topic-as-function is a genuine bridge with a known exit rather than a bet.
+> Full write-up and the two live-verified capability tables land as **CG-20**.
+
 ---
 
 ## 1. Context
@@ -336,15 +357,30 @@ mistake, not by design.
 
 Producers set, on every interactive card element:
 
+> **⚠ CORRECTED 2026-07-29 (by CG-13, before the convention shipped).** This
+> example originally rendered `parameters` as a JSON **object**. That is **not
+> valid Cards v2**: in a card, `action.parameters` is an **array** of
+> `{"key": …, "value": …}`. The map form is what the *inbound* add-ons event
+> carries (`commonEventObject.parameters`) — two different shapes, and the
+> sketch below conflated them. Both are settled by first-hand capture:
+> `tests/fixtures/addon-buttonclicked-event.json` holds the card we really sent
+> *and* the event we really received, side by side. Corrected in place because
+> `docs/integration-guide.md`, `docs/consumers/jobhunt.md` and
+> `src/chat_gateway/service.py` all cite this ADR as ground truth, so a reader
+> who comes here first would have copied a broken card. Pinned by
+> `test_card_parameters_are_an_array_in_the_real_captured_card`.
+
 ```jsonc
 "onClick": {
   "action": {
     "function": "<the value the gateway publishes as interaction_routing_target>",
-    "parameters": {
-      "__cg_action__": "verdict",     // the action identity — opaque to the gateway
-      "job_id": "job-123",            // the app's own params, untouched
-      "nonce": "n-9"
-    }
+    // An ARRAY of {key, value} — this is the Cards v2 shape. See the note above.
+    "parameters": [
+      {"key": "__cg_action__", "value": "verdict"},  // the action identity —
+                                                     // opaque to the gateway
+      {"key": "job_id", "value": "job-123"},         // the app's own params,
+      {"key": "nonce",  "value": "n-9"}              // untouched
+    ]
   }
 }
 ```
