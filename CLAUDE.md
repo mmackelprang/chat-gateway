@@ -184,6 +184,19 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
     `tests/fixtures/addon-message-event.json`,
     `tests/fixtures/addon-buttonclicked-event.json`). That is not a
     live-round-trip clear and does not remove any flag above.
+  - The **classic** envelope is ⚠ SHAPE-VERIFIED 2026-07-30 for **CARD_CLICKED**
+    (both trigger kinds — a button tap, and a selection widget's
+    `onChangeAction` on a card with **no button at all**) and for
+    **ADDED_TO_SPACE** (real captures from `chat-gateway-gw`, replayed offline:
+    `tests/fixtures/classic-cardclicked-button-event.json`,
+    `classic-cardclicked-onchange-event.json`,
+    `classic-added-to-space-event.json`). Scoped deliberately: classic
+    **MESSAGE** is still CONSTRUCTED, and classic `thread.threadKey`,
+    APP_COMMAND, REMOVED_FROM_SPACE and WIDGET_UPDATED are untouched. Like every
+    ⚠ SHAPE-VERIFIED entry this **clears nothing** — the events were replayed
+    offline, and while two of them were also normalized live off the
+    subscription, that was an ad-hoc diagnostic script, not the gateway's
+    `dispatch` path.
 - **`__cg_action__` — the one inbound-direction envelope field** (ADR-0001 D2,
   user-approved 2026-07-29; shipped as CG-10). Under the add-ons runtime a
   card's `action.function` is the interaction's *destination*, so a card that

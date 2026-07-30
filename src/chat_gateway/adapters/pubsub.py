@@ -27,6 +27,20 @@ PubSubPuller.
 The interaction capture found a DEFECT rather than confirming the mapping: the
 real event yields action.id == "" (see ADDON_ACTION_KEY below and queue item
 CG-10). Nothing about jobhunt R3/R4 is verified by it.
+
+⚠ SHAPE-VERIFIED 2026-07-30: the CLASSIC envelope, for two event types —
+CARD_CLICKED (both trigger kinds: a button tap and a selection widget's
+onChangeAction, the latter from a card with no button at all) and
+ADDED_TO_SPACE. Real captures from the live project `chat-gateway-gw`, replayed
+offline (tests/fixtures/classic-cardclicked-button-event.json,
+classic-cardclicked-onchange-event.json, classic-added-to-space-event.json).
+
+Scope, because "the classic path is verified" would be too broad:
+classic MESSAGE is still CONSTRUCTED (classic-message-event.json), and nothing
+here touches classic `thread.threadKey`, the `commonEventObject.formInputs`
+arm of _normalize_classic, APP_COMMAND / slash commands, REMOVED_FROM_SPACE or
+WIDGET_UPDATED. Per hard rule #3 this accompanies ⚠ LIVE-UNVERIFIED and clears
+nothing on its own.
 """
 
 from __future__ import annotations
@@ -122,10 +136,13 @@ ADDON_ACTION_KEY = "__action_method_name__"
 TOPIC_PATH_RE = re.compile(r"^projects/[^/]+/topics/[^/]+$")
 
 # A per-message capability URL: visiting it erases the user's prompt, makes
-# their private message PUBLIC in the space, and re-delivers it. Google spells
-# it ...Uri in the add-ons envelope and ...Url in the classic one. Blanked from
-# `raw` before anything is written to the audit trail or POSTed to a tenant
-# callback (hard rule #2).
+# their private message PUBLIC in the space, and re-delivers it.
+# Google spells it ...Uri in the add-ons envelope and ...Url in the classic one.
+# Both spellings are now first-hand: the add-ons one from the 2026-07-29
+# message capture, the classic one from the 2026-07-30 ADDED_TO_SPACE capture,
+# where it sits at the ROOT of the event rather than under a payload.
+# Blanked from `raw` before anything is written to the audit trail or POSTed
+# to a tenant callback (hard rule #2).
 REDACTED = "<redacted-by-gateway>"
 CAPABILITY_FIELDS = ("configCompleteRedirectUri", "configCompleteRedirectUrl")
 
@@ -338,8 +355,10 @@ def _action_params(raw_params) -> dict:
     """Classic sends action.parameters as a LIST of {"key","value"}; the
     add-ons runtime sends commonEventObject.parameters as a flat string->string
     MAP. Accept either. The map form is capture-confirmed (2026-07-29); the
-    list branch is still doc-derived and has never been seen from the add-ons
-    runtime."""
+    list branch is still doc-derived FROM THE ADD-ONS RUNTIME, which has never
+    sent it — but it is capture-confirmed on the CLASSIC side as of 2026-07-30
+    (tests/fixtures/classic-cardclicked-button-event.json carries
+    action.parameters == [{"key": "jobId", "value": "mig-001"}])."""
     if isinstance(raw_params, dict):
         return dict(raw_params)
     params: dict = {}
