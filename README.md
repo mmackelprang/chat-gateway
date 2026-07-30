@@ -51,7 +51,7 @@ flowchart LR
 
 ```bash
 pip install -e ".[dev]"
-python3 -m pytest                          # 20 tests, fully offline
+python -m pytest                           # 98 tests, fully offline (no network, no GCP)
 
 cp config/registry.example.yaml config/registry.yaml
 cp .env.example .env

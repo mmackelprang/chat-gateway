@@ -78,12 +78,25 @@ the count from when it was written and moves with every shipped item — it is
 **95** as of CG-7. Take the real count from the suite, not from the plan. (On
 the Windows dev box use `python`, not `python3`.)
 
-**Standing constraint for every item here.** Today's live session cleared two
-flags and no more. `PubSubPuller` stays ⚠ LIVE-UNVERIFIED — every live pull used
-an ad-hoc client, never our class. The `chat-api-push@system.gserviceaccount.com`
-publisher grant stays unproven — both principals are bound and which one
-delivered is unknowable. `aitrader` stays `allow_inbound: false`, locked out of
-every inbound path; nothing in this queue widens any tenant's inbound surface.
+**Standing constraint for every item here — REWRITTEN 2026-07-30.** The previous
+version said *"today's live session cleared two flags and no more; `PubSubPuller`
+stays ⚠ LIVE-UNVERIFIED"*, which is superseded: the 2026-07-30 session cleared
+four flags, `PubSubPuller` among them (CG-24). It was a dated snapshot phrased as
+a forward-looking rule, which is why it aged into a contradiction with the order
+list eleven lines below it. What actually still stands:
+
+- **`aitrader` stays `allow_inbound: false`**, locked out of every inbound path.
+  Nothing in this queue widens any tenant's inbound surface. This is the one that
+  is genuinely permanent — hard rule #6, and it needs explicit user sign-off
+  naming that rule to change.
+- **Do not clear a flag this session's evidence does not reach.** For the current
+  residue read `CLAUDE.md`'s verification ledger, which is the single
+  authoritative list — do **not** restate it here, because every restatement of
+  it in this repo has drifted within two PRs.
+- **The `chat-api-push@system.gserviceaccount.com` grant is CLOSED, not open.**
+  Both principals were bound in `chat-gateway-prod`, which is deleted, so it is
+  unanswerable rather than unproven. It is not a task; do not file work against
+  it.
 
 ---
 
