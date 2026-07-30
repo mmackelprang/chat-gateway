@@ -565,7 +565,7 @@ none. The guard is the control that matters, and it runs on what lands.
 
 ---
 
-### CG-27 · Consumer handoff doc — **aitrader**  📋 queued
+### CG-27 · Consumer handoff doc — **aitrader**  🔨 in flight
 
 | | |
 |---|---|
