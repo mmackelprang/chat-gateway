@@ -227,15 +227,24 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   **The migration is DONE — corrected 2026-07-30 (CG-21).** This paragraph said
   classic was "the preferred destination", that "a migration is underway", and
   that `__cg_action__` was "load-bearing on the runtime deployed **today**".
-  Classic is not a destination, it is **production, since 2026-07-29**, and the
-  runtime deployed today is the one on which this key is **inert**. Every
-  project that ran add-ons is deleted, so nothing in production depends on it.
+  Classic is not a destination, it is **production, since 2026-07-29**. Every
+  project that ran add-ons is deleted, so nothing in production *depends* on
+  this key.
   **It stays anyway, and the reason is now the weaker one — say so rather than
-  keep quoting the strong one.** It still **outranks** the native slot, so a
-  single card behaves identically on either runtime; that is the whole D3
-  portability payoff, and it is what made the migration cost zero producer card
-  changes. Same support-both posture as the two envelope formats — **do not rip
-  it out**, but do not justify it as load-bearing either.
+  keep quoting the strong one.** On classic it is **not needed**: identity
+  arrives natively without it. **"Not needed" is not "not used", and the two
+  must not be collapsed** — ADR-0001 (D2 row, §12) and
+  `docs/integration-guide.md` all say *"inert"*, always paired in the same
+  breath with *"still wins when present"*, and that pairing is load-bearing. The
+  key is checked **first and unconditionally** — *"app-declared, authoritative
+  when present"* (`adapters/pubsub.py:376`) — so on a card that carries it, it
+  is still the operative source of `action.id` on classic. Read *"inert"*
+  anywhere in this repo as *"a producer need not add it"*, never as *"the
+  gateway ignores it"*. That is exactly why it stays: one card behaves
+  identically on either runtime, which is the whole D3 portability payoff and
+  what made the migration cost zero producer card changes. Same support-both
+  posture as the two envelope formats — **do not rip it out**, but do not
+  justify it as load-bearing either.
 - **Card `parameters` shapes — outbound is fixed, inbound is a property of the
   RUNTIME.** Confusing them ships a broken card.
 

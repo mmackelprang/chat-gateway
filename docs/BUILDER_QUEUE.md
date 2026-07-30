@@ -1034,10 +1034,16 @@ territory was left alone.
 pending, or add-ons as production:**
 
 - `CLAUDE.md` — *"a migration is underway"*, and `__cg_action__` justified as
-  *"load-bearing on the runtime deployed **today**"*. On classic it is **inert**;
-  it stays because it still **outranks** the native slot so one card works on
-  either runtime. The keep-it instruction is unchanged; its *justification* is
-  now the weaker one, and the file says so instead of quoting the strong one.
+  *"load-bearing on the runtime deployed **today**"*. On classic it is **not
+  needed**, which is not the same as **not used** — the key is checked first and
+  unconditionally (*"app-declared, authoritative when present"*,
+  `adapters/pubsub.py:376`), so a card that carries it still gets its `action.id`
+  from it. Pre-merge review flagged the risk of collapsing the two, so CLAUDE.md
+  now glosses the repo's existing shorthand *"inert"* — used in ADR-0001 and the
+  integration guide, always paired with *"still wins when present"* — rather
+  than contradicting it. The keep-it instruction is unchanged; its
+  *justification* is now the weaker one, and the file says so instead of quoting
+  the strong one.
 - `.env.example` — the routing-target block labelled the add-ons row **"(today)"**
   and defaulted its hint to the topic path. Rows are **dated** now, and the
   classic answer (any constant) leads. A stale topic path under classic is
