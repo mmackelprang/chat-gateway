@@ -121,13 +121,23 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   still outranks the native slot, so one card behaves identically on both sides
   of the migration. Same support-both posture as the two envelope formats — do
   not rip it out.
-- **Card `parameters` has two shapes, and confusing them ships a broken card.**
-  Outbound, in the card you send, it is an **array** of `{key, value}` (Cards
-  v2). Inbound, in the add-ons event, it is a **map** under
-  `commonEventObject.parameters`. Both are first-hand from the 2026-07-29
-  capture, which echoes the card we sent alongside the event we received.
-  `_action_params` normalizes either; producers must write the array. Pinned by
-  `test_card_parameters_are_an_array_in_the_real_captured_card`.
+- **Card `parameters` shapes — outbound is fixed, inbound is a property of the
+  RUNTIME.** Confusing them ships a broken card.
+
+  | Direction / runtime | Where | Shape |
+  |---|---|---|
+  | outbound, every runtime | `onClick.action.parameters` | **array** of `{key, value}` (Cards v2) |
+  | inbound, **classic** | `action.parameters` | **array** — symmetric with what you sent |
+  | inbound, **add-ons** | `commonEventObject.parameters` | **map** |
+
+  Every row is first-hand. Do **not** compress this to *"you send an array, you
+  receive a map"* — that was briefly written down and it is wrong: the map is an
+  add-ons quirk, not a property of the inbound direction, and a producer
+  debugging a raw classic event after being told otherwise would conclude the
+  gateway was broken. `_action_params` normalizes either, so producers only ever
+  need the first row. Pinned by
+  `test_card_parameters_are_an_array_in_the_real_captured_card` and
+  `test_inbound_parameter_shape_is_a_runtime_property_not_a_direction_rule`.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
   gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`
