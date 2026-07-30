@@ -17,8 +17,8 @@ uvicorn leaked nothing *before* the fix either — the danger was the docstring
 telling the next person the value was safe to print. `_run`'s two reasons for
 keeping its own `/healthz` format are **one** now, and the file says which one
 went. Nine mutations, nine caught, including a control proving the three
-pre-existing marked classes did not get weaker. Suite **190 → 191**. No ⚠ flag
-touched. **Merge gate: user-imposed — the secret-handling path.**
+pre-existing marked classes did not get weaker. Suite **201 → 202** (it was
+190 → 191 before rebasing onto CG-26). No ⚠ flag touched. **Merge gate: user-imposed — the secret-handling path.**
 
 Previously: **CG-26 shipped**
 ([PR #38](https://github.com/mmackelprang/chat-gateway/pull/38)): every rule family
@@ -614,7 +614,11 @@ for it.
 unexercised against Google — every measurement above drives a stand-in server,
 not Google — and this changed what that branch *says*, not what is verified.
 `CLAUDE.md`'s verification ledger is untouched and not restated anywhere.
-Suite **190 → 191**.
+Suite **201 → 202** — **190 → 191** on the `main` this branch was cut from, and
+re-measured rather than re-asserted after rebasing onto CG-26, whose new scan
+covers `tests/**/*.py` and `docs/**/*.md` and therefore reads this row and this
+PR's test file. Both pass it unchanged; the fake values here were written to
+the convention CG-26 was extending.
 
 **Merge gate: user-imposed at dispatch.** The row declared none; the user added
 one because this is the secret-handling path and the leak is now measured — the
