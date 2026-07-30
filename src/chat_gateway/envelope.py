@@ -14,6 +14,12 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 THREAD_KEY_MAX = 128
+# Chat's cap on a message's rendered plain-text field. A transport limit on the
+# envelope — not an app-domain one: whatever an app's content means, this is how
+# much of it the channel will carry in `text`. Named rather than inlined so
+# producers of that field (see notifications.render's info path) can budget
+# against the same number the Field enforces.
+TEXT_MAX = 4000
 
 # --- the gateway-reserved inbound parameter namespace (ADR-0001 D2) ----------
 #
@@ -37,7 +43,7 @@ class OutboundMessage(BaseModel):
     API key server-side — it is never a client-supplied claim."""
 
     identity: str = Field(description="registered identity to send as (e.g. pm-familyworkspace)")
-    text: str = Field(min_length=1, max_length=4000,
+    text: str = Field(min_length=1, max_length=TEXT_MAX,
                       description="plain-text body; also the notification fallback when cards are present")
     cards: list[dict[str, Any]] = Field(
         default_factory=list,
