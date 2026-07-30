@@ -1,6 +1,6 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-33 shipped, PR open and NOT merged**:
+**Last updated:** 2026-07-30 (Builder — **CG-33 shipped, [PR #39](https://github.com/mmackelprang/chat-gateway/pull/39) OPEN and NOT merged**:
 `PubSubError` stops carrying the wire, and then joins the marked set. `_post`
 looked the reason phrase up on the wire (`resp.reason_phrase` — httpcore fills it
 from the literal HTTP/1.1 status line); it uses `httpx.codes` now, as CG-23's two
@@ -525,7 +525,7 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
-### CG-33 · `PubSubError`'s docstring makes a claim about its own reason phrase that is false  ✅ shipped 2026-07-30 · PR pending review
+### CG-33 · `PubSubError`'s docstring makes a claim about its own reason phrase that is false  ✅ shipped 2026-07-30 · [PR #39](https://github.com/mmackelprang/chat-gateway/pull/39) — **OPEN, merge gate held**
 
 **The docstring was made TRUE, not accurate** — `_post` looks the phrase up in
 `httpx.codes` now, exactly as CG-23 did in the two sibling adapters. And the
