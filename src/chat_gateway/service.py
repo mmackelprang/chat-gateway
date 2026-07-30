@@ -324,6 +324,26 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                  # observables if topic-as-function routing ever breaks.
                  "interactions_without_action_id":
                      subscriber.interactions_without_action_id,
+                 # CG-12: each counts CANDIDATE APPS THAT DECLINED an event —
+                 # `allow_inbound: false`, or a sender not on that app's
+                 # allowlist — not events that went nowhere. An opted-out owner
+                 # increments even when a co-owner of the same space RECEIVED
+                 # that same event, and one event with two opted-out owners
+                 # increments by two; `events_seen` is the event count. BARE
+                 # integers — no space, no app id, no content — because this
+                 # endpoint is UNAUTHENTICATED. Full reasoning, and the
+                 # all-owners-opted-out gap this was filed for, sit with the
+                 # counters in adapters/pubsub.py; do not restate them here.
+                 #
+                 # They are deliberately NOT inputs to `status` and never add a
+                 # `reasons` entry, at any magnitude. Both are CORRECT behaviour:
+                 # `opt_out` is hard rule #6 doing its job, `not_authorized` is
+                 # jobhunt's R4 allowlist doing its job. Degrading on a system
+                 # working as designed would teach an operator that "degraded" is
+                 # the normal reading, and an ignored warning is the failure mode
+                 # rule #5 was written after. Do not add a threshold here.
+                 "suppressed_opt_out": subscriber.suppressed_opt_out,
+                 "suppressed_not_authorized": subscriber.suppressed_not_authorized,
                  "poll_failures": subscriber.poll_failures,
                  "consecutive_poll_failures": subscriber.consecutive_poll_failures,
                  "last_poll_error": subscriber.last_poll_error,

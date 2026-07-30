@@ -547,6 +547,16 @@ def normalize_event(event: dict) -> dict:
 
 NOT_AUTHORIZED_TEXT = "⛔ Not authorized for this action."
 
+# CG-12. The `reason` values `dispatch` passes to `on_suppressed`, named so a
+# raw string literal added later is visibly out of place.
+REASON_OPT_OUT = "opt_out"
+REASON_NOT_AUTHORIZED = "not_authorized"
+# THE WHOLE SET. Adding a member means adding a counter in
+# `SubscriberLoop._count_suppressed`; nothing else counts it and the miss is
+# silent at runtime, so `test_every_suppression_reason_reaches_a_counter`
+# iterates this tuple and fails the moment one arrives without a counter.
+SUPPRESSION_REASONS = (REASON_OPT_OUT, REASON_NOT_AUTHORIZED)
+
 
 def _unparseable_core(event) -> dict:
     dedupe = event.get("_pubsub_message_id") if isinstance(event, dict) else None
@@ -558,7 +568,8 @@ def _unparseable_core(event) -> dict:
 def dispatch(event: dict, registry: Registry, inbox: Inbox,
              forwarder=None, reply_fn=None,
              now: dt.datetime | None = None,
-             on_unparseable=None, on_missing_action_id=None) -> list[str]:
+             on_unparseable=None, on_missing_action_id=None,
+             on_suppressed=None) -> list[str]:
     """Route one decoded Chat event. Per app: authorization allowlist check
     (jobhunt R4 — unauthorized users get an in-thread refusal and are never
     forwarded), then inbox + optional callback push (tenant opt-in).
@@ -569,6 +580,22 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
     routed, and a parse failure must not widen anyone's inbound surface
     (hard rule #6). `on_unparseable` lets the subscriber loop count it for
     /healthz without re-parsing.
+
+    `on_suppressed(app_id, reason)` fires once per CANDIDATE APP that declines
+    the event — `allow_inbound: false`, or a sender not on that app's
+    `allowed_users` — independently of what the other candidates did. An
+    opted-out owner fires it even when a co-owner of the same space RECEIVES
+    that same event, so it reports declining APPS, never lost events. A
+    declining app gets no inbox entry and no `_unrouted` record, because
+    writing one would start persisting the traffic of a tenant that opted out
+    of everything (CG-12 option B, rejected); the callback lets the subscriber
+    loop count it for /healthz without anything about the event being retained.
+    `reason` is one of SUPPRESSION_REASONS.
+
+    The callback runs INSIDE the candidate loop, so it must not raise: an
+    exception aborts delivery to LATER candidates. That fails closed — it can
+    only narrow inbound, never widen it, so hard rule #6 is not at risk — but
+    it silently costs a co-owner its copy.
     """
     now = now or dt.datetime.now(dt.timezone.utc)
     # Non-dict events (a bare list, a string) redact to themselves, and
@@ -619,11 +646,34 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
         app = registry.apps.get(app_id)
         if app is not None:
             if not app.allow_inbound:
+                # COUNTED, never recorded (CG-12). This fires for THIS app
+                # declining; a co-owner of the same space can still receive the
+                # event two iterations down. The gap CG-12 was filed for is the
+                # case where every owner opts out: the `or [UNROUTED]` fallback
+                # above never fires — the space HAS owners — so an
+                # aitrader-shaped registry discarded every event in its space
+                # with nothing written to the inbox, nothing under `_unrouted`
+                # and nothing at /healthz, which is the silent discard hard
+                # rule #5 exists to make impossible.
+                if on_suppressed is not None:
+                    on_suppressed(app_id, REASON_OPT_OUT)
                 continue  # opted-out tenant: nothing crosses, ever (hard rule #6)
             sender = (core["sender_email"] or "").lower()
             if app.allowed_users and sender not in app.allowed_users:
                 if reply_fn and core["space"]:
                     reply_fn(core["space"], core["thread_name"], NOT_AUTHORIZED_TEXT)
+                # AFTER the refusal, deliberately: if reply_fn raises, the loop
+                # counts a dispatch_error and this suppression is not also
+                # counted — one fault, one counter FOR THIS APP. Not for the
+                # event: the raise aborts the candidate loop, so an earlier
+                # candidate already counted keeps its increment, and one event
+                # can leave both `suppressed_opt_out: 1` and
+                # `dispatch_errors: 1`. A refused human is a different fact from
+                # an opted-out tenant (jobhunt R4 turning somebody away, versus
+                # rule #6 working as designed), so the loop keeps them in
+                # separate integers.
+                if on_suppressed is not None:
+                    on_suppressed(app_id, REASON_NOT_AUTHORIZED)
                 continue
         inbox.put(reply)
         if app is not None and app.resolved_callback_url() and forwarder is not None:
@@ -664,6 +714,51 @@ class SubscriberLoop:
         # failed). A non-zero value means some producer's cards are missing
         # `__cg_action__` — or that Google changed the runtime underneath us.
         self.interactions_without_action_id = 0
+        # CG-12. Two BARE integers: no space, no app id, no content, no
+        # timestamp, no dedupe key. Three things a reader has to know before
+        # touching either.
+        #
+        # 1. EACH COUNTS CANDIDATE APPS THAT DECLINED AN EVENT — not events that
+        #    went nowhere. `on_suppressed` fires per candidate, independently of
+        #    the others, so an opted-out owner increments this even when a
+        #    co-owner of the same space RECEIVED that same event, and one event
+        #    with two opted-out owners increments by two. Read either as an
+        #    event count and you will both overstate inbound volume and go
+        #    hunting for a delivered event you think was lost; `events_seen` is
+        #    the event count. The gap CG-12 was filed for — a space where EVERY
+        #    owner opted out, so the `or [UNROUTED]` fallback never fires and the
+        #    discard leaves no inbox entry, no `_unrouted` record and nothing
+        #    here — is one CASE of this, not its definition.
+        # 2. NO APP ID — and NOT because app ids are secret. They are not:
+        #    `registry.health()` has published them since v0.1 and
+        #    `inbox.pending` publishes observed inbound volume keyed by app id,
+        #    both on this same unauthenticated endpoint (service.py, "Names,
+        #    never values"). The operative principle is narrower: no
+        #    observed-traffic attribution for a tenant that opted OUT. Those two
+        #    only ever name apps that opted IN (plus `_unrouted`), so naming one
+        #    here discloses what neither does — which is what sank the rejected
+        #    alternatives (a full `_unrouted` audit record; a metadata-only
+        #    record carrying space + event type) and would sink a future
+        #    `last_suppressed_app` or per-space breakdown. Accepted with eyes
+        #    open: with exactly ONE opted-out tenant registered — today's
+        #    deployment — this is a de-facto unauthenticated activity meter for
+        #    that tenant BY INFERENCE, though no field names it. Taken as
+        #    VOLUME-only and marginal: `events_seen` already publishes total
+        #    inbound volume here.
+        # 3. THE TWO REASONS ARE DISTINCT PHENOMENA, which is why this is two
+        #    counters and not one. `opt_out` is hard rule #6 working exactly as
+        #    designed — an app installed in a space it will never serve.
+        #    `not_authorized` is a real human being refused (jobhunt R4):
+        #    somebody tapped a card and got ⛔ in the thread. Merged, an operator
+        #    could not tell "five hundred people were refused" from "five hundred
+        #    events landed in a space nobody serves" — completely different
+        #    investigations. Watch `suppressed_opt_out` in particular: a refusal
+        #    announces itself to the affected human in-thread (wherever a tier-2
+        #    reply path is configured), so a misconfigured `allowed_users` is
+        #    self-revealing, while an opt-out has no signal anywhere but this
+        #    integer — the person who tapped gets silence.
+        self.suppressed_opt_out = 0
+        self.suppressed_not_authorized = 0
         # Poll-level failure tracking. poll_once() raising means the
         # SUBSCRIPTION is unreachable — a revoked key, a deleted subscription, a
         # wrong CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, or free-tier quota exhaustion.
@@ -726,6 +821,22 @@ class SubscriberLoop:
         # it carries the user's text and their space (hard rule #2).
         self.interactions_without_action_id += 1
 
+    def _count_suppressed(self, app_id: str, reason: str) -> None:
+        # Counts only. NEITHER argument is stored anywhere: `app_id` would
+        # attribute observed traffic to an opted-out tenant on an
+        # unauthenticated endpoint (point 2 above), and `reason` only selects
+        # which integer moves.
+        #
+        # No `else`, deliberately. Raising would abort dispatch's candidate loop
+        # mid-way on a code-defect path, and a default bucket would corrupt the
+        # very distinction point 3 exists to preserve — so an unrecognized
+        # reason is dropped silently HERE, and caught instead by the test that
+        # iterates SUPPRESSION_REASONS.
+        if reason == REASON_OPT_OUT:
+            self.suppressed_opt_out += 1
+        elif reason == REASON_NOT_AUTHORIZED:
+            self.suppressed_not_authorized += 1
+
     def poll_once(self) -> int:
         batch = self._puller.pull()
         acks = []
@@ -734,7 +845,8 @@ class SubscriberLoop:
                 dispatch(event, self._registry, self._inbox,
                          forwarder=self.forwarder, reply_fn=self.reply_fn,
                          on_unparseable=self._count_unparseable,
-                         on_missing_action_id=self._count_missing_action_id)
+                         on_missing_action_id=self._count_missing_action_id,
+                         on_suppressed=self._count_suppressed)
             except Exception as exc:  # noqa: BLE001
                 # Parsing is not the only thing that can fail: reply_fn talks
                 # to Google, inbox/delivery-log writes touch disk, and pydantic

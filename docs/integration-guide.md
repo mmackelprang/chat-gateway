@@ -290,6 +290,32 @@ other failure: an event that parsed fine but could not be delivered (callback
 enqueue, in-thread reply, or audit write blew up) — it is acked and dropped
 rather than left to wedge the subscription.
 
+Two further counters cover events that parsed and routed fine but were
+declined. Each counts **candidate apps that declined an event**, not events
+that went nowhere: the decision is made per candidate app, so an opted-out
+owner increments a counter even when another owner of the same space *received*
+that same event, and one event landing in a space with two opted-out owners
+increments by two. `subscriber.events_seen` is the event count.
+`subscriber.suppressed_opt_out` counts owners declining because they are
+`allow_inbound: false`; `subscriber.suppressed_not_authorized` counts owners
+refusing a sender who is not on their `allowed_users` list — nothing was
+forwarded and, when a tier-2 reply path is configured, that user got an
+in-thread `⛔ Not authorized for this action.` Neither is a fault and neither
+makes `/healthz` report `degraded` — they are guarantees working, not failures
+— but the case that motivated them, a space whose registered owners **all**
+opted out, used to discard events with no trace anywhere at all.
+
+Watch `suppressed_opt_out` in particular. A `not_authorized` suppression
+announces itself to the affected human in the thread, so a misconfigured
+`allowed_users` is self-revealing; an `opt_out` has no signal anywhere except
+that integer — the person who tapped gets silence.
+
+They are **bare integers by design**: no space, no app id, no sender, no
+content, no timestamp. `/healthz` needs no authentication, so anything
+attributable reported here would be readable by anyone who can reach the port.
+If you need to know *which* space or *which* user, `/healthz` is not where you
+will find it; that is a deliberate omission, not a gap.
+
 ## Inbound replies — `GET /v1/inbox` (tier 2, opt-in)
 
 Polling returns and clears your app's replies (each carries `space`,
