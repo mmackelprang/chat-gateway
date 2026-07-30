@@ -98,6 +98,30 @@ def test_chat_api_adapter_body_and_space_guard():
         adapter.send(Identity(name="x", display="X", mode="app", space=""), MSG)
 
 
+def test_send_text_wraps_transport_failure_as_chat_api_error():
+    """CG-25: send_text() is jobhunt R7's in-thread failure notice and R4's
+    authorization refusal — the one method whose entire job is telling a user
+    something went wrong. Before this, a connection reset, DNS failure or read
+    timeout propagated as a raw httpx exception, so a caller could only tell
+    "Google refused us" from "we never reached Google" by string-matching an
+    exception type instead of catching ChatApiError like every other adapter
+    path. This drives a transport failure (never a response) through
+    MockTransport and asserts the raw exception no longer escapes, the message
+    names the exception TYPE only (never a body, URL or space — that shape is
+    CG-23's separate scope), and `from exc` is preserved so a debugger still
+    has the original traceback.
+    """
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    adapter = ChatApiAdapter(lambda: "tok-123", mock_client(unreachable))
+    with pytest.raises(ChatApiError) as exc:
+        adapter.send_text("spaces/AAA", "spaces/AAA/threads/T", "you are not authorized")
+
+    assert "ConnectError" in str(exc.value)
+    assert isinstance(exc.value.__cause__, httpx.ConnectError)
+
+
 CHAT_EVENT = {
     "type": "MESSAGE",
     "space": {"name": "spaces/AAA"},

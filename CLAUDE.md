@@ -98,7 +98,7 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   | Surface | Note |
   |---|---|
   | every adapter's **non-200** branches (`webhook.send`, `chat_api.send`, `chat_api.send_text`, `pubsub._post`) | no Google error response has ever been observed |
-  | `webhook.send` + `chat_api.send`'s **`httpx.HTTPError`** branches | `send_text` has none at all — that is CG-25 |
+  | `webhook.send`, `chat_api.send` and `chat_api.send_text`'s **`httpx.HTTPError`** branches | none of the three has ever been exercised against Google |
   | **`chat_api.send()`'s `thread.threadKey` threading branch** | a **success** path, not an error path. The live `send()` posts were unthreaded, and `send_text()`'s clear does not reach it — different field, different request shape. |
   | **`pubsub.pull()`'s `_undecodable` branches** | malformed-payload handling. Nothing on the live subscription was malformed, so both stay reasoned-about. |
   | **`SubscriberLoop`'s long-run thread behaviour** | not a branch at all — no multi-hour live run has happened. |
