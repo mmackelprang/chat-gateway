@@ -1,6 +1,26 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-26 shipped**
+**Last updated:** 2026-07-30 (Builder — **CG-33 shipped, PR open and NOT merged**:
+`PubSubError` stops carrying the wire, and then joins the marked set. `_post`
+looked the reason phrase up on the wire (`resp.reason_phrase` — httpcore fills it
+from the literal HTTP/1.1 status line); it uses `httpx.codes` now, as CG-23's two
+siblings already did. Measured over real TCP against a hostile status line:
+`... HTTP 403 Forbidden key=FAKEKEYVALUE&token=FAKETOKENVALUE` → `... HTTP 403
+Forbidden`. **The allowlist call the dispatch reserved for Builder: admit it** —
+not for symmetry but because the structural guard reads MARKED classes only, so
+an unmarked class's raise sites are unguarded. That meant teaching the guard a
+second message-assembly shape. **Ordering is load-bearing and was measured as a
+counterfactual** — the marker without the lookup hands the wire bytes to
+`describe_exception`; they ship in one commit. **UAT confirms the row's own LOW
+severity rather than inflating it:** a real `SubscriberLoop` against a real
+uvicorn leaked nothing *before* the fix either — the danger was the docstring
+telling the next person the value was safe to print. `_run`'s two reasons for
+keeping its own `/healthz` format are **one** now, and the file says which one
+went. Nine mutations, nine caught, including a control proving the three
+pre-existing marked classes did not get weaker. Suite **190 → 191**. No ⚠ flag
+touched. **Merge gate: user-imposed — the secret-handling path.**
+
+Previously: **CG-26 shipped**
 ([PR #38](https://github.com/mmackelprang/chat-gateway/pull/38)): every rule family
 in the fixture guard now has a test that proves it **fires** and a case that proves
 it **discriminates** — and the guard finally reads the directories that actually
@@ -505,7 +525,103 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
-### CG-33 · `PubSubError`'s docstring makes a claim about its own reason phrase that is false  🚀 in-flight
+### CG-33 · `PubSubError`'s docstring makes a claim about its own reason phrase that is false  ✅ shipped 2026-07-30 · PR pending review
+
+**The docstring was made TRUE, not accurate** — `_post` looks the phrase up in
+`httpx.codes` now, exactly as CG-23 did in the two sibling adapters. And the
+second half, which the row did not contain: **`PubSubError` joined the
+`GatewayAuthoredError` set.** Measured through the real `PubSubPuller` over real
+TCP, against a stand-in Pub/Sub sending a hostile HTTP/1.1 status line:
+
+| | before | after |
+|---|---|---|
+| `exc.reason` | `Forbidden key=FAKEKEYVALUE&token=FAKETOKENVALUE` | `Forbidden` |
+| `str(PubSubError)` | `pubsub pull failed: HTTP 403 Forbidden key=FAKEKEYVALUE&token=FAKETOKENVALUE` | `pubsub pull failed: HTTP 403 Forbidden` |
+| `describe_exception` | `PubSubError` (type only — it was unmarked) | `PubSubError: pubsub pull failed: HTTP 403 Forbidden` |
+
+**Severity is exactly what the row said, and UAT confirmed it rather than
+inflating it.** A real `SubscriberLoop` thread polling a 403 through real
+uvicorn, checked at `/healthz`, in its `reasons` prose and on the gateway
+console, leaked **nothing before the fix either** — `last_poll_error` was
+`PubSubError HTTP 403` on both sides. The wire bytes lived in `str(exc)` and
+`.reason`, which no consumer renders. What was dangerous was the **docstring**,
+telling the next person the value was safe to print.
+
+**Which makes the ordering of the two halves load-bearing, and it was
+measured as a counterfactual:** with the marker applied but `_post` still
+reading the wire, `describe_exception` returns
+`PubSubError: pubsub pull failed: HTTP 403 Forbidden key=FAKEKEYVALUE&token=FAKETOKENVALUE`.
+Marking a class is what makes its message printable, so the lookup must never be
+split from the marker. They ship in one commit.
+
+**The allowlist decision, which the dispatch reserved for Builder.** Admit it —
+and the reason is not symmetry with its two siblings, though it is now
+structurally identical to them. `test_every_marked_message_interpolates_only_names_and_statuses`
+reads the construction sites of **marked classes only**. Left out, `PubSubError`'s
+raise site would sit outside that guard forever and this fix would rest on one
+behavioural test, where its siblings' identical CG-23 fix is *also*
+machine-checked. **Joining the set is how a class's raise sites get enrolled in
+the guard**, and that is what the marker buys. The fail-closed objection — every
+addition widens what may be printed — is real and is answered by the same guard:
+membership is checked, not promised.
+
+**The honest cost, recorded rather than glossed.** `SubscriberLoop._run` gave
+**two independent reasons** not to unify `/healthz`'s `last_poll_error` onto
+`describe_exception`. CG-33 **removes one**: the helper no longer drops the HTTP
+status, because a marked `PubSubError` prints in full. The survivor is
+sufficient alone — `last_poll_error` is an unauthenticated `/healthz` field
+whose exact string is pinned in `test_adapters.py` and `test_service.py` and
+which is interpolated into a `reasons` line — and the comment and its test now
+stand on that one and say plainly which one went.
+
+**Teaching the guard the second message shape was the real work.** The guard
+assumed a marked class takes its finished message as its single constructor
+argument (`ChatApiError(f"...")`). `PubSubError(verb, status_code, reason)`
+builds its f-string inside `__init__`, so the literal text is in the class and
+the values are chosen at a call site three frames away; reading either half
+alone reads nothing. It reads both now. `verb` is a bare parameter, and rather
+than approve the bare NAME — a hole, since a twice-bound `verb = resp.text`
+resolves to nothing and would then match — a new `_literal_parameters` proves it
+constant at every in-package call.
+
+**Pre-merge review's one caveat was enforced, not documented.** That proof is
+only as wide as the scan, and the scan is `src/chat_gateway/` — which is "every
+call" for an underscore-private function and nothing like it for a public one,
+whose callers live in consumer code. Restricted to private names, pinned by a
+test, because that branch has no observable effect on the real tree and nothing
+else would catch its removal.
+
+**Nine mutations, nine caught** — each applied to a clean tree and run against
+the full suite:
+
+| | reverted | failures |
+|---|---|---|
+| M1 | `_post` back to `resp.reason_phrase` — the defect | 2 |
+| M2 | `PubSubError(..., resp.text)` | 3 |
+| M3 | construct-then-raise hiding the wire value | 2 |
+| M4 | a `_post` caller stops passing a literal verb | 2 |
+| M5 | the marker removed from `PubSubError` | 3 |
+| M6 | `__init__` interpolates something not from its parameters | 3 |
+| M7 | `_run` unified onto `describe_exception` | 3 |
+| M8 | the privacy restriction removed from `_literal_parameters` | 1 |
+| M9 | **control** — `ChatApiError` smuggles `resp.text` | 3 |
+
+M9 is the one that matters beyond this row: the shape-1 path was rewritten in
+place, and M9 proves the three pre-existing marked classes did not get weaker
+for it.
+
+**Flags: none cleared, added or reworded.** `_post`'s non-200 branch is still
+unexercised against Google — every measurement above drives a stand-in server,
+not Google — and this changed what that branch *says*, not what is verified.
+`CLAUDE.md`'s verification ledger is untouched and not restated anywhere.
+Suite **190 → 191**.
+
+**Merge gate: user-imposed at dispatch.** The row declared none; the user added
+one because this is the secret-handling path and the leak is now measured — the
+same rule and the same class of value that gated CG-23 and CG-34. PR opened, not
+merged.
+
+<details><summary>The row as filed</summary>
 
 | | |
 |---|---|
@@ -548,6 +664,8 @@ pinned by `test_reason_phrase_is_looked_up_locally_not_read_off_the_wire`) and
 deliberately did **not** touch `pubsub.py` — a concurrent Builder owned that file.
 Either make the docstring true by switching to the local lookup, or make it
 accurate by saying the phrase comes off the wire. Not both, and not neither.
+
+</details>
 
 ---
 
