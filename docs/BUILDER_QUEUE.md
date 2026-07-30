@@ -988,6 +988,7 @@ payloads that succeed today, which is the one thing this item was forbidden to
 do, so it is a separate row rather than a silent gap. It is now the only
 remaining 500 on this path, and `docs/consumers/aitrader.md` §11 says so rather
 than claiming the 500 is gone.
+
 ---
 
 ### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  ✅ shipped 2026-07-30 · [PR #TBD](https://github.com/mmackelprang/chat-gateway/pulls)
