@@ -1,6 +1,16 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-30 shipped**
+**Last updated:** 2026-07-30 (Builder — **CG-23 shipped**
+([PR #29](https://github.com/mmackelprang/chat-gateway/pull/29)): the
+`resp.text[:200]` echo is gone from `webhook.send` and `chat_api.send`. Measured,
+not argued: driving a real 403 through the real gateway over real TCP put the
+webhook's `key` AND `token` into **three** artifacts before the fix — the HTTP
+502 body handed back to the calling app, the delivery log, and the JSONL audit
+file on disk — and into **none** after. Suite **140 → 144**. **CG-33 and CG-34
+filed** — `PubSubError` makes a false claim about its own reason phrase, and
+`httpx` logs the whole webhook URL at INFO.
+
+Previously: **CG-30 shipped**
 ([PR #28](https://github.com/mmackelprang/chat-gateway/pull/28)): the `info`
 render path's combined title+body overflow is a **422 naming the limit and the
 size**, where it was an uncaught **500**. Scoped to `info` and derived, not
@@ -175,14 +185,15 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24,
-CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20 and CG-30 have since
-shipped). **CG-29** was filed by Builder from CG-25's UAT, **CG-31** by Builder
-from CG-11+CG-20's pre-merge review, and **CG-32** by Builder from CG-30's
-verification pass; all three are
+Remaining order: **CG-19 → CG-21 → CG-26** (CG-7, CG-4, CG-5, CG-24,
+CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30 and CG-23 have
+since shipped). **CG-29** was filed by Builder from CG-25's UAT, **CG-31** by
+Builder from CG-11+CG-20's pre-merge review, **CG-32** by Builder from CG-30's
+verification pass, and **CG-33 + CG-34** by Builder from CG-23's pre-merge review
+and UAT; all five are
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
-CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
+CG-19 and CG-21 carry **merge gates** — pause and report rather than
 auto-merging; CG-17 and CG-18 stay deferred and must not be executed.
 
 **CG-9 was unblocked and shipped on 2026-07-30**, merged into CG-22's slot
@@ -372,42 +383,90 @@ comments/defaults only; no resource changes.
 
 ---
 
-### CG-23 · The `resp.text[:200]` echo survives in both sibling adapters  🔨 in flight · ⏸ merge gate
+### CG-33 · `PubSubError`'s docstring makes a claim about its own reason phrase that is false  📋 queued
 
 | | |
 |---|---|
-| **Rule** | **hard rule #2** — secrets are env-only; error paths name the identity, not the URL |
-| **Origin** | filed by CG-7: fixing this in `PubSubError` left two siblings with the identical defect |
-| **Depends on** | nothing (CG-4 and CG-5 touch these files' docstrings only and do not collide) |
-| **Merge gate** | **touches the secret-handling path — Builder must pause and report before merging**, per the session merge policy |
+| **Rule** | **hard rule #2** |
+| **Origin** | filed by Builder 2026-07-30 from **CG-23's** pre-merge review — **verified against httpx's source, not reasoned** |
+| **Depends on** | nothing |
+| **Touches** | `src/chat_gateway/adapters/pubsub.py` — one docstring, and possibly one argument |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
 
-CG-7 removed `resp.text[:200]` from the Pub/Sub error path on the grounds that
-**a Google error body can quote the request, and the request path names the
-subscription.** That argument applies with *more* force two files over:
+`PubSubError`'s docstring (`adapters/pubsub.py:157`) says:
 
-| Location | What the URL embeds |
+> The reason phrase is a fixed HTTP string and carries nothing.
+
+**It is not a fixed string.** `httpx.Response.reason_phrase` returns
+`extensions["reason_phrase"]` when present — which httpcore populates from the
+literal **HTTP/1.1 status line** — and falls back to the local table only when
+the server sent none. `_post` (`pubsub.py:228`) passes that wire value straight
+into the exception:
+
+```python
+raise PubSubError(verb, resp.status_code, resp.reason_phrase)
+```
+
+So `PubSubError.reason` and its `str()` carry **server-controlled bytes**, and
+the docstring asserts the opposite. Verified on httpx 0.28.1: a response built
+with `extensions={"reason_phrase": b"Attacker Controlled"}` returns exactly that
+from `.reason_phrase`, while `httpx.codes.get_reason_phrase(403)` — a pure local
+enum lookup — returns `"Forbidden"`.
+
+**Severity today is genuinely LOW, and saying so is not a hedge:** every current
+consumer of `PubSubError` was traced, and none renders `str(exc)`.
+`SubscriberLoop._run` (`pubsub.py:879-889`) and `/healthz`'s `last_poll_error`
+use `type(exc).__name__` + `exc.status_code` only. Nothing exposes the smuggled
+text anywhere. What is wrong is the **docstring**, which tells the next person
+the value is safe to render — and the next person who prints `str(exc)` in a log
+line is doing what the docstring says is fine.
+
+**CG-23 fixed the two sibling adapters this way** (`httpx.codes.get_reason_phrase(status)`,
+pinned by `test_reason_phrase_is_looked_up_locally_not_read_off_the_wire`) and
+deliberately did **not** touch `pubsub.py` — a concurrent Builder owned that file.
+Either make the docstring true by switching to the local lookup, or make it
+accurate by saying the phrase comes off the wire. Not both, and not neither.
+
+---
+
+### CG-34 · `httpx` logs the whole webhook URL — key and token — at INFO  📋 queued
+
+| | |
 |---|---|
-| `src/chat_gateway/adapters/webhook.py:64` | `key` **and** `token` — the webhook URL *is* a bearer credential for posting as that identity |
-| `src/chat_gateway/adapters/chat_api.py:83` | a space id (non-secret) — lower severity, same class |
+| **Rule** | **hard rule #2** — never log a webhook URL; it embeds `key`+`token` |
+| **Origin** | filed by Builder 2026-07-30 from **CG-23's UAT** — **observed, not predicted** |
+| **Depends on** | nothing |
+| **Touches** | wherever logging is configured (`__main__.py`, the deploy unit) — plus possibly a `WebhookAdapter` client default |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
 
-Two things make this worth its own item rather than a shrug:
+The `httpx` logger emits one line **per request, success or failure**:
 
-1. **The same file already does it correctly.** `chat_api.py:103`
-   (`send_text`, the jobhunt R7 / R4 path) raises with **status only**. So the
-   file contradicts itself, and the wrong half is the one on the
-   credential-bearing adapter.
-2. **We do not control the body.** Whether Google echoes the request today is
-   not the question — rule #2 is written so the answer does not have to be
-   known. `docs/google-cloud-setup.md` §8a exists because a webhook URL leaked
-   once already, and there is no rotate-in-place: recovery is delete-and-recreate
-   the webhook by hand.
+```
+HTTP Request: POST http://…/v1/spaces/AAA/messages?key=REDACTED&token=REDACTED "HTTP/1.0 403 Forbidden"
+```
 
-Expected shape: the `PubSubError` treatment applied to `WebhookError` and
-`ChatApiError` — verb/identity + HTTP status + reason phrase, no body. State the
-cost honestly, as CG-7 did: Google's error prose is lost, and status + phrase is
-what a caller can act on. Not folded into CG-4/CG-5 because those are docstring
-and flag-scope changes that auto-merge, while this changes runtime error text on
-the secret-handling path and therefore needs a pause.
+Observed during CG-23's UAT, against the real `WebhookAdapter`. This is
+**independent of CG-23** — it is identical before and after that change, because
+it is httpx logging its own request, not the gateway echoing a response.
+
+**Not a leak in the default deployment, and the reason is specific:** the root
+logger defaults to `WARNING`, and uvicorn's `LOGGING_CONFIG` configures only
+`uvicorn`, `uvicorn.error` and `uvicorn.access` — it never touches root
+(verified). So the line is dropped today.
+
+**It becomes a leak the moment anyone calls `logging.basicConfig(level=INFO)`**,
+which is the single most common thing a Python service does when someone wants
+request logs. At `DEBUG` it is worse: httpcore adds `connect_tcp.started
+host=… ` and full header traces. The exposure is therefore **one config line
+away**, in a repo whose §8a exists because a webhook URL leaked once already —
+and unlike an error body, this fires on the **happy path**, so it would leak on
+every notification the gateway ever sends rather than only on failures.
+
+Options, none obviously right: pin `logging.getLogger("httpx").setLevel(WARNING)`
+at startup (cheap, but silently fights an operator who deliberately asked for
+DEBUG); build the adapter's `httpx.Client` with logging suppressed; or document
+it as an operator constraint in the deploy doc. The last is weakest — a rule that
+depends on nobody ever adding `basicConfig` is not enforced.
 
 ---
 
@@ -743,6 +802,77 @@ worktree per Builder and never a shared working directory.)_
 ---
 
 ## Recently shipped
+
+### CG-23 · The `resp.text[:200]` echo survives in both sibling adapters  ✅ shipped 2026-07-30 · [PR #29](https://github.com/mmackelprang/chat-gateway/pull/29)
+
+CG-7's argument — *a Google error body can quote the request, and the request
+path names the subscription* — applied with more force two files over, and both
+non-200 branches now raise **verb/identity + HTTP status + reason phrase**:
+
+```
+webhook POST failed for pm-familyworkspace: HTTP 403 Forbidden
+Chat API send failed for agent-comms: HTTP 403 Forbidden
+```
+
+**The blast radius was measured, not asserted, and it was wider than the row
+described.** The row said the defect was the adapter's error text. UAT drove a
+real 403 through the **real gateway over real TCP** (a `ThreadingHTTPServer`
+standing in for Google, returning a body that quotes the request URL — the case
+rule #2 exists for) and found the webhook's `key` **and** `token` in three
+artifacts:
+
+| Artifact | Before | After |
+|---|---|---|
+| the HTTP **502 body returned to the calling app** (`service.py:191-192`) | `key`+`token` | clean |
+| the delivery log / `GET /v1/deliveries` | `key`+`token` | clean |
+| the **JSONL audit file on disk** (`delivery.py:124,128`) | `key`+`token`, **once per retry** | clean |
+| `/healthz` | clean | clean |
+| gateway console at default log level | clean | clean |
+
+The 502 row is the one that reframes the item: the credential was handed **back
+across the tenant boundary** to whichever app called `/v1/messages`, not merely
+written to a log the operator owns. The audit-file row is the durable one — on
+the `/v1/notify` path the dispatcher writes `{exc}` on every retry, so one failing
+notification persisted the credential to disk three times.
+
+**The reason phrase is looked up LOCALLY, and that is not a stylistic choice.**
+`resp.reason_phrase` is **not** a fixed string: httpx returns
+`extensions["reason_phrase"]`, which httpcore fills from the HTTP/1.1 status
+line, falling back to the local table only when the server sent none. Using it
+would have re-admitted server-controlled bytes in the very item whose premise is
+that the response is not trusted. Both adapters call
+`httpx.codes.get_reason_phrase(status)` — a pure local enum lookup — pinned by a
+test that hands back a hostile status line. **The same defect is live in
+`PubSubError`, whose docstring claims the opposite; filed as CG-33** rather than
+fixed, because a concurrent Builder owned `pubsub.py`.
+
+**The cost, stated as CG-7 stated it and not glossed:** Google's error prose is
+**lost**. A 403 no longer distinguishes "webhook deleted" from "space archived"
+from "sender blocked"; that now has to come from the space itself or Google's own
+logs. Status plus phrase is what a caller can act on — retry, alert, give up —
+and the prose was only ever useful to a human reading a log.
+
+**CG-25 was not undone**, and there is a test that says so rather than a claim.
+`send_text`'s two branches keep their deliberate byte-symmetry and their exact
+strings (`in-thread reply failed: HTTP 403` / `: ConnectError`), which are
+load-bearing for jobhunt's R7 delivery-log line. That leaves one **residual
+asymmetry inside the file** — `send()` and `webhook.send` say `HTTP 403
+Forbidden`, `send_text` says `HTTP 403`. Deliberate, scoped, and now **pinned by
+a test** so it stays a decision rather than drifting; the review called it a wart
+worth naming, and naming it is what that test does. Its non-200 format had no
+coverage at all before.
+
+**Flags: none cleared, added or reworded.** Both non-200 branches remain
+⚠ LIVE-UNVERIFIED — this changes what they *say*, not what is verified against
+Google, and the new tests drive `MockTransport`, not Google. `CLAUDE.md`'s
+verification ledger is untouched and not restated. Suite **140 → 144**;
+mutation-tested (reverting the two raise sites fails exactly the three new
+rule-#2 tests). **CG-34 also filed** from UAT: `httpx` logs the entire webhook
+URL at INFO — dropped by default, one `basicConfig` call away from a happy-path
+leak.
+
+**One thing this PR could not do:** `CLAUDE.md`'s "136 passing" line is now stale
+(144), but that file is owned by CG-21 this session and was left alone.
 
 ### CG-30 · `info` severity 500s on a payload every other severity accepts  ✅ shipped 2026-07-30 · [PR #28](https://github.com/mmackelprang/chat-gateway/pull/28)
 

@@ -170,10 +170,9 @@ def test_webhook_error_names_the_identity_and_never_the_url(monkeypatch):
     assert "https://" not in msg
     # no body, in any quantity
     assert "PERMISSION_DENIED" not in msg
-    assert resp_body_free(msg)
-    # and what a caller CAN act on: which identity, and the status
-    assert "for pm" in msg
-    assert "HTTP 403 Forbidden" in msg
+    # Exact equality rather than a length bound: it pins the whole message, so
+    # ANY appended body fails it, including one this test does not know to name.
+    assert msg == "webhook POST failed for pm: HTTP 403 Forbidden"
 
 
 def test_chat_api_send_error_carries_status_not_response_body():
@@ -194,12 +193,10 @@ def test_chat_api_send_error_carries_status_not_response_body():
         adapter.send(ident, MSG)
 
     msg = str(exc.value)
-    assert "for pm" in msg
-    assert "HTTP 403 Forbidden" in msg
     assert "PERMISSION_DENIED" not in msg
     assert "spaces/AAA" not in msg
     assert "chat.googleapis.com" not in msg
-    assert resp_body_free(msg)
+    assert msg == "Chat API send failed for pm: HTTP 403 Forbidden"
 
 
 def test_reason_phrase_is_looked_up_locally_not_read_off_the_wire(monkeypatch):
@@ -242,14 +239,35 @@ def test_reason_phrase_is_looked_up_locally_not_read_off_the_wire(monkeypatch):
     assert str(exc.value).endswith("HTTP 403 Forbidden")
 
 
-def resp_body_free(msg: str) -> bool:
-    """An adapter error is verb/identity + status + phrase, and stops there.
+def test_send_text_failure_strings_are_unchanged_by_cg_23():
+    """CG-23 did NOT touch `send_text` — this is the test that says so.
 
-    Length is a blunt but honest proxy for "no body got in": `resp.text[:200]`
-    could add up to 200 characters, and every legitimate message here is well
-    under 80.
+    CG-25 made this method's two branches deliberately byte-symmetric, and
+    those exact strings are load-bearing for jobhunt's R7 delivery log (the
+    composed line reads `in-thread notice also failed: in-thread reply
+    failed: ConnectError`). CG-23 changed `send()` and `webhook.send` to append
+    a reason phrase; this method deliberately did NOT get one, so it still says
+    "HTTP 403", not "HTTP 403 Forbidden".
+
+    That residual asymmetry inside one file is a wart, and pinning it is how it
+    stays a deliberate one rather than drifting silently. The non-200 branch had
+    no format coverage at all before this.
     """
-    return len(msg) < 80
+    def denied(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text=f"PERMISSION_DENIED on {request.url}")
+
+    adapter = ChatApiAdapter(lambda: "tok", mock_client(denied))
+    with pytest.raises(ChatApiError) as exc:
+        adapter.send_text("spaces/AAA", "spaces/AAA/threads/T", "refused")
+    assert str(exc.value) == "in-thread reply failed: HTTP 403"
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    with pytest.raises(ChatApiError) as exc:
+        ChatApiAdapter(lambda: "tok", mock_client(unreachable)).send_text(
+            "spaces/AAA", "spaces/AAA/threads/T", "refused")
+    assert str(exc.value) == "in-thread reply failed: ConnectError"
 
 
 CHAT_EVENT = {
