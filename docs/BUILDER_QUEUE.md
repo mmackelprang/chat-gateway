@@ -1,6 +1,22 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-29 shipped**
+**Last updated:** 2026-07-30 (Builder — **CG-36 shipped**
+([PR #36](https://github.com/mmackelprang/chat-gateway/pull/36)): one clause and a
+link, in one paragraph of `docs/integration-guide.md`. The `/v1/notify` summary
+stated the collapsed dedupe count unconditionally; CG-32 made it degrade on an
+`info` payload with no room. **The ladder is deliberately NOT reproduced there** —
+the guide now says *that* the counter yields, *why* (hard rule #1: it is the
+gateway's own decoration, so it is what gives), and *where* the count survives,
+and links `docs/consumers/aitrader.md` §11 for *how*. Link-don't-re-summarize is
+the whole point of the row, not a size preference: this repo has corrected the
+"adapters' error branches" shorthand three times. Drift surface reduced to zero —
+if the ladder changes, that paragraph stays true unedited. The link is the only
+breakable thing in the PR and it was tested both ends against GitHub's own
+renderer, not asserted: the paragraph emits **one** `href` despite the newline
+inside its link text, and the live-rendered `aitrader.md` really carries that
+anchor. Suite **190**, unmoved. No ⚠ flag cleared, added or reworded.
+
+Previously: **CG-29 shipped**
 ([PR #35](https://github.com/mmackelprang/chat-gateway/pull/35)): `poll_once` prints
 the detail CG-25 created, and still nothing else. A marker base class
 (`src/chat_gateway/errors.py`, core-owned so `pubsub.py` need not import
@@ -303,11 +319,12 @@ outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-26** (CG-7, CG-4, CG-5, CG-24,
 CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23, CG-19,
-CG-32, CG-21, CG-34, CG-31 and CG-29 have since shipped). **CG-33** was filed
+CG-32, CG-21, CG-34, CG-31, CG-29 and CG-36 have since shipped). **CG-33** was filed
 by Builder from CG-23's pre-merge review, **CG-35** by Builder from CG-19,
 **CG-36** by Builder from CG-32's docs pass, **CG-37** by Builder from
-CG-21's inventory, and **CG-42** by Builder from CG-31's UAT; all five are
-appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
+CG-21's inventory, and **CG-42** by Builder from CG-31's UAT; all five were
+appended last, unprioritized — the user sets priority. **CG-36 has since shipped**;
+the other four remain queued. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-35 carries a **merge gate** — pause and report rather than
 auto-merging; CG-17 and CG-18 stay deferred and must not be executed.
@@ -632,34 +649,6 @@ links here; the fix is to add the same qualification to §7's worked example.
 
 ---
 
-### CG-36 · `integration-guide.md` states the dedupe counter unconditionally  📋 queued
-
-| | |
-|---|---|
-| **Origin** | filed by Builder 2026-07-30 from **CG-32's** docs pass |
-| **Depends on** | nothing (CG-32 shipped the behaviour this describes) |
-| **Touches** | `docs/integration-guide.md` (the `/v1/notify` summary paragraph) |
-| **Priority** | **appended last, unprioritized.** The user sets order. |
-
-CG-32 made the dedupe counter degrade — full `" (×N since last notice)"`, then
-`" (×N)"`, then nothing — when an `info` payload leaves no room for it.
-`docs/consumers/aitrader.md` §5 and §11 say so. `docs/integration-guide.md`'s
-one-line notify summary still says the collapsed count *"rides on the next
-delivery (`×N since last notice`)"* with no qualification.
-
-**Small, and deliberately not fixed in passing.** It is a general-audience
-summary, not a guarantee a consumer would build against — the precise statement
-lives in the consumer doc, and this repo's standing discipline is that a summary
-which drifts should link rather than be re-summarized. It was also outside
-CG-32's stated file boundary while three Builders ran concurrently, which is why
-it is a row instead of a one-line diff someone else has to merge around.
-
-The fix is one clause plus a pointer at `docs/consumers/aitrader.md` §11 — or,
-if the reviewer prefers, deleting the parenthetical entirely and letting the
-consumer doc own the detail.
-
----
-
 ### CG-35 · Two IaC leftovers CG-19 was forbidden to touch  📋 queued · ⏸ merge gate
 
 | | |
@@ -832,6 +821,52 @@ every item's content and re-applying only the resolver's own row.)_
 ---
 
 ## Recently shipped
+
+### CG-36 · `integration-guide.md` stated the dedupe counter unconditionally  ✅ shipped 2026-07-30 · [PR #36](https://github.com/mmackelprang/chat-gateway/pull/36)
+
+One clause and a link, in one paragraph. `docs/integration-guide.md`'s `/v1/notify`
+summary said the collapsed count *"rides on the next delivery (`×N since last
+notice`)"* full stop; since CG-32 it degrades when an `info` payload leaves no room.
+It now reads *"— **when there is room for it.**"* plus two sentences of *why* and
+*where*, and links `docs/consumers/aitrader.md` §11 for the rest.
+
+**The row's real content was the SHAPE of the fix, and it was honoured: the
+degradation ladder is not reproduced in the guide.** The paragraph carries only
+what does not change — that the counter yields, that hard rule #1 is why it is the
+counter and never the app's body that gives, and that the count is in the delivery
+log regardless. `" (×N)"` and the ordering of the fallbacks stay in §11, which owns
+them. So a future change to the ladder or to the room calculus cannot make this
+paragraph wrong: **the drift surface is zero, not merely smaller.** That is the
+standing discipline `CLAUDE.md` states about the verification ledger, and it is not
+theoretical here — the "adapters' error branches" shorthand has been written and
+corrected **three** times in this repo, and CG-32's own docs pass filed this row
+rather than fix it in passing for the same reason.
+
+**A general-audience summary is not a guarantee a consumer builds against.** That
+distinction is what makes "link" the right answer rather than "copy the precise
+version here".
+
+**UAT was the link, because the link is the only thing in the PR that can break** —
+and it was measured at both ends against GitHub's own renderer rather than reasoned
+about. The paragraph POSTed to the `/markdown` API emits exactly one
+`href="consumers/aitrader.md#11-sharp-edges-and-accepted-limitations"`, which
+settles the live question of whether the newline inside the link *text* splits it
+(it does not); and the live-rendered `aitrader.md` on `main` carries
+`user-content-11-sharp-edges-and-accepted-limitations`, so the anchor exists rather
+than being a slug derived correctly by luck.
+
+Pre-merge review returned **no HIGH and no MEDIUM**, having checked each claim
+against `notifications.py` as well as §5/§11 — `room` is derived from the app's own
+strings and the counter returns `""` before it will shorten them, and card
+severities cannot overflow at all, which is why the clause is `info`-scoped. One
+LOW taken (gerund, matching the two sibling statements of this behaviour). Docs
+only: suite **190**, unmoved; adds and removes no test; no ⚠ flag cleared, added or
+reworded; no `CLAUDE.md` change, because CG-32 already recorded the behaviour.
+
+Swept for the same drift elsewhere and found **none** — §5 already points at §11,
+`notifications.py`'s docstrings are correct, and `README.md`'s *"dedupe windows with
+occurrence counters"* makes no claim about the counter always riding. Nothing to
+hand to the concurrent CG-26 / CG-33 / CG-42 Builders.
 
 ### CG-29 · `poll_once`'s type-name-only print swallowed the detail CG-25 created  ✅ shipped 2026-07-30 · [PR #35](https://github.com/mmackelprang/chat-gateway/pull/35)
 
