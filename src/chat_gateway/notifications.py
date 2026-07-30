@@ -10,6 +10,10 @@ how loud the rendering is:
   warning -> card with 🟠 header
   info    -> plain text (no card)
 
+That last row costs `info` a budget the others do not pay: its title AND body
+share the envelope's single plain-text field, so the two together must fit
+`info_max_combined_length()`. See that function and `Notification`'s validator.
+
 Dedupe: identical (source, dedupe_key) within the window collapses — the
 first occurrence delivers, repeats are counted, and the count is carried on
 the *next* delivered message after the window reopens (one-way webhooks
@@ -23,13 +27,45 @@ import datetime as dt
 import threading
 from typing import Callable
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .envelope import OutboundMessage
+from .envelope import TEXT_MAX, OutboundMessage
 
 SEVERITIES = ["alert", "warning", "info"]
 SEVERITY_EMOJI = {"alert": "⚠️🔴", "warning": "🟠", "info": "ℹ️"}
 DEFAULT_DEDUPE_WINDOW_S = 3600
+
+#: What `render` joins an info notification's title and body with.
+INFO_BODY_SEPARATOR = "\n"
+
+
+def severity_prefix(severity: str) -> str:
+    """The lead-in `render` puts in front of every notification's title.
+
+    One construction, used by both the renderer and the info-path budget below,
+    so the guard cannot drift from what is actually emitted. Its length is not a
+    constant anyone should write down: "ℹ️" alone is two code points, and a
+    relabelled severity would move the bound silently.
+    """
+    return f"{SEVERITY_EMOJI[severity]} [{severity.upper()}] "
+
+
+def info_max_combined_length() -> int:
+    """Longest `len(title) + len(body)` the info path can render.
+
+    Info is the one severity whose body does NOT become a card widget — prefix,
+    title and body are concatenated into the envelope's single plain-text field,
+    which the transport caps at `TEXT_MAX`. Derived, never hardcoded, so this
+    and `render` are the same arithmetic. (The dedupe counter `render` may also
+    append is deliberately NOT reserved here — see `Notification`'s validator.)
+
+    One deliberate approximation, checked rather than assumed: the separator is
+    subtracted unconditionally, while `render` only emits it when `body` is
+    non-empty. That makes the bound one character conservative for a body-less
+    info notification — and unreachably so, because `title` caps at 200 on its
+    own, four thousand short of where the difference could ever be felt.
+    """
+    return TEXT_MAX - len(severity_prefix("info")) - len(INFO_BODY_SEPARATOR)
 
 
 class Notification(BaseModel):
@@ -51,14 +87,56 @@ class Notification(BaseModel):
             raise ValueError(f"severity must be one of {SEVERITIES}")
         return v
 
+    @model_validator(mode="after")
+    def _info_fits_one_text_field(self) -> "Notification":
+        """Reject an info notification that cannot be rendered (CG-30).
+
+        Scoped to `info` on purpose. Only that severity concatenates title and
+        body into the envelope's single plain-text field; `alert` and `warning`
+        put the body in a card widget, so all that reaches `text` is the short
+        fallback line — a title-200 + body-4000 alert is accepted today, and
+        must stay accepted. Which is exactly why the fix is NOT to tighten
+        `body`'s own `max_length`: that would start rejecting payloads the
+        gateway delivers fine.
+
+        Without this the ValidationError fires later, inside `render`, where
+        nothing catches it and the caller gets a 500. Here, it is a 422 like
+        every other malformed request.
+
+        Not covered: `render` also appends a "(×N since last notice)" counter to
+        deduped re-deliveries, which can push an accepted payload back over the
+        cap. Request-time validation cannot reserve room for it without
+        rejecting payloads that succeed today — filed separately.
+        """
+        if self.severity != "info":
+            return self
+        limit = info_max_combined_length()
+        size = len(self.title) + len(self.body)
+        if size > limit:
+            # Names the offending field pair, the size and the limit, so a
+            # caller can act without bisecting — and never quotes the content
+            # itself (the gateway's error paths name identities, not payloads).
+            raise ValueError(
+                f"severity 'info' renders title and body as one plain-text message, "
+                f"which the transport caps at {TEXT_MAX} characters: "
+                f"len(title) + len(body) is {size}, limit is {limit}. "
+                f"Shorten the body, or send 'warning'/'alert', whose body becomes "
+                f"a card widget instead."
+            )
+        return self
+
 
 def render(n: Notification, app_id: str, occurrences: int = 1) -> OutboundMessage:
-    """Notification -> envelope. Alerts/warnings get a card; info is text."""
+    """Notification -> envelope. Alerts/warnings get a card; info is text.
+
+    The info branch spends the envelope's whole plain-text budget on title +
+    body, which is why `Notification` guards it at `info_max_combined_length()`.
+    """
     emoji = SEVERITY_EMOJI[n.severity]
     counter = f" (×{occurrences} since last notice)" if occurrences > 1 else ""
-    text = f"{emoji} [{n.severity.upper()}] {n.title}{counter}"
+    text = f"{severity_prefix(n.severity)}{n.title}{counter}"
     if n.severity == "info":
-        body_text = text + (f"\n{n.body}" if n.body else "")
+        body_text = text + (f"{INFO_BODY_SEPARATOR}{n.body}" if n.body else "")
         return OutboundMessage(identity="-", text=body_text, thread_key=n.thread_key)
 
     widgets: list[dict] = []

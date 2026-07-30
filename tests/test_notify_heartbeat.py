@@ -8,10 +8,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from chat_gateway.delivery import DeliveryLog, Dispatcher
-from chat_gateway.envelope import DeliveryResult
+from chat_gateway.envelope import TEXT_MAX, DeliveryResult
 from chat_gateway.heartbeat import HeartbeatError, HeartbeatStore, parse_schedule
 from chat_gateway.inbox import Inbox
-from chat_gateway.notifications import Deduper, Notification, render
+from chat_gateway.notifications import (
+    INFO_BODY_SEPARATOR,
+    Deduper,
+    Notification,
+    info_max_combined_length,
+    render,
+    severity_prefix,
+)
 from chat_gateway.registry import load_registry
 from chat_gateway.service import create_app
 
@@ -122,6 +129,83 @@ def test_missing_route_is_503(registry, tmp_path):
     client2, _, _ = make_client(bad_registry, clock, tmp_path)
     r = client2.post("/v1/notify", headers=AUTH, json={"severity": "alert", "title": "x"})
     assert r.status_code == 503 and "no notify route" in r.json()["detail"]
+
+
+# --- the info path's plain-text budget (CG-30) -------------------------------
+#
+# Boundaries are DERIVED from info_max_combined_length(), never written down as
+# 3989: the prefix length is not a number anyone should hardcode (the info emoji
+# alone is two code points), and a test carrying its own copy of the bound would
+# stop catching drift the moment the prefix changed.
+
+def _info_payload(combined: int) -> dict:
+    """An info notification whose len(title) + len(body) is exactly `combined`,
+    split so each field stays well inside its OWN max_length."""
+    title = "t" * 200
+    return {"severity": "info", "title": title, "body": "b" * (combined - len(title))}
+
+
+def test_info_at_the_combined_limit_is_accepted(registry, tmp_path):
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    r = client.post("/v1/notify", headers=AUTH, json=_info_payload(info_max_combined_length()))
+    assert r.status_code == 202
+
+    app.state.dispatcher.process_due()
+    (_, msg), = adapter.sent
+    assert not msg.cards and len(msg.text) == TEXT_MAX  # the budget is exact, not slack
+
+
+def test_info_one_over_the_limit_is_422_naming_the_limit_not_500(registry, tmp_path):
+    """The whole point of CG-30: this range used to raise inside render() and
+    surface as an uncaught 500. raise_server_exceptions=False so a regression
+    shows up as a 500 response rather than blowing up the test itself."""
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    _, app, _ = make_client(registry, clock, tmp_path)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    limit = info_max_combined_length()
+    r = client.post("/v1/notify", headers=AUTH, json=_info_payload(limit + 1))
+    assert r.status_code != 500
+    assert r.status_code == 422
+    detail = str(r.json()["detail"])
+    assert str(limit) in detail        # the caller is told the limit ...
+    assert str(limit + 1) in detail    # ... and the size they sent
+    assert str(TEXT_MAX) in detail
+
+
+def test_alert_and_warning_full_length_bodies_stay_accepted(registry, tmp_path):
+    """Regression guard against 'simplifying' CG-30's fix into a global
+    Notification.body limit.
+
+    A title-200 + body-4000 alert or warning (4200 combined — well over the info
+    path's budget) is ACCEPTED today, because those severities put the body in a
+    card widget and only a short fallback line goes through the envelope's text
+    field. Lowering body's max_length would be the obvious one-line fix and it
+    would start rejecting these. They must stay accepted."""
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    over_the_info_budget = 200 + 4000
+    assert over_the_info_budget > info_max_combined_length()
+    for severity in ("alert", "warning"):
+        r = client.post("/v1/notify", headers=AUTH, json={
+            "severity": severity, "title": "t" * 200, "body": "b" * 4000,
+            "dedupe_key": None})
+        assert r.status_code == 202, (severity, r.status_code, r.text)
+
+    app.state.dispatcher.process_due()
+    assert len(adapter.sent) == 2
+    assert all(msg.cards for _, msg in adapter.sent)
+
+
+def test_guard_and_renderer_share_one_prefix_construction():
+    """severity_prefix() must be what render() actually emits — otherwise the
+    budget above would be derived from a string the renderer no longer uses."""
+    msg = render(Notification(severity="info", title="x", body="y"), "aitrader")
+    assert msg.text.startswith(severity_prefix("info") + "x")
+    assert msg.text == severity_prefix("info") + "x" + INFO_BODY_SEPARATOR + "y"
 
 
 # --- dedupe (acceptance #2) --------------------------------------------------
