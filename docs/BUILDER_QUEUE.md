@@ -576,6 +576,17 @@ document nothing looks at it. That is the whole finding.
 > Left unfixed deliberately: it is pre-existing, out of this PR's plan, and the
 > user's fix-forward decision below already governs it. Not fixed silently, and
 > not fixed unilaterally.
+>
+> **And a second class of value in the same directory, which the rationale above
+> does NOT cover.** `tests/test_adapters.py` and `tests/test_callbacks.py` carry
+> the author's real email as inline **positive-path** test data — allowlist
+> values a test needs to *accept*, not realistic-looking bait for a negative
+> case. The caveat further down this row already rules that a docs/tests guard
+> **must tolerate the author's own name and email**, since they are in the
+> authorship metadata of every commit. So these lines are **accepted, not debt**:
+> whoever builds the guard must not design it to fire on them, or it gets
+> disabled in a week. Recorded here precisely so they are not mistaken for the
+> tenant-id finding above, which *is* debt.
 
 Two tasks: **(a)** extend the guard (or add a sibling) to walk `docs/**/*.md` for
 the same rule families — fenced code blocks and table cells included, since both
@@ -682,9 +693,13 @@ rules gained the regression tests they never had:
 
 - **the capability-URL rule.** It exists because a path-guess scrub wrote a
   **live bearer token** to disk on 2026-07-29 — the worse of that day's two
-  incidents — and it had **zero** tests. It was never exercised because no real
-  fixture had ever carried a capability URL; the `ADDED_TO_SPACE` capture is the
-  first. The rule was **not** extended: it already rejects
+  incidents — and it had **zero** tests. Be precise about which half was
+  untested, because review caught the tempting summary ("no real fixture had
+  ever carried one") being **false**: `addon-message-event.json` is a REAL
+  capture and has carried a scrubbed `configCompleteRedirectUri` since
+  2026-07-29, so the rule's **pass** side has run on real bytes every test run
+  since. What had zero tests was the **reject** side. The rule was **not**
+  extended: it already rejects
   `configCompleteRedirectUrl` twice over (`SUSPECT_KEY` on `redirecturl`,
   `SUSPECT_VALUE` on `token=`), and writing a decorative third rule would have
   produced a guard that looks stronger and is not.

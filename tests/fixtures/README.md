@@ -9,7 +9,7 @@ depends on knowing which is which.
 | `addon-message-event.json` | **REAL** — captured from `chat-gateway-sub` on 2026-07-29, the first genuine Chat event this project ever received. Structure is byte-faithful to the wire; leaf values are anonymized (see below). |
 | `addon-buttonclicked-event.json` | **REAL** — captured 2026-07-29, the first genuine card *interaction*. A card posted by our own `ChatApiAdapter`, a dropdown changed, a button tapped. Pins what Google actually sends, including the empty `action.id` defect (queue item CG-10). |
 | `classic-cardclicked-button-event.json` | **REAL** — captured 2026-07-30 from the live project `chat-gateway-gw`, in the real consumer space, after the classic migration. A card posted by our own `ChatApiAdapter`; a dropdown changed, then a button tapped. The classic counterpart of the add-ons capture above, and the contrast is the point: `action.id` resolves **natively** here (`approve`, `id_source: "google"`) where the add-ons capture resolves to `None`. |
-| `classic-cardclicked-onchange-event.json` | **REAL** — captured 2026-07-30, and **the card had no button**. Changing a selection widget was itself the interaction: `onChangeAction.function` arrived as the action identity and the changed value was harvested into params. There is no add-ons equivalent — an `onChangeAction` dies under that runtime with `gsuiteaddons.googleapis.com/errors` code 13 — so this is new coverage, not parity coverage. The only classic capture pulled through the real `PubSubPuller`, which is why it is the only one carrying `_pubsub_message_id`. |
+| `classic-cardclicked-onchange-event.json` | **REAL** — captured 2026-07-30, and **the card had no button**. Changing a selection widget was itself the interaction: `onChangeAction.function` arrived as the action identity and the changed value was harvested into params. There is no add-ons equivalent — an `onChangeAction` dies under that runtime with `gsuiteaddons.googleapis.com/errors` code 13 — so this is new coverage, not parity coverage. Pulled off the live subscription through the real `PubSubPuller`, so its `_pubsub_message_id` is a real one. **Carrying that field is not by itself evidence of `PubSubPuller` provenance** — `addon-buttonclicked-event.json` carries one and was pulled with an ad-hoc client, and `classic-added-to-space-event.json` carries one too. |
 | `classic-added-to-space-event.json` | **REAL** — captured 2026-07-30T00:24:51Z, the Chat app removed from a space and re-added. First real bytes for a non-MESSAGE, non-CARD_CLICKED event, and the first real capture ever to carry a live `configCompleteRedirectUrl` (scrubbed here per DEC-7). ⚠ It is a **DM** (`spaceType: DIRECT_MESSAGE`), not a ROOM — see below. |
 | `classic-message-event.json` | **CONSTRUCTED** — the same logical event in the classic Chat app envelope, so both parser paths are covered symmetrically. |
 | `addon-card-clicked-event.json` | **CONSTRUCTED, ⚠ NOT OBSERVED** — assembled from Google's documented add-on interaction shape, carrying `__action_method_name__`. The real capture above did **not** contain that key. Kept as tolerance coverage for a card style we have not seen (one whose `action.function` is an ordinary function name), not as a claim about the runtime. |
@@ -79,7 +79,10 @@ project that no longer exists. E1's evidentiary role is recorded in
   high-entropy-path-segment rule, which would fire on the space and message ids
   that `docs/google-cloud-setup.md` step 8 classifies as non-secret. Both real
   spellings Google uses put the token in a `token=` query parameter, and both
-  are caught twice over.
+  are caught twice over. The **key** half of that sentence is not merely
+  asserted: `test_guard_rejects_an_unscrubbed_capability_url`'s third case is a
+  path-borne token under a matching key, and it is rejected. So the hole is
+  specifically "path-borne token **and** innocent key", not "path-borne token".
 
 ## Anonymization
 
@@ -99,6 +102,11 @@ The classic spelling sits at the **root** of the event, not nested under a
 payload; that placement is first-hand as of the 2026-07-30 ADDED_TO_SPACE
 capture, and `test_guard_rejects_an_unscrubbed_capability_url` proves the guard
 rejects an unscrubbed one in either spelling.
+
+Email addresses must use an RFC 2606 `example.*` domain, enforced structurally
+by `EMAIL` / `EXAMPLE_DOMAIN` in `test_fixtures_scrubbed.py` — every string leaf
+is checked, not just `user.email`, because an address can ride in message text.
+The reserved domain must be the whole address's domain, not a suffix of it.
 
 `domainId` and `customer` are Workspace tenant identifiers with no structure to
 key off, so fixtures mark them instead: their values must contain `example`

@@ -1011,13 +1011,23 @@ def test_normalize_real_classic_onchange_with_no_button_at_all():
     `onChangeAction` dies with `gsuiteaddons.googleapis.com/errors` code 13 —
     so this is NEW coverage, not parity coverage.
 
-    Note `dedupe_key`: this is the only classic capture pulled through the real
-    `PubSubPuller`, which is what injects `_pubsub_message_id`.
+    Note `dedupe_key`: this capture came off the live subscription through the
+    real `PubSubPuller`, which is what injects `_pubsub_message_id`, so the
+    value is a real message id rather than a synthetic one. Carrying that field
+    is NOT itself a provenance signal — `classic-added-to-space-event.json`
+    carries one too, and `addon-buttonclicked-event.json` carries one despite
+    having been pulled with an ad-hoc client. `classic-cardclicked-button-event.json`
+    carries none, which is why its `dedupe_key` is None.
     """
     event = fixture("classic-cardclicked-onchange-event.json")
 
-    # the card really had no button — otherwise this proves nothing
-    widgets = event["message"]["cardsV2"][0]["card"]["sections"][0]["widgets"]
+    # The card really had no button — otherwise this proves nothing. Scan EVERY
+    # section, and the fixedFooter too: a Cards v2 button can sit in a footer
+    # without ever appearing in a `buttonList`, so checking one section's
+    # widgets would let the docstring's claim outrun the assertion.
+    card = event["message"]["cardsV2"][0]["card"]
+    assert "fixedFooter" not in card
+    widgets = [w for section in card["sections"] for w in section["widgets"]]
     assert not any("buttonList" in w for w in widgets)
     selection = next(w["selectionInput"] for w in widgets if "selectionInput" in w)
     assert selection["onChangeAction"]["function"] == "onVerdictChanged"

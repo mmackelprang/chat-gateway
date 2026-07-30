@@ -55,8 +55,12 @@ TENANT_KEY = re.compile(r"\.(domainId|customer)$")
 # indistinguishable to a regex, and a list of real names in a public repo is a
 # worse artifact than the problem. That limit is recorded in fixtures/README.md
 # rather than papered over.
+# EXAMPLE_DOMAIN is matched with fullmatch against the WHOLE address, not
+# searched inside it: `someone@example.com.realcorp.net` contains `@example.com`
+# followed by a `.`, which satisfies a trailing `\b`, so a search-based check
+# would wave a real domain through on a suffix.
 EMAIL = re.compile(r"[\w.+%-]+@[\w-]+(?:\.[\w-]+)+")
-EXAMPLE_DOMAIN = re.compile(r"@(?:[\w-]+\.)*example\.(?:com|org|net)\b", re.I)
+EXAMPLE_DOMAIN = re.compile(r"[\w.+%-]+@(?:[\w-]+\.)*example\.(?:com|org|net)", re.I)
 
 
 def _walk(node, path="$"):
@@ -94,7 +98,7 @@ def test_fixture_contains_no_secrets(path):
             "anonymize it; this repo is public"
         )
         for addr in EMAIL.findall(value):
-            assert EXAMPLE_DOMAIN.search(addr), (
+            assert EXAMPLE_DOMAIN.fullmatch(addr), (
                 f"{path.name}{json_path} carries a real-looking email address "
                 f"({addr}) — fixtures must use an RFC 2606 `example.*` domain; "
                 "this repo is public"
@@ -154,11 +158,18 @@ def test_guard_rejects_an_unscrubbed_capability_url(tmp_path):
     The tenant rule above got a regression test because a scrub had already
     missed a tenant id. The capability-URL rule — which exists because a
     path-guess scrub wrote a LIVE token to disk, the worse of the two incidents —
-    got none. Until the 2026-07-30 classic ADDED_TO_SPACE capture, no real
-    fixture had ever carried one, so the rule had never had to work.
+    got none.
 
-    Both spellings, because Google uses `...Uri` in the add-ons envelope and
-    `...Url` in the classic one, and the classic one is the one that has now
+    Be precise about WHICH half was untested, because the tempting summary
+    ("no real fixture had ever carried one") is false: `addon-message-event.json`
+    is a REAL capture and has carried a scrubbed `configCompleteRedirectUri`
+    since 2026-07-29, so the rule's PASS side has run on real bytes every test
+    run since. What had zero tests was the REJECT side — nothing anywhere proved
+    the rule actually fires on an unscrubbed value. That is the half this closes.
+
+    Three cases, and the third is the one that isolates the rules from each
+    other. Both spellings, because Google uses `...Uri` in the add-ons envelope
+    and `...Url` in the classic one, and the classic one is the one that has now
     actually arrived. Calls the real guard, for the reason in the docstring
     above.
     """
@@ -167,6 +178,16 @@ def test_guard_rejects_an_unscrubbed_capability_url(tmp_path):
          {"type": "ADDED_TO_SPACE", "configCompleteRedirectUrl": CAPABILITY_URL_SHAPE}),
         ("configCompleteRedirectUri",
          {"chat": {"messagePayload": {"configCompleteRedirectUri": CAPABILITY_URL_SHAPE}}}),
+        # Token in the URL PATH, with no `token=` anywhere — so SUSPECT_VALUE
+        # cannot see it and only SUSPECT_KEY's `redirecturi|redirecturl` arm can
+        # catch it. Without this case, deleting that arm leaves the whole suite
+        # green, because the two cases above are each caught twice over. It also
+        # pins the contrapositive of the limit stated in fixtures/README.md:
+        # a path-borne token passes only when the KEY is innocent too.
+        ("path-token",
+         {"configCompleteRedirectUrl":
+          "https://chat.google.com/api/bot_config_complete/"
+          "AAAAtestNotARealTokenAAAAtestNotARealToken"}),
     ):
         bad = tmp_path / f"bad-{key}.json"
         bad.write_text(json.dumps(payload), encoding="utf-8")
@@ -187,6 +208,11 @@ def test_guard_rejects_a_non_example_email_address(tmp_path):
     The second case is a free-text leaf rather than an `email` key, because an
     address can ride in message text and the guard keys off value shape, not
     field name.
+
+    The third pins why EXAMPLE_DOMAIN is fullmatched rather than searched: an
+    RFC 2606 domain used as a SUFFIX (`…@example.com.realcorp.net`) is a real
+    domain wearing a reserved one as camouflage, and a substring search waves
+    it through.
     """
     bad = tmp_path / "bad-email.json"
     bad.write_text(json.dumps(
@@ -195,6 +221,12 @@ def test_guard_rejects_a_non_example_email_address(tmp_path):
         encoding="utf-8")
     with pytest.raises(AssertionError, match="real-looking email"):
         test_fixture_contains_no_secrets(bad)
+
+    suffixed = tmp_path / "bad-email-suffix.json"
+    suffixed.write_text(json.dumps(
+        {"user": {"email": "someone@example.com.realcorp.net"}}), encoding="utf-8")
+    with pytest.raises(AssertionError, match="real-looking email"):
+        test_fixture_contains_no_secrets(suffixed)
 
     ok = tmp_path / "ok-email.json"
     ok.write_text(json.dumps(
