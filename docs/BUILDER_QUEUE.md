@@ -610,7 +610,7 @@ none. The guard is the control that matters, and it runs on what lands.
 
 ---
 
-### CG-42 · `0s / 5s / 15s` is stated as a timetable in two docs; a slow attempt stretches it  📋 queued
+### CG-42 · `0s / 5s / 15s` is stated as a timetable in two docs; a slow attempt stretches it  🔨 in flight
 
 | | |
 |---|---|
