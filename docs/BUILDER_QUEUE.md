@@ -1,6 +1,19 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-34 shipped**
+**Last updated:** 2026-07-30 (Builder — **CG-31 shipped**
+([PR #34](https://github.com/mmackelprang/chat-gateway/pull/34)): comments only, in
+one file. `forwarder.py`'s docstring named `BACKOFF_S = (0, 3, 7)` as if those were
+attempt times; they are **gaps**, so the three callback attempts fall due at
+**0s / 3s / 10s**, and at **0s / 5s / 15s** in the running gateway because
+`process_due()` runs only after a successful poll at the subscriber's default 5s
+interval. Both re-measured here against a genuinely closed port — and a **third**
+measurement is why the shipped wording is hedged: a **real** `SubscriberLoop` gave
+**0s / 7s / 14s**, because a poll cycle is the attempt's own duration *plus* the
+interval. **CG-42 filed** for that qualification in the two docs carrying the worked
+example. `BACKOFF_S`, the retry logic and the poll interval are untouched; no ⚠ flag
+touched; adds and removes no test.
+
+Previously: **CG-34 shipped**
 ([PR #33](https://github.com/mmackelprang/chat-gateway/pull/33)): `httpx` logged
 the whole request URL — `key` **and** `token` — on **every** request, success
 included. Fixed by **redacting, not silencing**: a `logging.Filter` on the `httpx`
@@ -37,6 +50,13 @@ on. Docs only; this PR adds and removes no test (suite **151** on `main`).
 > while all three were in flight. There is no allocator for these numbers — three
 > parallel Builders each take "the next free one" and the collision is invisible
 > until rebase. CG-21's is now **CG-37**.
+>
+> **CG-42 skipped 38-41 on purpose** (2026-07-30). CG-31's Builder was handed a
+> **reserved range** at dispatch rather than left to pick the next free number —
+> the first thing in this queue that has actually prevented a collision instead
+> of recording one. The gap is not a lost row; it is the other concurrent
+> Builders' reservations. **Numbers here are identifiers, not a sequence** — do
+> not renumber to close it.
 
 Previously: **CG-32 shipped**
 ([PR #32](https://github.com/mmackelprang/chat-gateway/pull/32)): the
@@ -256,11 +276,11 @@ outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-26** (CG-7, CG-4, CG-5, CG-24,
 CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23, CG-19,
-CG-32, CG-21 and CG-34 have since shipped). **CG-29** was filed by Builder from
-CG-25's UAT, **CG-31** by Builder from CG-11+CG-20's pre-merge review, **CG-33**
+CG-32, CG-21, CG-34 and CG-31 have since shipped). **CG-29** was filed by Builder from
+CG-25's UAT, **CG-33**
 by Builder from CG-23's pre-merge review, **CG-35** by Builder from CG-19,
-**CG-36** by Builder from CG-32's docs pass, and **CG-37** by Builder from
-CG-21's inventory; all six are
+**CG-36** by Builder from CG-32's docs pass, **CG-37** by Builder from
+CG-21's inventory, and **CG-42** by Builder from CG-31's UAT; all five are
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-35 carries a **merge gate** — pause and report rather than
@@ -591,38 +611,42 @@ the full `{exc}`, so it gained detail where `poll_once` lost it.
 
 ---
 
-### CG-31 · `forwarder.py`'s docstring names the retry **gaps** as if they were attempt times  📋 queued
+### CG-42 · `0s / 5s / 15s` is stated as a timetable in two docs; a slow attempt stretches it  📋 queued
 
 | | |
 |---|---|
-| **Origin** | filed by Builder 2026-07-30 from **CG-11+CG-20's** pre-merge review — **measured, not reasoned** |
-| **Depends on** | nothing |
-| **Touches** | `src/chat_gateway/forwarder.py` — one docstring line |
+| **Origin** | filed by Builder 2026-07-30 from **CG-31's** own UAT — **measured on a real `SubscriberLoop`, not reasoned** |
+| **Depends on** | nothing (CG-31 shipped the `src/` half and already carries the caveat) |
+| **Touches** | `docs/consumers/jobhunt-handoff.md` §7, `docs/consumers/jobhunt.md` R7 |
 | **Priority** | **appended last, unprioritized.** The user sets order. |
 
-`src/chat_gateway/forwarder.py:9` says retries are *"short and latency-shaped
-(0s/3s/7s — a human just tapped a button)"*. `BACKOFF_S = (0, 3, 7)`
-(`forwarder.py:28`) is a sequence of **gaps**, not attempt times, so the three
-attempts actually land at **0s / 3s / 10s** — and at **0s / 5s / 15s** in the
-running gateway, because `process_due()` only runs when a poll comes round and
-`SubscriberLoop`'s default `interval_seconds` is `5.0`
-(`adapters/pubsub.py:695`).
+Both docs say the three callback attempts land at **0s / 5s / 15s** in the
+running gateway. CG-31 reproduced that — but only with a **fake clock**, calling
+`process_due()` on exact 5s ticks. Driving a **real `SubscriberLoop`** at its
+real 5.0s interval against a genuinely closed port measured **0s / 7s / 14s**.
 
-**The wrong reading is the natural one.** *"latency-shaped"* invites the docstring
-to be read as a schedule of *when* attempts land — which is precisely the thing
-it does not say. The intent (retries are cheap and fast because a human is
-waiting) is right and should survive the fix; only the numbers' meaning needs to
-be unambiguous.
+**Not a contradiction of the model — a missing variable in the illustration.**
+`_run` (`adapters/pubsub.py:871-878`) calls `poll_once()`, *then*
+`forwarder.process_due()`, *then* waits the interval. So a poll cycle is **the
+attempt's own duration plus the interval**, not the interval. A `ConnectError`
+to a closed localhost port costs ~2s on the Windows dev box, so every subsequent
+tick shifted by that. jobhunt-handoff §7's own rule — *"an attempt fires on the
+first poll tick at or after its due time, never earlier"* — predicts 0/7/14
+correctly; it is the worked example beneath it that reads as a timetable.
 
-**Measured, not derived from the constant.** The 0/5/15 figure came from driving
-the real `CallbackForwarder` with a fake clock against a genuinely closed port —
-not from reading `BACKOFF_S` and adding it up.
+**Why this matters for R7 specifically and is not pedantry.** The number an
+operator actually cares about is when the *in-thread failure notice* reaches the
+person who tapped, and the exhaustion case is exactly the case where every
+attempt is slow — an unreachable callback is the only way to get there. So the
+illustrated 15s is systematically optimistic in the one scenario it describes.
+A callback that hangs to a 10s client timeout rather than refusing fast would
+push it far further.
 
-The identical text in `docs/consumers/jobhunt.md` R7 and
-`docs/consumers/jobhunt-handoff.md` **was already corrected** by CG-11+CG-20,
-which was a docs-only PR and could not touch `src/`. This row is the remaining
-half: the docstring is now the only place in the repo that still states it the
-misleading way.
+**Deliberately not fixed inside CG-31.** That row is `src/`-scoped, these two
+docs were corrected by CG-11+CG-20 and are the alignment target — editing them
+from a `src/` row would have meant contradicting the thing being aligned to
+while a second Builder had docs open. CG-31's docstring states the caveat and
+links here; the fix is to add the same qualification to §7's worked example.
 
 ---
 
@@ -826,6 +850,47 @@ every item's content and re-applying only the resolver's own row.)_
 ---
 
 ## Recently shipped
+
+### CG-31 · `forwarder.py`'s docstring named the retry **gaps** as if they were attempt times  ✅ shipped 2026-07-30 · [PR #34](https://github.com/mmackelprang/chat-gateway/pull/34)
+
+**Comments only, in one file, and that is the whole PR.** The module docstring
+said retries were *"short and latency-shaped (0s/3s/7s)"*, which reads as a
+schedule of when the three attempts land. `BACKOFF_S = (0, 3, 7)` is a sequence
+of **gaps**. Both numbers now appear, because they are two different facts:
+
+| | |
+|---|---|
+| **0s / 3s / 10s** | the forwarder's own contract, `process_due()` called freely |
+| **0s / 5s / 15s** | what an operator observes — `process_due()` runs only after a successful poll (`adapters/pubsub.py:871-878`) and `SubscriberLoop`'s default `interval_seconds` is `5.0`, so each due time rounds up to the next tick |
+
+**Re-measured, not restated.** Both figures were reproduced in this PR's UAT by
+driving the real `CallbackForwarder` over real `httpx` against a genuinely
+closed TCP port. The third attempt lands at 15s rather than 12s because
+`process_due()` captures `now` at the **top** of the call, so the last gap
+compounds on the poll tick attempt 2 actually ran on, not on its due time.
+
+**A third measurement is why the shipped wording is hedged.** A **real**
+`SubscriberLoop` at its real 5.0s interval gave **0s / 7s / 14s** — a poll cycle
+is the attempt's own duration *plus* the interval, and a `ConnectError` to a
+closed localhost port costs ~2s here. Consistent with the model, but it means
+0/5/15 is an observation under a fast-failing attempt, not a timetable. The
+docstring says so; **CG-42 filed** for the same qualification in the two docs
+that carry the worked example.
+
+**Aligned with `docs/consumers/jobhunt-handoff.md` §7 and `docs/consumers/jobhunt.md`
+R7, which CG-11+CG-20 had already corrected** — that PR was docs-only and could
+not reach `src/`, which is the entire reason this row existed. The docstring
+links to §7 rather than re-summarizing it.
+
+A two-line comment also went on `BACKOFF_S` itself — beyond the row's stated
+"one docstring line", and deliberately: the constant is where a reader lands
+when they grep, and it is the thing that was misread. `BACKOFF_S`'s values, the
+retry logic and the poll interval are **untouched**. No ⚠ flag cleared, added or
+reworded. The suite is unchanged by this PR — **151** on the `main` this branch
+was cut from, **178** after rebasing onto CG-34; it adds and removes no test,
+and a docstring is not assertable. A test pinning 0/3/10 was considered and
+rejected: it would pin `BACKOFF_S`'s values, which are a tunable this row was
+forbidden to touch.
 
 ### CG-34 · `httpx` logs the whole webhook URL — key and token — at INFO  ✅ shipped 2026-07-30 · [PR #33](https://github.com/mmackelprang/chat-gateway/pull/33)
 
