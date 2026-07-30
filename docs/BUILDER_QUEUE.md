@@ -220,7 +220,7 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
-### CG-12 · Forensic trace for spaces owned only by opted-out tenants  📋 queued *(was ⏸ blocked · user decision)*
+### CG-12 · Forensic trace for spaces owned only by opted-out tenants  🔨 in flight *(was ⏸ blocked · user decision)*
 
 | | |
 |---|---|
