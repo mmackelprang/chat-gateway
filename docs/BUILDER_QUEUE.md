@@ -23,7 +23,7 @@ pydantic `ValidationError` carrying a capability URL both still print their type
 and nothing more. Pre-merge review found **two real bypasses** of the new
 structural guard (construct-then-raise; subclassing a marked class) — both fixed
 before merge and both now mutation-tested. **Nine mutations, nine caught.** Suite
-**151 → 163**. The design call the row reserved for Planner was delegated to
+**178 → 190**. The design call the row reserved for Planner was delegated to
 Builder at dispatch; see the row. No ⚠ flag cleared, added or reworded.
 
 Previously: **CG-31 shipped**
@@ -933,6 +933,16 @@ paths are still unexercised against Google; this changed what they PRINT, not
 what is verified. The `CLAUDE.md` verification ledger was **not** restated
 anywhere — the new entry links to it.
 
+**Rebased onto `origin/main` after CG-34 and CG-31 merged**, and re-measured
+rather than re-asserted: the suite, all nine mutations and the four real-TCP
+console lines were re-run on the rebased tree and are unchanged. CG-34's
+`log_redaction` filter is orthogonal — it redacts `httpx`'s own `logging`
+records; these lines are `print`, and the allowlist means foreign text never
+reaches them in the first place, so there is no second mechanism here. The one
+merge conflict was an import block in `webhook.py`; both imports kept.
+`CLAUDE.md`'s test count, which CG-31's row flagged as stale again, is corrected
+here.
+
 Docs: `docs/consumers/jobhunt-handoff.md` had documented this exact console line
 as *"type name only — `ChatApiError`"*, which is the one audience doc the change
 falsifies; it now shows both lines and keeps the type-only rule stated for
@@ -941,7 +951,7 @@ nothing — it describes the `dispatch_errors` counter, not the printed format.
 `CLAUDE.md`'s test count was **stale at 140** (main was already 151) and is
 corrected to **163**.
 
-Suite **151 → 163**. No ⚠ flag touched.
+Suite **178 → 190**. No ⚠ flag touched.
 ### CG-31 · `forwarder.py`'s docstring named the retry **gaps** as if they were attempt times  ✅ shipped 2026-07-30 · [PR #34](https://github.com/mmackelprang/chat-gateway/pull/34)
 
 **Comments only, in one file, and that is the whole PR.** The module docstring
