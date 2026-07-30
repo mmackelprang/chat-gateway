@@ -568,7 +568,7 @@ the full `{exc}`, so it gained detail where `poll_once` lost it.
 
 ---
 
-### CG-30 · `info` severity 500s on a payload every other severity accepts  📋 queued
+### CG-30 · `info` severity 500s on a payload every other severity accepts  🔨 in flight
 
 | | |
 |---|---|
@@ -731,7 +731,11 @@ old one.)_
 
 ## In flight
 
-_(nothing — **CG-11 + CG-20 shipped** as one PR on 2026-07-30, and CG-27 and
+**CG-30** — claimed 2026-07-30 by Builder, branch `fix/cg-30-info-render-budget`.
+Single worktree, one Builder. The user's fix decision is **option 2, scoped to
+`info` only** — see that row.
+
+_(Previously: **CG-11 + CG-20 shipped** as one PR on 2026-07-30, and CG-27 and
 CG-28 before them. **CG-27 was worked in parallel** by a second Builder in its
 own worktree; per the CG-25 concurrency incident, one worktree per Builder and
 never a shared working directory.)_
