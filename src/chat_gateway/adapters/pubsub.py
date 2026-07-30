@@ -558,7 +558,8 @@ def _unparseable_core(event) -> dict:
 def dispatch(event: dict, registry: Registry, inbox: Inbox,
              forwarder=None, reply_fn=None,
              now: dt.datetime | None = None,
-             on_unparseable=None, on_missing_action_id=None) -> list[str]:
+             on_unparseable=None, on_missing_action_id=None,
+             on_suppressed=None) -> list[str]:
     """Route one decoded Chat event. Per app: authorization allowlist check
     (jobhunt R4 — unauthorized users get an in-thread refusal and are never
     forwarded), then inbox + optional callback push (tenant opt-in).
@@ -569,6 +570,15 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
     routed, and a parse failure must not widen anyone's inbound surface
     (hard rule #6). `on_unparseable` lets the subscriber loop count it for
     /healthz without re-parsing.
+
+    An event that routes to real candidates but reaches none of them — every
+    owner of the space is `allow_inbound: false`, or the sender is not on an
+    owner's `allowed_users` — is discarded with no inbox entry and no
+    `_unrouted` record, because writing one would start persisting the traffic
+    of a tenant that opted out of everything (CG-12 option B, rejected).
+    `on_suppressed(app_id, reason)` lets the subscriber loop count that for
+    /healthz without anything about the event being retained; `reason` is
+    `"opt_out"` or `"not_authorized"`, and those two strings are the whole set.
     """
     now = now or dt.datetime.now(dt.timezone.utc)
     # Non-dict events (a bare list, a string) redact to themselves, and
@@ -619,11 +629,29 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
         app = registry.apps.get(app_id)
         if app is not None:
             if not app.allow_inbound:
+                # COUNTED, never recorded (CG-12). This branch is the one place
+                # an event can be routable and still leave no trace at all: the
+                # `or [UNROUTED]` fallback above never fires, because the space
+                # HAS owners — they simply all opted out. Before this callback
+                # existed, an aitrader-shaped registry discarded every event in
+                # its space with nothing written to the inbox, nothing under
+                # `_unrouted`, and nothing at /healthz, which is the silent
+                # discard hard rule #5 exists to make impossible.
+                if on_suppressed is not None:
+                    on_suppressed(app_id, "opt_out")
                 continue  # opted-out tenant: nothing crosses, ever (hard rule #6)
             sender = (core["sender_email"] or "").lower()
             if app.allowed_users and sender not in app.allowed_users:
                 if reply_fn and core["space"]:
                     reply_fn(core["space"], core["thread_name"], NOT_AUTHORIZED_TEXT)
+                # AFTER the refusal, deliberately: if reply_fn raises, the loop
+                # counts a dispatch_error and this suppression is not also
+                # counted — one fault, one counter. A refused human is a
+                # different fact from an opted-out tenant (jobhunt R4 turning
+                # somebody away, versus rule #6 working as designed), so the
+                # loop keeps them in separate integers.
+                if on_suppressed is not None:
+                    on_suppressed(app_id, "not_authorized")
                 continue
         inbox.put(reply)
         if app is not None and app.resolved_callback_url() and forwarder is not None:
@@ -664,6 +692,37 @@ class SubscriberLoop:
         # failed). A non-zero value means some producer's cards are missing
         # `__cg_action__` — or that Google changed the runtime underneath us.
         self.interactions_without_action_id = 0
+        # CG-12. Events that were routable but reached nobody. Two BARE
+        # integers: no space, no app id, no content, no timestamp, no dedupe
+        # key. Three things a reader has to know before touching either.
+        #
+        # 1. `/healthz` IS UNAUTHENTICATED — it has no `Depends(current_app_id)`
+        #    the way every /v1 route does. That is precisely why the chosen
+        #    design stores nothing attributable: a space id or an app id here
+        #    would be readable by anyone who can reach the port, and it would
+        #    turn an opted-out tenant's activity into retained data on an open
+        #    endpoint. The alternatives — a full `_unrouted` audit record, and a
+        #    metadata-only record carrying space + event type — were considered
+        #    and rejected for exactly that reason. A future `last_suppressed_app`
+        #    or per-space breakdown would undo the decision, not extend it.
+        # 2. THESE COUNT SUPPRESSIONS, NOT EVENTS. `on_suppressed` fires once
+        #    per CANDIDATE APP, so one event landing in a space with two
+        #    opted-out owners increments by two. Read either integer as an event
+        #    count and you will overstate inbound volume; a counter whose meaning
+        #    is ambiguous is barely better than no counter, which is the same
+        #    rule-#5 argument that put `unparseable_seen` and `dispatch_errors`
+        #    in separate fields.
+        # 3. THE TWO REASONS ARE DISTINCT PHENOMENA, which is why this is two
+        #    counters and not one. `opt_out` is hard rule #6 working exactly as
+        #    designed — an app is installed in a space it will never serve, and
+        #    every event there is MEANT to go nowhere. `not_authorized` is a real
+        #    human being refused (jobhunt R4): somebody tapped a card and got ⛔
+        #    in the thread. Merging them would make this endpoint LESS honest,
+        #    because an operator seeing a single number could not tell "five
+        #    hundred people were refused" from "five hundred events landed in a
+        #    space nobody serves" — two completely different investigations.
+        self.suppressed_opt_out = 0
+        self.suppressed_not_authorized = 0
         # Poll-level failure tracking. poll_once() raising means the
         # SUBSCRIPTION is unreachable — a revoked key, a deleted subscription, a
         # wrong CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, or free-tier quota exhaustion.
@@ -726,6 +785,22 @@ class SubscriberLoop:
         # it carries the user's text and their space (hard rule #2).
         self.interactions_without_action_id += 1
 
+    def _count_suppressed(self, app_id: str, reason: str) -> None:
+        # Counts only. NEITHER argument is stored anywhere: `app_id` would be
+        # attributable data on an unauthenticated endpoint (see the counters'
+        # definition above), and `reason` only selects which integer moves.
+        #
+        # No default bucket, deliberately. `dispatch` defines the reason set in
+        # this same module and it has exactly two members, so a third can only
+        # appear by someone editing that function — at which point they must add
+        # a counter here too. Folding an unrecognized reason into
+        # `not_authorized` would be the exact confusion point 3 above exists to
+        # prevent, and it would be an operator's problem rather than ours.
+        if reason == "opt_out":
+            self.suppressed_opt_out += 1
+        elif reason == "not_authorized":
+            self.suppressed_not_authorized += 1
+
     def poll_once(self) -> int:
         batch = self._puller.pull()
         acks = []
@@ -734,7 +809,8 @@ class SubscriberLoop:
                 dispatch(event, self._registry, self._inbox,
                          forwarder=self.forwarder, reply_fn=self.reply_fn,
                          on_unparseable=self._count_unparseable,
-                         on_missing_action_id=self._count_missing_action_id)
+                         on_missing_action_id=self._count_missing_action_id,
+                         on_suppressed=self._count_suppressed)
             except Exception as exc:  # noqa: BLE001
                 # Parsing is not the only thing that can fail: reply_fn talks
                 # to Google, inbox/delivery-log writes touch disk, and pydantic

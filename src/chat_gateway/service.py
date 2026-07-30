@@ -324,6 +324,26 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                  # observables if topic-as-function routing ever breaks.
                  "interactions_without_action_id":
                      subscriber.interactions_without_action_id,
+                 # CG-12: events that routed to real candidates and reached none
+                 # of them — every owner of the space is `allow_inbound: false`,
+                 # or the sender was not on an owner's allowlist. Neither writes
+                 # an inbox entry nor an `_unrouted` record, so before these the
+                 # discard left no trace anywhere: the silent-loss shape rule #5
+                 # exists for. BARE integers because this endpoint is
+                 # UNAUTHENTICATED — no space, no app id, no content — and they
+                 # count SUPPRESSIONS, not events (one event in a space with two
+                 # opted-out owners increments by two). Full reasoning sits with
+                 # the counters in adapters/pubsub.py; do not restate it here.
+                 #
+                 # They are deliberately NOT inputs to `status` and never add a
+                 # `reasons` entry, at any magnitude. Both are CORRECT behaviour:
+                 # `opt_out` is hard rule #6 doing its job, `not_authorized` is
+                 # jobhunt's R4 allowlist doing its job. Degrading on a system
+                 # working as designed would teach an operator that "degraded" is
+                 # the normal reading, and an ignored warning is the failure mode
+                 # rule #5 was written after. Do not add a threshold here.
+                 "suppressed_opt_out": subscriber.suppressed_opt_out,
+                 "suppressed_not_authorized": subscriber.suppressed_not_authorized,
                  "poll_failures": subscriber.poll_failures,
                  "consecutive_poll_failures": subscriber.consecutive_poll_failures,
                  "last_poll_error": subscriber.last_poll_error,
