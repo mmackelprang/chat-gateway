@@ -25,13 +25,52 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .auth import AuthError, authenticate
 from .delivery import DeliveryLog, Dispatcher
-from .envelope import DeliveryResult, OutboundMessage
+from .envelope import CG_ACTION_KEY, DeliveryResult, OutboundMessage
 from .heartbeat import (
     DEFAULT_TZ, HeartbeatError, HeartbeatMonitor, HeartbeatStore,
 )
 from .inbox import Inbox
 from .notifications import Deduper, Notification, render
 from .registry import Registry, RegistryError
+
+
+#: Where a producer's card must point its `onClick.action.function` for the
+#: interaction to reach this gateway. DEPLOYMENT-level, not per-app: there is
+#: one inbound route. Declared in the environment rather than derived from
+#: CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, because the two are only coincidentally
+#: related today — under a classic deployment it is any constant, and under an
+#: HTTP-endpoint deployment it is a URL (ADR-0001 D3's portability table).
+ROUTING_TARGET_ENV = "CHAT_GATEWAY_INTERACTION_ROUTING_TARGET"
+
+
+def _interaction_config(registry: Registry, app_id: str) -> dict | None:
+    """The card convention, published so producers never hardcode it.
+
+    Returns None — with the reason — rather than a half-answer, because a
+    producer that builds cards against a missing routing target ships cards
+    whose taps go nowhere, and finding that out at tap time is the failure this
+    endpoint exists to prevent.
+    """
+    import os
+
+    if not registry.apps[app_id].allow_inbound:
+        return {"enabled": False,
+                "reason": "inbound is disabled for this app (hard rule #6) — "
+                          "card interactions from it are never routed anywhere"}
+    target = os.environ.get(ROUTING_TARGET_ENV, "")
+    if not target:
+        return {"enabled": False,
+                "reason": f"the operator has not set {ROUTING_TARGET_ENV} — "
+                          "card interactions cannot be routed until they do; "
+                          "do not guess a value"}
+    return {
+        "enabled": True,
+        "routing_target": target,
+        "action_key": CG_ACTION_KEY,
+        "note": "put routing_target in onClick.action.function and your action "
+                "identity in parameters[action_key]; never hardcode either. "
+                "The gateway pops action_key out of the params it forwards.",
+    }
 
 
 class HeartbeatIn(BaseModel):
@@ -183,6 +222,28 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
 
     @app.get("/v1/identities")
     def list_identities(app_id: str = Depends(current_app_id)):
+        """What you may send as — plus, for two-way tenants, how to make a card
+        interaction come back (ADR-0001 D3).
+
+        `interaction.routing_target` is the value a producer must put in a
+        card's `onClick.action.function`. **Producers must not hardcode it.**
+        Fetching it is what makes a deployment-model migration cost zero
+        producer card changes: identity always rides in `interaction.action_key`
+        (`__cg_action__`), the function slot always holds whatever the gateway
+        publishes here, and only this one value moves. That portability is the
+        entire reason the topic-as-function bridge is a cheap bet rather than a
+        trap — do not let it rot.
+
+        Not a secret: `docs/google-cloud-setup.md` step 8 classifies topic and
+        subscription names as safe to paste, and this endpoint is authenticated
+        regardless (hard rule #2 unaffected).
+
+        **Withheld from `allow_inbound: false` tenants** — narrower than the ADR
+        requires, deliberately. Handing an opted-out tenant a routing target
+        invites it to build cards whose interactions the gateway would then
+        discard; saying so plainly is better than a value that silently means
+        nothing. `aitrader` gets `null` and the reason (hard rule #6).
+        """
         allowed = registry.apps[app_id].identities
         return {
             "app": app_id,
@@ -192,6 +253,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                  "ready": registry.identities[n].env_resolved()}
                 for n in allowed if n in registry.identities
             ],
+            "interaction": _interaction_config(registry, app_id),
         }
 
     @app.get("/healthz")

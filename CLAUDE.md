@@ -112,6 +112,32 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   outbound. The whole `__cg_` prefix is reserved; unknown `__cg_*` keys pass
   through rather than being eaten. Unresolvable identity is `None`, never `""`,
   is counted at `/healthz`, and is still forwarded.
+  **Reframed 2026-07-29 after experiment E1 passed: this is a FALLBACK, not the
+  primary mechanism.** A classic (non-add-on) Chat app on Pub/Sub supplies
+  action identity *natively* — live-verified, an ordinary function name
+  `approve` arrived as `action.id: 'approve'`. Classic is the preferred
+  destination and a migration is underway; `__cg_action__` stays supported
+  because it is load-bearing on the runtime deployed **today**, and because it
+  still outranks the native slot, so one card behaves identically on both sides
+  of the migration. Same support-both posture as the two envelope formats — do
+  not rip it out.
+- **Card `parameters` shapes — outbound is fixed, inbound is a property of the
+  RUNTIME.** Confusing them ships a broken card.
+
+  | Direction / runtime | Where | Shape |
+  |---|---|---|
+  | outbound, every runtime | `onClick.action.parameters` | **array** of `{key, value}` (Cards v2) |
+  | inbound, **classic** | `action.parameters` | **array** — symmetric with what you sent |
+  | inbound, **add-ons** | `commonEventObject.parameters` | **map** |
+
+  Every row is first-hand. Do **not** compress this to *"you send an array, you
+  receive a map"* — that was briefly written down and it is wrong: the map is an
+  add-ons quirk, not a property of the inbound direction, and a producer
+  debugging a raw classic event after being told otherwise would conclude the
+  gateway was broken. `_action_params` normalizes either, so producers only ever
+  need the first row. Pinned by
+  `test_card_parameters_are_an_array_in_the_real_captured_card` and
+  `test_inbound_parameter_shape_is_a_runtime_property_not_a_direction_rule`.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
   gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`

@@ -110,6 +110,157 @@ your callback is down, retries span ~10s and then the gateway posts your
 `unreachable_message` into the thread — the user always sees a tap that
 didn't land. Return any 2xx quickly; do your work async.
 
+### Making a card button actually come back — the card convention
+
+**Read this before you render an interactive card.** A card whose buttons are
+wired the way Google's own documentation shows will not reach this gateway.
+
+Ask the gateway how to wire it, per app:
+
+```bash
+curl -s $GW/v1/identities -H "$AUTH"
+# -> {"app":"jobhunt", "identities":[...],
+#     "interaction":{"enabled":true,
+#                    "routing_target":"projects/<PROJECT>/topics/<TOPIC>",
+#                    "action_key":"__cg_action__", "note":"..."}}
+```
+
+Then build every interactive element like this:
+
+```jsonc
+"onClick": {
+  "action": {
+    // The value the gateway published as interaction.routing_target.
+    // NEVER hardcode this, and never derive it from a doc you read once.
+    "function": "<interaction.routing_target>",
+    // NOTE THE SHAPE: in a CARD, parameters is an ARRAY of {key, value}.
+    "parameters": [
+      {"key": "__cg_action__", "value": "verdict"},   // your action identity
+      {"key": "job_id",        "value": "job-123"},   // your own params, untouched
+      {"key": "nonce",         "value": "n-9"}
+    ]
+  }
+}
+```
+
+> ### ⚠ `parameters` shapes — outbound is fixed, inbound depends on the runtime
+>
+> **Outbound is always an ARRAY** of `{"key": …, "value": …}`. That is the
+> Cards v2 schema, on every runtime, with no exceptions. Write the array — a
+> card built with a map is not valid Cards v2 and you find out at render or tap
+> time, in front of a user.
+>
+> **Inbound varies, and it is a property of the runtime, not of the direction:**
+>
+> | Runtime | Where the params arrive | Shape |
+> |---|---|---|
+> | **classic** (production since 2026-07-29) | `action.parameters` | an **ARRAY** — byte-identical to what you sent |
+> | **add-ons** | `commonEventObject.parameters` | a **MAP**, `{"key": "value"}` |
+>
+> So classic is *symmetric* (array out, array back, with widget values arriving
+> separately under `common.formInputs`), and the map is an **add-ons-runtime
+> quirk** rather than "what inbound looks like". Every shape in both tables is
+> from a first-hand capture, not documentation.
+>
+> **You should not need any of this.** The gateway flattens all of it and hands
+> you `action.params` as a plain object either way — that normalization is the
+> whole point. It is documented only so that nobody reading a raw event
+> concludes the guide is wrong. Pinned by
+> `test_card_parameters_are_an_array_in_the_real_captured_card` and
+> `test_inbound_parameter_shape_is_a_runtime_property_not_a_direction_rule`.
+
+Two rules, and the reasons matter:
+
+- **`function` carries the routing target, not your action name.** Under the
+  Workspace Add-ons runtime `action.function` is the interaction's
+  *destination*, not a callback name — so it is spoken for. That is also why a
+  button wired with an ordinary function name fails with
+  `gsuiteaddons.googleapis.com/errors` code 13 and nothing reaches the topic.
+  **Under a classic Chat app this is not true** — see the runtime note below —
+  but you do not need to care, because you are fetching the value either way.
+- **Your action identity rides in `__cg_action__`.** The gateway lifts it into
+  `action.id` and **pops it out** of the `params` you receive, so your handler
+  sees only its own parameters. The whole `__cg_` prefix is reserved for the
+  gateway; unknown `__cg_*` keys are passed through to you rather than
+  discarded, but do not invent your own.
+
+**Why fetch instead of hardcode.** Because identity always rides in
+`__cg_action__` and the function slot always holds a gateway-published
+constant, the *same card* works under every deployment model this gateway could
+move to — add-ons + Pub/Sub today, a classic Chat app, or an HTTP endpoint.
+Migrating costs **zero producer card changes**: one value moves, on the gateway
+side. Hardcode the topic path and you have signed up to re-render every card
+the day it moves — **and it is moving**: see the runtime note below. See
+[ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) D3.
+
+#### Runtime note: `__cg_action__` is an add-ons compatibility fallback (updated 2026-07-29)
+
+This matters for how much weight to put on the reserved key.
+
+**Production migrated to a classic (non-add-on) Chat app on 2026-07-29, and
+classic supplies action identity natively.** Live-verified through our real
+`ChatApiAdapter` on the production configuration: a card with **ordinary**
+function names delivered
+
+```
+type: CARD_CLICKED   action.id: 'approve'   envelope_format: 'classic'
+params: {"jobId": "mig-001", "reason": "good_fit"}
+```
+
+No topic-as-function, no reserved key needed — `action.id` is simply populated.
+
+So, plainly:
+
+- **On classic, `__cg_action__` is inert.** You do not need it. Give your
+  buttons ordinary function names and read `action.id`.
+- **It is not removed, and it still wins when present.** It stays load-bearing
+  under the add-ons runtime, and a card that sets it behaves identically on
+  either runtime. This is the same support-both posture the gateway takes on the
+  two envelope formats — the gateway does not force you to know which runtime
+  you are behind, and that guarantee is worth more than tidiness.
+- **Keep fetching `interaction.routing_target` regardless.** On classic it is
+  just a constant the runtime echoes back unused, and fetching it is what made
+  this migration cost **zero producer card changes**. That already paid for
+  itself once.
+
+If `interaction.enabled` is `false`, read the `reason`: either your app is
+`allow_inbound: false` (interactions from it are never routed anywhere) or the
+operator has not configured a routing target yet. **Do not guess a value** — a
+card built against a guess fails at tap time, in front of a user.
+
+#### Collecting structured input: widgets for input, one button to submit
+
+**Under the add-ons runtime (deployed today)** a `selectionInput` is **not** an
+interaction trigger. Its `onChangeAction` fails exactly like a plain button's
+(`gsuiteaddons` code 13). What works is the widget's **value**: Chat harvests
+`commonEventObject.formInputs` when a **button** is tapped, and the gateway
+merges those values into `action.params` alongside the button's own parameters.
+Capture-verified 2026-07-29 on real data — a dropdown's `"decision": "approve"`
+arrived merged.
+
+So: put your widgets on the card, and give the user one button to submit. It
+costs a second tap; select-to-act is not available on this runtime.
+
+**Under a classic Chat app, `onChangeAction` does fire** — live-verified
+2026-07-29 (`action.id: 'onDecision'`, `params: {"decision": "approve"}`), so
+select-to-act is available on production now.
+
+**Use it sparingly, and prefer the submit button anyway.** Verified live on the
+production configuration: a dropdown value (`reason: "good_fit"`) arrived on the
+**button click's** form inputs with **no `onChangeAction` on the dropdown at
+all**. That means *widgets for input, one button to submit* produces **one event
+per user decision** instead of two — fewer events to make idempotent, fewer
+half-finished interactions, and one obvious commit point. `onChangeAction` is
+there when you genuinely want live reactivity, not as the default.
+
+The pattern is therefore not a workaround you will have to undo: it is the
+better design on the runtime we now run, and it also happens to be the only one
+that works on add-ons.
+
+True modal dialogs are **believed** impossible over Pub/Sub transport (they need
+a synchronous HTTP interaction endpoint) — that half is doc-derived inference
+and has never been tested, on either runtime.
+
 ### Which Google runtime you are behind
 
 Google delivers Chat events in two envelope formats, depending on whether the

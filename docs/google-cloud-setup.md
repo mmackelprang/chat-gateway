@@ -239,6 +239,15 @@ Then set `GATEWAY_ENABLE_PUBSUB=1`, fill `CHAT_GATEWAY_PUBSUB_SUBSCRIPTION`,
 restart, and check `/healthz` — it reports real resolvability per identity
 and subscriber liveness, so a wrong env name shows up immediately.
 
+**Also set `CHAT_GATEWAY_INTERACTION_ROUTING_TARGET`** if any tenant sends
+interactive cards. It is the **topic** path (`projects/<PROJECT_ID>/topics/
+chat-gateway-events`) — *not* the subscription — and the gateway publishes it to
+opted-in apps on `GET /v1/identities` so no producer hardcodes it. Leave it
+unset and interactive cards cannot work: `/v1/identities` will report
+`interaction.enabled: false` with the reason, which is the intended failure —
+a producer that guesses ships cards whose taps go nowhere. See
+[ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) D3.
+
 ### 8a. Verifying locally — where the secrets go on *your* machine
 
 Step 8 covers the appserver. It used to say nothing about the laptop you verify

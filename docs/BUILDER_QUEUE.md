@@ -1,8 +1,8 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-29 (Builder — CG-6 shipped; the user's ADR decisions
-recorded below unblock CG-10, CG-11 and CG-12; CG-13 … CG-19 filed for the
-newly-implied ADR work, the four experiments, and one IaC follow-up)
+**Last updated:** 2026-07-29 (Builder — CG-6, CG-3, CG-10, CG-13 shipped.
+**Experiment E1 RAN AND PASSED and E2 is answered**, so the deferral below is
+superseded: see "What E1 and E2 settled". CG-20 … CG-22 filed.)
 
 ## User decisions on ADR-0001 (2026-07-29) — final, do not re-ask
 
@@ -14,10 +14,51 @@ unblocks half this queue.
 | **D2** — `__cg_action__` as the gateway-reserved action-identity key | **APPROVED**, including the guard that discards topic-path-shaped values arriving from Google-native sources. Unblocks CG-10. |
 | **D6** — a third flag word | **NO.** `⚠ SHAPE-VERIFIED` stays the only addition; hard rule #3 caps the vocabulary. Routing fragility is recorded in prose + `/healthz`, never a new flag. |
 | **§8** — interaction dead-man | **APPROVED** at `every:7d`, cleared by any `CARD_CLICKED`. A genuinely quiet week raising a false alarm is accepted; the remediation is one tap. Filed as CG-14. |
-| **E1 / E2** — classic-deployment experiments | **DEFERRED.** Ship the bridge first. Do **not** create GCP projects or run experiments. Filed unexecuted as CG-15 … CG-18. |
-| **Migration to option D** | **APPROVED IN PRINCIPLE** if E1 later passes. Nothing to build now — but do not make the bridge harder to leave: D3's portable card convention exists to keep the exit cheap and must be honoured (CG-13). |
+| **E1 / E2** — classic-deployment experiments | ~~DEFERRED, do not run~~ — **SUPERSEDED 2026-07-29: the user authorized them, E1 RAN AND PASSED, E2 is answered.** See the section below. CG-15 / CG-16 are closed as executed; CG-17 / CG-18 remain deferred. |
+| **Migration to option D** | **APPROVED IN PRINCIPLE** if E1 later passes — and it did. Migration is now **underway** (a fresh project is provisioned; see below). D3's portable card convention shipped as CG-13, so the exit stays cheap and must be kept that way. |
 | **DEC-1** (CG-4 threadKey) | Keep the body `thread.threadKey`, drop the query parameter. The `messageReplyOption` caveat is mandatory in the docstring. |
 | **CG-12** shape | **Option A** — a bare counter on `/healthz`. No space id, no app id, no content. Pure rule-5 visibility, zero rule-6 surface change; note in code that `/healthz` is unauthenticated. |
+
+## What E1 and E2 settled (2026-07-29) — supersedes the deferral above
+
+The user authorized the experiments after this queue was written. Both returned
+results, and they change the framing of the whole bridge.
+
+**E1 — PASSED, decisively.** In a throwaway project with a **classic**
+(non-add-on) Chat app on Pub/Sub, live:
+
+| Probe | Result |
+|---|---|
+| Card button with an **ordinary** function name (`approve`) | `CARD_CLICKED` **reached Pub/Sub natively** — no topic-as-function needed |
+| `action.id` | **populated: `'approve'`.** Native action identity works |
+| Selection widget `onChangeAction` | **FIRED** (`action.id: 'onDecision'`, `params: {"decision": "approve"}`) — the thing that dies with `code 13` under add-ons |
+| Button event params | carried its own parameter *and* the harvested form input: `{"jobId": "e1-001", "decision": "approve"}` |
+| Envelope format | the **classic flat** format; CG-1's normalizer parsed it correctly and tagged `envelope_format: 'classic'` — **first live exercise of that path**, and it works |
+
+**Two consequences, both already applied in CG-13:**
+
+1. **`__cg_action__` is a FALLBACK, not the primary mechanism.** It stays — it
+   is load-bearing on the runtime deployed *today*, it still outranks the native
+   slot so one card behaves identically on both sides of a migration, and this
+   is the same support-both posture the gateway already takes on the two
+   envelope formats. Do **not** rip it out. Its framing in `CLAUDE.md` and the
+   integration guide now says classic gives native identity and is preferred.
+2. **CG-14's justification largely evaporates** — see its row, now `⏸ blocked`.
+
+**E2 — answered, definitively, and it is a harder answer than the ADR expected.**
+The Workspace-Add-on toggle is **create-time only**: add-on → classic **cannot**
+be toggled on an existing app. ADR-0001 §5 option D recorded this as
+"contradictory evidence"; it is now settled. A migration therefore requires a
+**new Chat app**, which means a **new GCP project** (Chat app config is
+per-project). ADR D7's parallel-project-and-cut-over approach was therefore not
+merely prudent — it was the only available path.
+
+**Migration status: underway.** New project `chat-gateway-gw` (`#860649224827`)
+is provisioned. The CG-2 setup script ran **clean end to end** on it, including
+the add-ons service-agent step. That is the **second virgin-project run**, which
+matters for flag discipline: CG-2's IaC was previously reviewed-by-reading only
+and is now genuinely exercised. (The Terraform path is still unapplied — only
+the script path has run.)
 
 This is the work list Builder clears, one PR per item. Planner appends; the
 user sets priority. Builder claims the topmost `📋 queued` item whose
@@ -52,51 +93,39 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-13 → CG-14 → CG-7 → CG-4 → CG-5 → CG-8
-→ CG-12 → CG-11 → CG-19.** CG-15 … CG-18 are filed deferred and must not be
-executed. CG-9 stays blocked on a human.
+Remaining order: **CG-7 → CG-4 → CG-5 → CG-8 → CG-12 → CG-11 → CG-20 →
+CG-22 → CG-19 → CG-21.** CG-14 is now `⏸ blocked` (E1 removed its rationale, so
+it needs a decision, not code); CG-19 and CG-21 carry **merge gates** — pause
+and report rather than auto-merging; CG-9 stays blocked on a human; CG-17 and
+CG-18 stay deferred and must not be executed.
 
 ---
 
-### CG-13 · Publish `interaction_routing_target`; document the portable card convention  📋 queued
+### CG-14 · Interaction dead-man (`interaction-canary`)  ⏸ blocked · rationale superseded by E1
 
 | | |
 |---|---|
-| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **D3** |
-| **Depends on** | CG-10 — **shipped** |
-| **Origin** | newly implied by the ADR, unqueued until now |
+| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **§8** |
+| **Blocked by** | its own justification, which E1 largely removed. Needs a decision before any code. |
+| **Built?** | **No.** Nothing was implemented — flagged here rather than quietly kept. |
 
-Producers must not hardcode the topic path. The gateway publishes it per-app on
-the authenticated `/v1/identities` response as `interaction_routing_target`,
-alongside the reserved-key name, and the integration guide documents the card
-convention that consumes it.
+**Do not build this yet.** Its entire purpose was detecting *silent breakage of
+undocumented routing*: if Google withdrew topic-as-function, no event would
+reach the topic, no counter would move, and `/healthz` would report `ok`
+forever. E1 passed, so the destination is a **classic** deployment, which has no
+undocumented dependency to break. The failure mode the canary was designed for
+does not exist there.
 
-**This is the item that keeps the bridge cheap to leave.** Because identity
-always rides in `__cg_action__` and the function slot always holds a
-gateway-published constant, migrating deployment models requires **zero producer
-card changes** — one config value moves. The user approved migration in
-principle if E1 later passes; honouring D3 is what makes that approval cheap.
+What is left is a weaker, more general question — *should the gateway alert when
+inbound goes quiet for a week, whatever the cause?* That may still be worth
+something (it would also catch a dead subscription, a revoked key, or an app
+removed from a space), but it is a different feature with a different
+justification, and the accepted false-positive cost was priced against the old
+one. It also overlaps CG-7, which makes a *dead* subscriber visible immediately
+and much more precisely.
 
----
-
-### CG-14 · Interaction dead-man (`interaction-canary`)  📋 queued
-
-| | |
-|---|---|
-| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **§8** — approved by the user 2026-07-29 |
-| **Depends on** | nothing (reuses `HeartbeatStore` / `HeartbeatMonitor`) |
-| **Origin** | newly implied by the ADR, unqueued until now |
-
-If Google removes topic-as-function routing the observable is **nothing at
-all**: no event reaches the topic, no counter moves, no exception is raised,
-`/healthz` says `ok`. That is the hard-rule-#5 failure shape exactly, and
-adopting the bridge without a detector would rebuild it in a new place.
-
-Register a gateway-internal check on `every:7d`, cleared by **any**
-`CARD_CLICKED` arriving on the subscription. Accepted trade-off (user, final): a
-genuinely quiet week raises a false alarm whose remediation is one tap — and an
-alert that names the exact action needed to confirm or refute it is a good
-alert.
+**Planner/user call.** Either re-justify it as a general inbound-quietness
+detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
@@ -128,6 +157,12 @@ event measured 1,926 bytes → ~2.8M events within Pub/Sub's 10 GiB/month), so
 cost is a non-issue. What matters is that exhaustion fails **closed** — and for a
 gateway delivering `aitrader` alerts, silent death at a quota boundary is exactly
 what rule 5 exists to prevent.
+
+**Added to scope by CG-13:** when `GATEWAY_ENABLE_PUBSUB=1` but
+`CHAT_GATEWAY_INTERACTION_ROUTING_TARGET` is unset, interactive cards cannot
+work at all and `/v1/identities` reports `interaction.enabled: false` — that
+belongs in `reasons` too. CG-13 deliberately did not touch `/healthz` to avoid
+colliding with Part E's rewrite of the whole endpoint body.
 
 Adds a typed `PubSubError` carrying status (and stops echoing `resp.text[:200]`,
 a pre-existing rule-#2 smell), failure counters on the loop, and a `reasons` list
@@ -283,6 +318,91 @@ inference), so Part G adopts §7 rather than paraphrasing it.
 
 ---
 
+### CG-20 · Document E1 + E2: the create-time-only toggle and the two capability tables  📋 queued
+
+| | |
+|---|---|
+| **Origin** | E1/E2 results, 2026-07-29 — newly implied, filed by CG-13 |
+| **Depends on** | nothing |
+| **Touches** | `docs/google-cloud-setup.md`, `docs/architecture/decisions/2026-07-29-tier2-interaction-model.md` — docs only |
+
+Two traps cost real time on this project and together they are the whole story
+of how it ended up on the wrong runtime. CG-6 corrected the first (the
+Marketplace SDK does **not** gate installability). This records the second,
+**right next to it**: the *"Build this Chat app as a Google Workspace add-on"*
+toggle is **create-time only** — it cannot be cleared on an existing app, so
+escaping the add-ons runtime requires a new Chat app and therefore a new GCP
+project.
+
+Also record the two **live-verified** capability tables (add-ons vs classic:
+card clicks, `onChangeAction`, action identity, envelope format, slash-command
+shape) so nobody rediscovers any of it, and update ADR-0001 §5 option D — which
+currently calls reversibility "contradictory" — plus §10/§12, whose open
+questions E1/E2 have now answered.
+
+---
+
+### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  ⚠ DONE LIVE · needs reconciliation, not execution
+
+> **Status correction, 2026-07-30.** This row still reads as unstarted work
+> below; it is not. **The migration has been executed and live-verified** — see
+> ADR-0001's status banner, which records a real card through our real
+> `ChatApiAdapter` on `chat-gateway-gw` returning `action.id: 'approve'` and
+> `envelope_format: 'classic'`. `chat-gateway-prod` has since been **deleted**.
+> Nothing here is left to build: what remains is reconciling the docs to the
+> live state. Read the body below as the plan that was followed, and note that
+> the merge gate still applies to the reconciliation PR because it touches the
+> deploy/secret-handling path.
+
+| | |
+|---|---|
+| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **D7** — parallel project, then cut over; never toggle production |
+| **Depends on** | CG-20 (write the findings down before acting on them) |
+| **Merge gate** | **touches the IaC / deploy / secret-handling path — Builder must pause and report before merging** |
+
+E1 passed and E2 proved the toggle is one-way, so D7's parallel-project path is
+the only one available. `chat-gateway-gw` (`#860649224827`) is provisioned and
+the setup script ran clean on it.
+
+Gateway-side cost should be near zero — that was CG-13's whole purpose. Expected
+scope: two env values (`CHAT_GATEWAY_PUBSUB_SUBSCRIPTION`,
+`GOOGLE_APPLICATION_CREDENTIALS`) plus
+`CHAT_GATEWAY_INTERACTION_ROUTING_TARGET`, and **zero producer card changes**.
+Console-only work (re-adding the app to each space, a new tier-2 sender
+identity) is the user's. Rollback is switching the env values back. Tier-1
+webhook identities are per-space and unaffected throughout.
+
+Do not start this until CG-20 lands and the user says go.
+
+---
+
+### CG-22 · Land the real **classic** `CARD_CLICKED` fixture  📋 queued
+
+| | |
+|---|---|
+| **Origin** | E1's capture — the first real classic-format event this project has ever had |
+| **Depends on** | nothing |
+| **Source** | `%LOCALAPPDATA%\Temp\cg-fixture\classic-cardclicked-event.json` (already redacted at capture time) |
+
+CG-1 built the classic parser from documentation and CG-3 could only land an
+add-ons capture, so `classic-message-event.json` is **CONSTRUCTED** and the
+classic `CARD_CLICKED` path had no real bytes at all. E1 produced them, and the
+normalizer handled them correctly live — but an unrecorded observation is
+indistinguishable from a guess in three weeks, which is exactly why the fixture
+README tracks provenance.
+
+Same handling rules as CG-3, no exceptions: **extend the guard first**, land the
+fixture second, never hand-scrub by path. The capture arrives pre-redacted,
+which is *not* a reason to skip the guard — run it and let it prove the file
+clean. Then pin `envelope_format == "classic"`, the natively-populated
+`action.id`, and the `onChangeAction` event shape (which has no add-ons
+equivalent and is therefore new coverage, not parity coverage).
+
+This also converts the classic normalizer from doc-derived to
+⚠ SHAPE-VERIFIED — a real upgrade, and the last one available before CG-21.
+
+---
+
 ### CG-19 · Correct the Marketplace-SDK comment in all three IaC paths  📋 queued · ⏸ merge gate
 
 | | |
@@ -305,35 +425,40 @@ pause, and CG-6 was the credential fix that had to ship first.
 
 ---
 
-## Deferred — filed, NOT to be executed
+## Experiments
 
-The user's decision, 2026-07-29: **ship the bridge first.** Do not create GCP
-projects and do not run these. They are recorded so the ADR's experiment design
-is not lost, and so that a future PASS on CG-15 has somewhere to land.
+CG-15 and CG-16 **ran on 2026-07-29** and are recorded below with their results.
+CG-17 and CG-18 remain deferred — and E1 lowered their value, since both probe
+limitations of the add-ons runtime this project is migrating off.
 
-### CG-15 · E1 — does a classic Pub/Sub Chat app receive `CARD_CLICKED`?  ⏸ deferred · user
+### CG-15 · E1 — does a classic Pub/Sub Chat app receive `CARD_CLICKED`?  ✅ RAN 2026-07-29 · **PASSED**
 
-Decides ADR option D, and therefore whether the topic-as-function bridge is
-temporary or permanent. **Scratch GCP project only — never `chat-gateway-prod`.**
-Full recipe: [ADR-0001 §10 E1](architecture/decisions/2026-07-29-tier2-interaction-model.md).
-~20 minutes of console time. If it ever returns PASS, ADR §11 trigger 1 fires and
-the migration is approved in principle already.
+Executed by the user in a throwaway project. **Yes** — natively, with
+`action.id` populated and `onChangeAction` firing. Results in "What E1 and E2
+settled" above; ADR §11 trigger 1 has fired. Nothing further to build here; the
+consequences are tracked as CG-14 (blocked), CG-20 and CG-21.
 
-### CG-16 · E2 — is the add-on toggle reversible?  ⏸ deferred · user
+### CG-16 · E2 — is the add-on toggle reversible?  ✅ RAN 2026-07-29 · **NO**
 
-Ride-along on CG-15, ~2 minutes. Gates nothing by design: ADR D7 routes around
-the reversibility question with a parallel project and a cutover.
+Answered definitively: the add-on toggle is **create-time only**. Add-on →
+classic cannot be toggled on an existing app, so a migration needs a new Chat
+app and therefore a new GCP project. ADR D7's parallel-project path was the only
+available one, not merely the prudent one.
 
-### CG-17 · E3 — do slash commands reach the topic?  ⏸ deferred · user
+### CG-17 · E3 — do slash commands reach the topic?  ⏸ deferred · lower value after E1
 
-Decides whether the bridge has a proven floor. Until it runs, ADR option B is
-"topic-as-function with no fallback" — which is why CG-14's dead-man matters
-more, not less, while this stays deferred.
+Was the bridge's escape hatch. Less interesting now: the escape hatch is the
+classic migration, which is proven and underway. Keep filed — slash commands
+land differently on classic (a MESSAGE carrying `message.slashCommand`, versus
+add-ons' `appCommandPayload`) so if they are ever wanted, the normalizer needs
+the classic shape, not this one.
 
-### CG-18 · E4 — does `onChangeAction` work with the topic path as its function?  ⏸ deferred · user
+### CG-18 · E4 — does `onChangeAction` work with the topic path as its function?  ⏸ deferred · largely answered sideways
 
-UX nicety, last in the ADR's own ordering. Settles whether §7's two-tap
-choose-then-submit cost is permanent under the bridge.
+Asked whether select-to-act is recoverable *under the bridge*. E1 answered the
+question that actually mattered: `onChangeAction` **fires natively on classic**,
+so the two-tap cost disappears at migration regardless. Only worth running if
+the add-ons deployment has to be lived with longer than expected.
 
 ---
 
@@ -368,6 +493,29 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-13 · Publish `interaction_routing_target`; the portable card convention  ✅ shipped 2026-07-29 · [PR #12](https://github.com/mmackelprang/chat-gateway/pull/12)
+
+**ADR-0001 D3 — the item that keeps the bridge cheap to leave.** `GET
+/v1/identities` now returns `interaction.routing_target` (what a card puts in
+`onClick.action.function`) and `interaction.action_key`, and the integration
+guide documents the producer convention that consumes them, including *widgets
+for input, one button to submit*.
+
+Narrower than the ADR requires, deliberately: **opted-out tenants are never
+given a routing target.** Handing one to an `allow_inbound: false` app invites
+it to build cards whose interactions the gateway would discard; `aitrader` gets
+`enabled: false` and the reason names hard rule #6. An unset routing target
+likewise returns `enabled: false` with the reason rather than a half-answer — a
+producer that guesses ships cards whose taps fail in front of a user.
+
+UAT closed the loop the docs promise rather than asserting it: fetch the
+convention over real HTTP → build a card from **only** those values → have
+Google echo that card back under **both** runtimes → identical `action.id` and
+identical params, with the classic runtime's echoed topic path correctly
+discarded. Then the routing target was changed to an HTTPS URL and the same
+producer code produced a correct card — D3's "zero producer card changes on
+migration" demonstrated, not claimed. 82 → 86 tests.
 
 ### CG-10 · `__cg_action__` — action identity survives topic-as-function  ✅ shipped 2026-07-29 · [PR #11](https://github.com/mmackelprang/chat-gateway/pull/11)
 
@@ -487,6 +635,12 @@ No ⚠ flag cleared.
 installed on the dev box. The `.tf` changes are reviewed-by-reading only, and
 that path has never been applied in this project.
 
+**Upgraded 2026-07-29: the script path is now genuinely proven.** The setup
+script ran **clean end to end on a second virgin project** (`chat-gateway-gw`,
+`#860649224827`), including the add-ons service-agent step this item added. Two
+independent virgin-project runs is real evidence, not review-by-reading — for
+the `.sh`/`.ps1` path. The Terraform path remains unapplied and unproven.
+
 ### CG-1 · Dual-format Chat event envelope normalization  ✅ shipped 2026-07-29 · [PR #5](https://github.com/mmackelprang/chat-gateway/pull/5)
 
 Shape-detecting normalizer for **both** Google runtimes (Workspace Add-ons and
@@ -516,5 +670,3 @@ CARD_CLICKED stays unverified pending CG-3; both send paths untouched.
 **Two findings deferred to Planner** — both now queued: the `_unrouted`
 reserved-id hole as **CG-8**, and the opted-out-space forensic-trace trade-off as
 **CG-12** (blocked on a user decision, because it changes rule-6 semantics).
-</content>
-</invoke>

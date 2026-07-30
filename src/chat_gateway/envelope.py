@@ -15,6 +15,22 @@ from pydantic import BaseModel, Field, field_validator
 
 THREAD_KEY_MAX = 128
 
+# --- the gateway-reserved inbound parameter namespace (ADR-0001 D2) ----------
+#
+# These live in the envelope, not in adapters/pubsub.py where they started,
+# for the same reason UNROUTED lives in registry.py: core must not import from
+# an adapter. `service.py` publishes the key name on /v1/identities and
+# `adapters/pubsub.py` consumes it — with both importing from here, the
+# dependency runs core -> adapter only, which is the direction hard rule #3
+# already establishes.
+#
+# It also belongs here on the merits: this module is "the only schema the
+# gateway owns", and `__cg_action__` is the one inbound-direction field of it.
+# The gateway defines the NAME and never reads the VALUE — the rule #1
+# argument is in ADR-0001 D2 and in adapters/pubsub.py's own comment.
+CG_RESERVED_PREFIX = "__cg_"
+CG_ACTION_KEY = "__cg_action__"
+
 
 class OutboundMessage(BaseModel):
     """What an app POSTs to /v1/messages. The sending app is derived from the
