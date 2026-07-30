@@ -295,7 +295,7 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
-### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  ⚠ DONE LIVE · needs reconciliation, not execution
+### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  🔨 in flight · reconciliation only
 
 > **Status correction, 2026-07-30.** This row still reads as unstarted work
 > below; it is not. **The migration has been executed and live-verified** — see
@@ -794,7 +794,13 @@ old one.)_
 
 ## In flight
 
-_(nothing — **CG-30 shipped** on 2026-07-30, and **CG-11 + CG-20** as one PR
+**CG-21** — branch `docs/cg-21-migration-reconciliation`. Claimed 2026-07-30 on
+the user's explicit go. **Reconciliation only: nothing is being built.** The
+migration itself was executed and live-verified 2026-07-29; this PR aligns the
+docs to that live state. Carries a **merge gate** — Builder opens the PR and
+stops.
+
+_(Previously: **CG-30 shipped** on 2026-07-30, and **CG-11 + CG-20** as one PR
 before it, and CG-27 and CG-28 before those. **CG-27 was worked in parallel** by
 a second Builder in its own worktree; per the CG-25 concurrency incident, one
 worktree per Builder and never a shared working directory.)_
