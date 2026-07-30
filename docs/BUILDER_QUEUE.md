@@ -1,6 +1,40 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-42 shipped**
+**Last updated:** 2026-07-30 (Builder — **CG-26 shipped**
+([PR #38](https://github.com/mmackelprang/chat-gateway/pull/38)): every rule family
+in the fixture guard now has a test that proves it **fires** and a case that proves
+it **discriminates** — and the guard finally reads the directories that actually
+leaked. **The row's per-rule table was verified against the file rather than
+trusted, and it was incomplete**: it named three unproven rules, but `PII` has a
+**fourth** arm — the author-identity literal — with no test either.
+
+**The widened half is the load-bearing one.** Both PII incidents landed *outside*
+`tests/fixtures/`, so every rule above was aimed at the wrong directory. The scan
+now also covers `docs/**/*.md`, `tests/**/*.py`, `tests/**/*.md` and root-level
+`*.md` — **including itself**, which is the entire finding of incident 2: the real
+tenant ids sat in this guard's own negative case, on `main`, and nothing had ever
+read the guard. Scrubbed forward in both locations; **no history rewrite**, per the
+user's decision. 0 lines added by the branch carry the real identifier, 3 removed.
+
+**The rule set is deliberately NOT a naive port, because a false-positive guard is
+a deleted guard.** `EMAIL` is not ported — it would have caught *neither* incident
+(incident 1's leaked address is the author's own, which the guard must tolerate)
+and would flag only this guard's own bait. `SUSPECT_VALUE` is not ported as
+written — it keys off a JSON path prose does not have, and scores **62 false
+positives**. Both are recorded as *review's* obligations with their measurements,
+which is the documentation half the row asked for. `SECRETKEYVALUE` /
+`SECRETTOKENVALUE` are tolerated **by design, not by annotation**, because the
+files carrying them belong to CG-23 and CG-34.
+
+**UAT reconstructed incident 1** — never previously tested against the guard — and
+it **missed a `domainId` in a markdown table cell**, which the row explicitly
+required. `DOC_TENANT_TABLE` added; 6 findings became 8. Pre-merge review caught
+`DOC_TENANT_ASSIGN` matching any identifier *ending* in `customer`/`domainId` (it
+had fired twice on this PR's own source and been worked around by renaming) —
+fixed with a `(?<!\w)` lookbehind. **Five wrong counts** in the new prose were
+found and re-measured. Suite **190 → 201**. No ⚠ flag cleared, added or reworded.
+
+Previously: **CG-42 shipped**
 ([PR #37](https://github.com/mmackelprang/chat-gateway/pull/37)): two consumer docs
 stated `0s / 5s / 15s` as when the three callback attempts land in the running
 gateway. §7's *rule* was already right — *"an attempt fires on the first poll tick
@@ -345,9 +379,11 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-26** (CG-7, CG-4, CG-5, CG-24,
+Remaining order: **the prioritized list is now empty** (CG-7, CG-4, CG-5, CG-24,
 CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23, CG-19,
-CG-32, CG-21, CG-34, CG-31, CG-29, CG-36 and CG-42 have since shipped). **CG-33** was filed
+CG-32, CG-21, CG-34, CG-31, CG-29, CG-36, CG-42 and CG-26 have since shipped).
+What remains — CG-33, CG-35, CG-37 — was **appended last and unprioritized**;
+the user sets their order. **CG-33** was filed
 by Builder from CG-23's pre-merge review, **CG-35** by Builder from CG-19,
 **CG-36** by Builder from CG-32's docs pass, **CG-37** by Builder from
 CG-21's inventory, and **CG-42** by Builder from CG-31's UAT; all five were
@@ -512,129 +548,6 @@ pinned by `test_reason_phrase_is_looked_up_locally_not_read_off_the_wire`) and
 deliberately did **not** touch `pubsub.py` — a concurrent Builder owned that file.
 Either make the docstring true by switching to the local lookup, or make it
 accurate by saying the phrase comes off the wire. Not both, and not neither.
-
----
-
-### CG-26 · The fixture guard's remaining rules have never been proven to fire  🚀 in-flight
-
-| | |
-|---|---|
-| **Rule** | **hard rule #2** — no fixture may carry a live secret or real identity |
-| **Origin** | filed by Planner 2026-07-30 while planning CG-22+CG-9; **appended last, not prioritized** |
-| **Depends on** | CG-22+CG-9 (which adds the first two of these regression tests) |
-| **Touches** | `tests/test_fixtures_scrubbed.py`, `tests/fixtures/README.md`, `docs/superpowers/plans/2026-07-29-live-verification-followups.md` — tests and docs only |
-
-`test_fixtures_scrubbed.py` carries four rule families and, before CG-22+CG-9,
-had a negative test for exactly **one** of them (`TENANT_KEY`). Its own docstring
-makes the argument — *"A guard that has never failed is a guard nobody has
-tested"* — and then applies it once. CG-22+CG-9 adds regression tests for the
-capability-URL rule and the new email rule because both are load-bearing for the
-fixtures it lands. This item finishes the job:
-
-| Rule | Proven to fire? |
-|---|---|
-| `TENANT_KEY` | ✅ since CG-3 |
-| `SUSPECT_KEY` / `SUSPECT_VALUE` (capability URLs) | ✅ as of CG-22+CG-9 |
-| `EMAIL` / `EXAMPLE_DOMAIN` | ✅ as of CG-22+CG-9 |
-| `PII` — the `users/…` / `members/…` long-digit-id shape | ❌ never |
-| `PII` — the `googleusercontent.com` avatar host | ❌ never |
-| the `PLACEHOLDER` discrimination on a `BEGIN … PRIVATE KEY` value | ❌ never |
-| `fixture_files()`'s own must-not-pass-vacuously assertion | ❌ never |
-
-The last one is worth its own thought: `assert files, "no fixtures found — this
-guard must never pass vacuously"` protects against the whole guard silently
-passing on an empty directory, and nothing proves *that* assertion works either.
-
-**Also in scope, and it is a documentation task rather than a regex task:**
-record which anonymization obligations the guard genuinely **cannot** enforce,
-so review knows what it is responsible for. CG-22+CG-9 starts this list with
-display names and path-embedded capability tokens; it should also cover space /
-message / thread ids, which the README already declares deliberately unguarded
-(`docs/google-cloud-setup.md` step 8 classifies them non-secret) but does not
-list as a *review* obligation anywhere.
-
-**SCOPE WIDENED 2026-07-30 — the guard's blind spot is `docs/`, and it has now
-cost us twice.** The guard walks `tests/fixtures/` only. **Nothing scans
-`docs/`.** Both of this project's PII incidents landed in `docs/`, not in a
-fixture — so every rule family above, however well proven, was pointed at the
-wrong directory.
-
-| | Incident | Outcome |
-|---|---|---|
-| 1 | the **first draft of the CG-22+CG-9 plan** hardcoded the real→synthetic mapping — real name, email, Google user ids, tenant ids and a **live capability-URL bearer token** — in a file staged for this **public** repo | caught **before push**; rewritten to name source paths, nothing reached the remote |
-| 2 | `docs/superpowers/plans/2026-07-29-live-verification-followups.md:484` hardcodes the real `domainId` and `customers/C0…` as sample *"bad"* data — inside `test_guard_rejects_unmarked_tenant_identifiers` | **already public**; fix forward |
-
-`TENANT_KEY` would have flagged incident 2 instantly *in a fixture*. In a plan
-document nothing looks at it. That is the whole finding.
-
-> **⚠ AMENDED 2026-07-30 by Builder (CG-22+CG-9) — incident 2 has a SECOND
-> location, and it is not a doc.** The row above says the real tenant ids sit in
-> a *plan document*. They also sit in the **live test file**:
-> `tests/test_fixtures_scrubbed.py`'s `test_guard_rejects_unmarked_tenant_identifiers`
-> uses the real `domainId` and `customers/C0…` as its negative-case values.
-> Verified by exact-substring comparison against the raw captures; **pre-existing
-> on `main`**, landed in `a2a894b` (CG-3, PR #10), and untouched by the
-> CG-22+CG-9 diff. The plan doc at `:484` is a *quotation of that test*, not an
-> independent leak — which is why fixing only `:484` would leave the original in
-> place.
->
-> It survives for a reason worth writing down: **the guard only scans
-> `tests/fixtures/*.json`, so it never scans itself.** Task (a) below is scoped
-> to `docs/`; on this evidence it should cover `tests/**/*.py` too, or the guard
-> stays blind to the one file most likely to carry a real value on purpose —
-> a negative test needs something that *looks* real, and reaching for the actual
-> capture is the path of least resistance.
->
-> Left unfixed deliberately: it is pre-existing, out of this PR's plan, and the
-> user's fix-forward decision below already governs it. Not fixed silently, and
-> not fixed unilaterally.
->
-> **And a second class of value in the same directory, which the rationale above
-> does NOT cover.** `tests/test_adapters.py` and `tests/test_callbacks.py` carry
-> the author's real email as inline **positive-path** test data — allowlist
-> values a test needs to *accept*, not realistic-looking bait for a negative
-> case. The caveat further down this row already rules that a docs/tests guard
-> **must tolerate the author's own name and email**, since they are in the
-> authorship metadata of every commit. So these lines are **accepted, not debt**:
-> whoever builds the guard must not design it to fire on them, or it gets
-> disabled in a week. Recorded here precisely so they are not mistaken for the
-> tenant-id finding above, which *is* debt.
-
-Two tasks: **(a)** extend the guard (or add a sibling) to walk `docs/**/*.md` for
-the same rule families — fenced code blocks and table cells included, since both
-incidents hid there, **and `tests/**/*.py`, per the amendment above**;
-**(b)** scrub `:484` **and the test it quotes** to synthetic values.
-
-**User decision 2026-07-30: fix forward, do NOT rewrite public history.** A
-Workspace customer id is not a credential — there is nothing to rotate — and a
-force-push on a public repo breaks every clone, fork and PR ref to purge a value
-that may already be indexed. Rewriting is not the same as un-publishing. Recorded
-so this is not silently re-litigated.
-
-⚠ **The docs guard must tolerate what this repo deliberately publishes**, or it
-will be disabled within a week: space / message / thread ids (declared non-secret
-by `docs/google-cloud-setup.md` step 8) and the author's own name and email,
-which are in the authorship metadata of **every commit** and cannot be removed by
-scrubbing prose. Flagging those is the failure mode to design against, not an
-oversight to fix later.
-
-**What this item is NOT.** A prior session reported PII in already-landed
-fixtures. **That does not reproduce** — all four landed fixtures were swept on
-2026-07-30 and every identity leaf is synthetic (`users/000…001`,
-`agent-user@example.com`, `example1`, `customers/Cexample1`,
-`https://example.com/…`). The debt is that the guard's coverage is unproven, not
-that it failed. Recorded here so the claim is not carried forward unchallenged.
-
-A byte-identical duplicate capture in the staging directory was also reported and
-has already been deleted; there is nothing to fix. Filing a staging-directory
-manifest convention was considered and **rejected** — the staging directory is
-outside the repo, transient, and a convention nobody can enforce is worse than
-none. The guard is the control that matters, and it runs on what lands.
-
----
-
-
----
 
 ---
 
@@ -897,6 +810,89 @@ every item's content and re-applying only the resolver's own row.)_
 ---
 
 ## Recently shipped
+
+### CG-26 · The fixture guard's remaining rules have never been proven to fire  ✅ shipped 2026-07-30 · [PR #38](https://github.com/mmackelprang/chat-gateway/pull/38)
+
+`test_fixtures_scrubbed.py` carried four rule families and a negative test for
+**one**. Its own docstring makes the argument — *"A guard that has never failed is
+a guard nobody has tested"* — and then applied it once.
+
+**The row's per-rule table was verified against the file rather than trusted, and
+it was incomplete.** It named three unproven rules; `PII` has a **fourth** arm,
+the author-identity literal, with no test either. All four now have a case that
+proves the rule **fires** and a case that proves it **discriminates** — the
+`(?!0)` lookahead admitting `users/000…001`, the `PLACEHOLDER` clearing a
+`BEGIN … PRIVATE KEY` value. Two rules are isolated deliberately: the PEM case
+sits under an *innocent* key so only the value arm can fire, and the author-literal
+case uses a display name so the email rule cannot be what fires. `fixture_files()`'s
+must-not-pass-vacuously assertion is exercised by monkeypatching the module global,
+so it tests the real default path rather than a copy.
+
+**The widened half is the one that mattered.** Both PII incidents landed *outside*
+`tests/fixtures/`, so every rule above was aimed at the wrong directory. The scan
+now also reads `docs/**/*.md`, `tests/**/*.py`, `tests/**/*.md` and root-level
+`*.md` — **including itself**. That is the entire finding of incident 2: the real
+Workspace tenant ids sat in this guard's own negative case, on `main`, since CG-3,
+and nothing had ever read the guard. Both locations scrubbed forward; **no history
+rewrite**, per the user's decision. The branch **adds 0 lines** carrying the real
+identifier and removes 3.
+
+**The rule set is deliberately not a naive port, and the omissions are the
+documentation deliverable.** A false-positive guard is a deleted guard, so each
+non-port is recorded as *review's* obligation with its measurement:
+
+| Rule | Ported? | Measured reason |
+|---|---|---|
+| `EMAIL` / `EXAMPLE_DOMAIN` | **no** | would have caught **neither** incident — incident 1's leaked address is the author's own, which the guard is *required* to tolerate; incident 2 had no email. Of 81 addresses in the scanned trees, the only ones it would flag are this guard's own bait |
+| `SUSPECT_KEY` / `SUSPECT_VALUE` | **narrowed** | they key off a JSON path and prose has none; a naive port scores **62 hits, all false positives**. `DOC_URL_CRED` replaces them with the shape that leaks — a credential in a URL query or fragment |
+| `googleusercontent.com` | **narrowed** | blunt inside a fixture, URL-scoped in prose: 14 prose and regex-source mentions exist, so a blunt port was a 14-hit storm on day one |
+| display names, space/message/thread ids | **no** | unchanged, but now stated as a review *obligation* rather than left as an absence — which the row asked for |
+
+**"Real-looking" vs "obviously fake" is decided by the value alone** — an explicit
+fake-marker word, or failing a machine-generated test (< 24 chars after `%XX`
+escapes are stripped, or fewer than 3 of lower/upper/digit). **Annotation-based
+exemptions were considered and rejected**: they would have to be added to
+`tests/test_adapters.py` (CG-23's) and `tests/test_log_redaction.py` (CG-34's), so
+the guard has to tolerate `SECRETKEYVALUE` / `SECRETTOKENVALUE` **by design**. It
+does — and since CG-34 merged mid-cycle, that file is now *inside* the scanned
+trees, so the tolerance is proven by the shipped test on every run rather than by a
+side check.
+
+**UAT reconstructed incident 1** — the plan draft that hardcoded a live
+capability-URL bearer token — which had never been tested against the guard. It
+caught 5 of 7 leaked classes and **missed a `domainId` in a markdown table cell**,
+which the row explicitly required. `DOC_TENANT_TABLE` added, requiring a
+backtick-delimited cell: without that requirement it captures `Path` out of the
+`DEC-6` row and is itself a false positive. Re-run: **6 findings became 8**. The
+two remaining misses are display names and emails — the two classes documented as
+review's. UAT also found **root-level `CLAUDE.md` unscanned**, this repo's
+most-edited public document; now covered, and it scanned clean, so the widening
+cost nothing.
+
+**Pre-merge review found the false-positive class the row warned about.**
+`DOC_TENANT_ASSIGN` had no left word boundary, so it matched `customer`/`domainId`
+as a *suffix of any identifier* — it had already fired twice on this PR's own
+source and been worked around by **renaming the variable**. Fixed with `(?<!\w)`;
+the prose that documented the workaround was corrected, because a rename is not a
+fix. **Five wrong counts** in the new prose were found and re-measured against the
+tree — four by review, a fifth (64 vs a measured 62) afterwards. The email bullet
+now self-checks against its own stated total.
+
+**One convention holds it up: negative-case bait is composed at runtime, never
+inlined**, so the file carries no literal its own scan can match. Inline one and
+the file fails its own scan — which is the feature, and is pinned by a test rather
+than asserted in a comment.
+
+Suite **190 → 201**. **No ⚠ flag cleared, added or reworded**; `CLAUDE.md`'s
+verification ledger is untouched and not restated.
+
+**Left for someone else:** `CLAUDE.md`'s test-count line is stale at 190 — a
+standing collision point while parallel Builders are active. And **CG-42's shipped
+row is stranded in the `## Queue` section** rather than under `## Recently
+shipped`; it is marked ✅ so the protocol still skips it, but it belongs to that
+item's author to move.
+
+---
 
 ### CG-36 · `integration-guide.md` stated the dedupe counter unconditionally  ✅ shipped 2026-07-30 · [PR #36](https://github.com/mmackelprang/chat-gateway/pull/36)
 
