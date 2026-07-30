@@ -632,7 +632,7 @@ links here; the fix is to add the same qualification to §7's worked example.
 
 ---
 
-### CG-36 · `integration-guide.md` states the dedupe counter unconditionally  📋 queued
+### CG-36 · `integration-guide.md` states the dedupe counter unconditionally  🔨 in flight
 
 | | |
 |---|---|
