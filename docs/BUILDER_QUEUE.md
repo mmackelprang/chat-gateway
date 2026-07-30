@@ -991,7 +991,7 @@ than claiming the 500 is gone.
 
 ---
 
-### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  ✅ shipped 2026-07-30 · [PR #TBD](https://github.com/mmackelprang/chat-gateway/pulls)
+### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  ✅ shipped 2026-07-30 · [PR #31](https://github.com/mmackelprang/chat-gateway/pull/31)
 
 **The migration itself was executed and live-verified on 2026-07-29 — outside a
 PR, by the user in the Google Cloud console plus a live round-trip.** This row
