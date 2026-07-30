@@ -635,7 +635,7 @@ misleading way.
 
 ---
 
-### CG-32 · The dedupe counter can overflow an `info` payload the gateway just accepted  📋 queued
+### CG-32 · The dedupe counter can overflow an `info` payload the gateway just accepted  🔨 in flight
 
 | | |
 |---|---|
