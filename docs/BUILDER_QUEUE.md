@@ -1,6 +1,6 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-29 (Builder — CG-6, CG-3, CG-10, CG-13 shipped.
+**Last updated:** 2026-07-29 (Builder — CG-6, CG-3, CG-10, CG-13, CG-7 shipped.
 **Experiment E1 RAN AND PASSED and E2 is answered**, so the deferral below is
 superseded: see "What E1 and E2 settled". CG-20 … CG-22 filed.)
 
@@ -73,8 +73,10 @@ item here.
 [spec](superpowers/specs/2026-07-29-live-verification-followups-design.md) ·
 [plan](superpowers/plans/2026-07-29-live-verification-followups.md).
 The plan's Parts A–G map one-to-one onto the queued items below; each Part is
-one PR. Baseline for all of them: `python -m pytest -q` → **70 passed** (on the
-Windows dev box use `python`, not `python3`).
+one PR. The plan's stated baseline (`python -m pytest -q` → **70 passed**) is
+the count from when it was written and moves with every shipped item — it is
+**95** as of CG-7. Take the real count from the suite, not from the plan. (On
+the Windows dev box use `python`, not `python3`.)
 
 **Standing constraint for every item here.** Today's live session cleared two
 flags and no more. `PubSubPuller` stays ⚠ LIVE-UNVERIFIED — every live pull used
@@ -93,11 +95,11 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-7 → CG-4 → CG-5 → CG-8 → CG-12 → CG-11 → CG-20 →
-CG-22 → CG-19 → CG-21.** CG-14 is now `⏸ blocked` (E1 removed its rationale, so
-it needs a decision, not code); CG-19 and CG-21 carry **merge gates** — pause
-and report rather than auto-merging; CG-9 stays blocked on a human; CG-17 and
-CG-18 stay deferred and must not be executed.
+Remaining order: **CG-4 → CG-5 → CG-8 → CG-12 → CG-11 → CG-20 →
+CG-22 → CG-19 → CG-21** (CG-7 has since shipped). CG-14 is now `⏸ blocked`
+(E1 removed its rationale, so it needs a decision, not code); CG-19 and CG-21
+carry **merge gates** — pause and report rather than auto-merging; CG-9 stays
+blocked on a human; CG-17 and CG-18 stay deferred and must not be executed.
 
 ---
 
@@ -126,50 +128,6 @@ and much more precisely.
 
 **Planner/user call.** Either re-justify it as a general inbound-quietness
 detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
-
----
-
-### CG-7 · `/healthz`: subscriber liveness + quota exhaustion must affect `status`  🔨 in flight
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-7)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-8, DEC-9 |
-| **Plan** | [Part E](superpowers/plans/2026-07-29-live-verification-followups.md) |
-| **Depends on** | nothing |
-
-The brief was "make `/healthz` aware of billing/quota." Sizing it found
-something larger: **a gateway whose every poll has failed since boot reports
-`"status": "ok"` indefinitely.** `SubscriberLoop._run` swallows poll exceptions,
-`last_poll_at` is only set after a *successful* poll, and `healthz`'s `degraded`
-expression reads only identity env-resolution and app keys — the subscriber block
-is reported but feeds nothing. That is the claude-mem failure shape hard rule #5
-was written after.
-
-Independently re-verified 2026-07-29 (user): `adapters/pubsub.py:486` sets
-`last_poll_at` only after `pull()` succeeds, `_run` (~line 495) swallows every
-exception, and `service.py:220–222`'s `degraded` expression never reads the
-subscriber block at all — while the docstring at `service.py:199` claims "real
-liveness". A revoked key, a deleted subscription, a wrong subscription name and
-quota exhaustion all fail this way and look identical.
-
-Billing is disabled on `chat-gateway-prod` and the free tier is enormous (a real
-event measured 1,926 bytes → ~2.8M events within Pub/Sub's 10 GiB/month), so
-cost is a non-issue. What matters is that exhaustion fails **closed** — and for a
-gateway delivering `aitrader` alerts, silent death at a quota boundary is exactly
-what rule 5 exists to prevent.
-
-**Added to scope by CG-13:** when `GATEWAY_ENABLE_PUBSUB=1` but
-`CHAT_GATEWAY_INTERACTION_ROUTING_TARGET` is unset, interactive cards cannot
-work at all and `/v1/identities` reports `interaction.enabled: false` — that
-belongs in `reasons` too. CG-13 deliberately did not touch `/healthz` to avoid
-colliding with Part E's rewrite of the whole endpoint body.
-
-Adds a typed `PubSubError` carrying status (and stops echoing `resp.text[:200]`,
-a pre-existing rule-#2 smell), failure counters on the loop, and a `reasons` list
-that `status` is computed from. Billing is **declared** via env, not detected —
-detection means more scopes and calls, and today `topic/send_request_count` read
-zero after a message had provably published (now recorded in
-`docs/google-cloud-setup.md` as disqualifying that metric for any health check).
 
 ---
 
@@ -493,6 +451,55 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-7 · `/healthz`: subscriber liveness + quota exhaustion must affect `status`  ✅ shipped 2026-07-29 · PR-PENDING
+
+| | |
+|---|---|
+| **Spec** | [design §3 (CG-7)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-8, DEC-9 |
+| **Plan** | [Part E](superpowers/plans/2026-07-29-live-verification-followups.md) |
+
+The brief was "make `/healthz` aware of billing/quota." Sizing it found
+something larger: **a gateway whose every poll had failed since boot reported
+`"status": "ok"` indefinitely** — `SubscriberLoop._run` swallowed every poll
+exception with a print, `last_poll_at` was only set after a *successful* poll,
+and `healthz`'s `degraded` expression read only identity env-resolution and app
+keys. The subscriber block was reported and fed nothing, under a docstring
+claiming "real liveness". The claude-mem failure shape hard rule #5 was written
+after.
+
+**Demonstrated, not asserted.** The same construction — a `SubscriberLoop`
+driven until every poll had failed, `last_poll_at is None`, served over a real
+`TestClient` — returned `"status": "ok"` with no `reasons` key before the change
+and `"status": "degraded"` with two explanatory reasons after. Both new health
+signals were also mutation-tested: neutering either one fails exactly its own
+test and nothing else.
+
+`status` is now computed **FROM** a `reasons` list, so nothing can degrade this
+endpoint without saying why in words. Reasons cover an unresolvable identity env
+var, an unset app key, an enabled subscriber that has never completed a poll, and
+`POLL_FAILURE_THRESHOLD` (3) consecutive failures naming the last error's type +
+status. A revoked key, a deleted subscription, a wrong subscription name and
+quota exhaustion are indistinguishable from inside the loop and all fail
+**closed**, so the signal is the failure *run*, not the cause.
+
+**CG-13's leftover is in:** tier 2 enabled with
+`CHAT_GATEWAY_INTERACTION_ROUTING_TARGET` unset **degrades**, because card
+interactions are then impossible rather than merely unconfigured and
+`/v1/identities` already reports `interaction.enabled: false`. The reason names
+the variable and the value to set.
+
+Billing stays **declared** via `GATEWAY_GCP_BILLING`, never detected — detection
+would mean trusting the very metric (`topic/send_request_count`) that read zero
+while a message was demonstrably flowing; the code cites where that is recorded.
+Rule #2 tightened on the way past: `PubSubError` carries verb + status + reason
+phrase and `resp.text[:200]` is gone, so `last_poll_error` is a TYPE and a
+STATUS, never a message body — load-bearing, because `/healthz` is
+unauthenticated.
+
+**Flags: nothing cleared.** The new `PubSubPuller` test uses a mock transport,
+which is not a live round-trip; ⚠ LIVE-UNVERIFIED stands everywhere it stood.
+89 → 95 tests.
 
 ### CG-13 · Publish `interaction_routing_target`; the portable card convention  ✅ shipped 2026-07-29 · [PR #12](https://github.com/mmackelprang/chat-gateway/pull/12)
 

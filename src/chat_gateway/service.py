@@ -300,8 +300,10 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                  # IAM, more calls. And on 2026-07-29 Google's own
                  # pubsub.googleapis.com/topic/send_request_count read ZERO after
                  # a message had provably published, which is a standing argument
-                 # against trusting its telemetry for this — recorded, with the
-                 # architectural consequence, at docs/google-cloud-setup.md:117.
+                 # against trusting its telemetry for this. Recorded with its
+                 # architectural consequence ("no automated health check in this
+                 # project may be built on that metric") at
+                 # docs/google-cloud-setup.md:117, under "Failure signature".
                  "billing_declared": os.environ.get("GATEWAY_GCP_BILLING", "unknown"),
                  "quota_note": (
                      "free-tier exhaustion fails CLOSED — inbound stops with no "
