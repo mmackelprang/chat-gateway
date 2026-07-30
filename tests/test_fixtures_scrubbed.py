@@ -9,8 +9,9 @@ Two guards live here, and they are in ONE file on purpose (CG-26):
 
   1. the **fixture guard** — every `.json` under `tests/fixtures/`, walked leaf
      by leaf with its JSON path, one parametrized test per file;
-  2. the **docs/tests scan** — every `docs/**/*.md` and every `tests/**/*.py`,
-     line by line, **including this file**.
+  2. the **docs/tests scan** — every `docs/**/*.md`, every `tests/**/*.py`,
+     every `tests/**/*.md` and every root-level `*.md`, line by line,
+     **including this file and the README that documents it**.
 
 The second exists because the first was aimed at the wrong directory. Both of
 this project's PII incidents landed outside `tests/fixtures/`: the first draft
@@ -123,12 +124,17 @@ EXAMPLE_DOMAIN = re.compile(r"[\w.+%-]+@(?:[\w-]+\.)*example\.(?:com|org|net)", 
 # Considered and rejected: an `# allow`-style annotation that exempts a line
 # from the scan. It would have to be added to files this item does not own —
 # `tests/test_adapters.py` is CG-23's and `tests/test_log_redaction.py` is
-# PR #33's, both carrying deliberately-fake credentials — so the scan has to
-# tolerate those values *by design* rather than by annotation. Given it must,
-# an annotation here would be a second mechanism doing a job the first already
-# does, and an exemption marker is exactly the thing a future scrub forgets to
-# remove. Composition needs no marker and cannot be forgotten: it either scans
-# clean or it does not.
+# CG-34's (PR #33, **merged** onto main during this cycle) — both carrying
+# deliberately-fake credentials, so the scan has to tolerate those values *by
+# design* rather than by annotation. The merge did not retire that argument, it
+# strengthened the evidence for it: `test_log_redaction.py` now sits INSIDE the
+# scanned trees, so the tolerance is re-proved by
+# `test_docs_and_tests_carry_no_real_identity` on every run rather than by a
+# side check taken on trust. Given the scan must work without annotations
+# anyway, an annotation here would be a second mechanism doing a job the first
+# already does, and an exemption marker is exactly the thing a future scrub
+# forgets to remove. Composition needs no marker and cannot be forgotten: it
+# either scans clean or it does not.
 #
 # One bait below is NOT invented and cannot be — see
 # `test_guard_rejects_the_author_identity_literal`.
@@ -391,20 +397,21 @@ def test_guard_rejects_a_googleusercontent_avatar_url(tmp_path):
     host is a leak, because a proxy avatar URL is by construction a real
     person's, and no fixture has a reason to name that host at all. The prose
     rule (`DOC_AVATAR`, below) is deliberately NOT blunt in the same way — it
-    demands a real `https://…googleusercontent.com/` URL — because nine prose
-    and regex-source mentions of the host already sat in `docs/` and `tests/`
-    when that rule was written, and a blunt port would have been a nine-hit
-    false-positive storm on its first run.
-    Same concern, two precisions, because the surrounding context differs. That
-    asymmetry is recorded in `tests/fixtures/README.md`; this test is the
+    demands a real `https://…googleusercontent.com/` URL — because prose
+    mentions of the host already sat in the scanned trees when that rule was
+    written, and a blunt port would have flagged every one of them on its first
+    run. Same concern, two precisions, because the surrounding context differs.
+    That asymmetry is recorded in `tests/fixtures/README.md`; this test is the
     fixture half of it.
 
     The pass side is the substitution the landed fixtures actually use, so this
     also pins that the anonymization convention and the guard agree.
     """
-    # Nine such mentions existed in the scanned trees the day the prose rule was
-    # written; seventeen exist as of this commit, because a rule that has to be
-    # documented gets named in its own documentation. The number only goes up.
+    # 4 such mentions existed in the scanned trees the day the prose rule was
+    # written; 14 exist as of this commit, because a rule that has to be
+    # documented gets named in its own documentation. The number only goes up,
+    # and the breakdown — with why the previously-recorded nine and seventeen
+    # were both overcounts — is at `DOC_AVATAR`.
     bad = tmp_path / "bad-avatar.json"
     bad.write_text(json.dumps({"user": {"avatarUrl": _BAIT_AVATAR}}), encoding="utf-8")
     with pytest.raises(AssertionError, match="real identity"):
@@ -537,7 +544,7 @@ def test_fixture_files_refuses_to_pass_vacuously(tmp_path, monkeypatch):
 
 REPO_ROOT = Path(__file__).parent.parent
 
-# Only two trees, and the absences are deliberate. `docs/**/*.md` because both
+# The trees, and the absences, are each deliberate. `docs/**/*.md` because both
 # incidents landed in a plan document. `tests/**/*.py` because incident 2's
 # ORIGINAL — the thing the plan document was quoting — was a test file, and
 # that is not bad luck: a negative case NEEDS a value that looks real, so
@@ -549,7 +556,24 @@ REPO_ROOT = Path(__file__).parent.parent
 # touched buys coverage of an unmeasured risk while widening the
 # false-positive surface — and a guard that cries wolf is a guard that gets
 # disabled, which is the one failure mode this whole file exists to avoid.
-SCANNED_TREES = (("docs", "*.md"), ("tests", "*.py"))
+#
+# `tests/**/*.md` and the root `*.md` were the two markdown holes those two
+# trees left, and both hold documents nobody would call peripheral: the root
+# glob is what puts `CLAUDE.md` — this repo's most-edited public document,
+# carrying live operational detail on every session — inside the guard, and
+# `tests/**/*.md` is what puts `tests/fixtures/README.md`, the document that
+# EXPLAINS this guard, inside it. Neither cost anything to add: all three files
+# scanned zero findings on the day they were added, so the widening is
+# measured, not hopeful.
+SCANNED_TREES = (("docs", "*.md"), ("tests", "*.py"), ("tests", "*.md"))
+
+# Root-level markdown, and **non-recursive on purpose** — `REPO_ROOT.glob`, not
+# `rglob`. A recursive root pattern would subsume every tree above and then keep
+# walking into `.claude/worktrees/`, where other Builders' checkouts of this
+# same repo live: a finding reported at a path that is not in this working tree
+# is unfixable and unreproducible, which is precisely how a guard earns the
+# reputation that gets it disabled.
+SCANNED_ROOT_GLOB = "*.md"
 
 # Same shape as `PII`'s id arm, `(?!0)` lookahead included, so a document may
 # quote the synthetic `users/000…001` the fixtures use — and the docs quote it
@@ -559,16 +583,21 @@ DOC_USER_ID = re.compile(r"(?:users|members)/(?!0)\d{10,}")
 # Deliberately NARROWER than `PII`'s avatar arm, which flags the bare host.
 # In a JSON fixture any mention of `googleusercontent.com` is a leak: a proxy
 # avatar URL is by construction some real person's, and no fixture has a reason
-# to name that host at all. In prose the host is a legitimate SUBJECT — nine
-# mentions sat in `docs/` and `tests/` on the day this rule was written, in rule
-# tables, in quoted regex sources, in scrub notes, and in this very comment;
-# seventeen sit there as of this commit, because documenting a rule means naming
-# what it hunts, and the number only goes up. Porting the blunt form would have
-# produced a nine-hit false-positive storm on the guard's first run and a
-# seventeen-hit one now, and the fix a reader reaches for at that point is to
-# delete the rule. So
-# prose must carry an actual URL — scheme, host, path separator — before this
-# fires. Same concern, two precisions, because the surrounding context differs.
+# to name that host at all. In prose the host is a legitimate SUBJECT, and the
+# counts below are re-measured rather than inherited, because the first pair
+# written down were both wrong. **4** such mentions sat in the scanned trees on
+# the day this rule was written — all four in `docs/`, none in `tests/`. **14**
+# sit in them as of this commit: 4 in `docs/`, 6 in this module, 4 in
+# `tests/fixtures/README.md`, which the widened trees above have just brought
+# inside the guard. The figures this replaces — nine,
+# then seventeen — counted the bare token `googleusercontent`, which sweeps up
+# regex-source spellings that a blunt rule could not match, and so overstated
+# the exact quantity the number exists to size. Documenting a rule means naming
+# what it hunts, so the count only goes up. A blunt port would still have been a
+# false-positive storm on the guard's first run and a worse one now, and the fix
+# a reader reaches for at that point is to delete the rule. So prose must carry
+# an actual URL — scheme, host, path separator — before this fires. Same
+# concern, two precisions, because the surrounding context differs.
 DOC_AVATAR = re.compile(r"https?://[\w.-]*googleusercontent\.com/", re.I)
 
 # The `-----` armour, not the bare words. `SUSPECT_VALUE`'s fixture form matches
@@ -601,16 +630,53 @@ DOC_CUSTOMER = re.compile(r"customers/C[A-Za-z0-9]{3,}")
 # was literally written in. The trailing quote is required, which is why the
 # composed bait in this file does not match itself: a value assembled across a
 # `+` has a quote where the regex wants an identifier character.
+#
+# `(?<!\w)` is the left boundary, and it was added after measurement rather
+# than by foresight — without it the key alternation matches as a SUFFIX of any
+# identifier, so a Python variable merely ENDING in `customer` (or `domainId`),
+# followed by a comma and a quoted string, is a finding. It fired twice on this
+# item's own source; see the naming note in
+# `test_an_inlined_tenant_literal_would_be_flagged_in_this_very_file`. Every
+# real target shape survives the boundary, which is why it is safe: `"domainId":
+# "…"`, `domainId: …` and `("domainId", "…")` all carry a quote, a punctuation
+# mark, whitespace or line-start before the key, and none of those is `\w`.
 DOC_TENANT_ASSIGN = re.compile(
-    r"""(?:domainId|customers?)["'`]?\s*[:=,]\s*["'`]([A-Za-z0-9][\w./-]{3,})["'`]""",
+    r"""(?<!\w)(?:domainId|customers?)["'`]?\s*[:=,]\s*["'`]([A-Za-z0-9][\w./-]{3,})["'`]""",
     re.I)
 
+# The table-cell form, because incident 1 hid there. `DOC_TENANT_ASSIGN` cannot
+# see a markdown mapping row — the separator is `|`, not `[:=,]` — and this
+# repo's scrub plans document every anonymization as exactly such a row — a
+# JSON path, the raw value, the replacement, each in its own backticked cell.
+# That is the most likely place in this repo for a real tenant id to sit in
+# prose, because writing the row is the LAST step of a scrub, when the raw value
+# is still on screen. Measured against a reconstruction of incident 1: the
+# shipped rules caught five of its seven leaked classes, and this row was one of
+# the two they missed.
+#
+# The backtick around the value is REQUIRED, and that requirement is the whole
+# precision argument: this repo always backticks a literal in a table cell, so
+# demanding one costs no detection, while an unbackticked cell is prose — and
+# prose beside these two field names is common enough to matter. A decision row
+# whose middle cell names both fields and whose NEXT cell is a sentence
+# ("Path allowlist for those two fields") captures the word `Path` without it;
+# that exact row is in the tolerance sample below. An unbackticked raw value in
+# a table cell is therefore a documented miss, not an oversight — it is what the
+# repo-wide sweep of this rule costs to keep at zero.
+DOC_TENANT_TABLE = re.compile(
+    r"(?<!\w)(?:domainId|customers?)`?\s*\|\s*`([A-Za-z0-9][\w./-]{3,})`", re.I)
+
 # The narrowed replacement for `SUSPECT_KEY` / `SUSPECT_VALUE`. Those key off a
-# JSON path, and prose has no JSON path; a naive port scores 28 hits in `docs/`
-# and `tests/` today, every one a false positive. What survives the narrowing is
-# the shape that actually leaked: a credential in a URL query or fragment.
-# Fragment (`#`) included because an OAuth implicit-flow token arrives there and
-# `tests/test_log_redaction.py` (PR #33) redacts it there.
+# JSON path, and prose has no JSON path; a naive port fires on dozens of lines
+# across the scanned trees, every one a false positive and most of them
+# documentation OF the rule — so the count climbs each time somebody explains
+# it. The measured figure and the method that produced it live in
+# `tests/fixtures/README.md`, once: a second copy here would be a number that
+# drifts in two places instead of one, which is how the 28 this comment used to
+# carry outlived the measurement behind it. What survives the narrowing is the
+# shape that actually leaked: a credential in a URL query or fragment. Fragment
+# (`#`) included because an OAuth implicit-flow token arrives there and
+# `tests/test_log_redaction.py` (CG-34, PR #33, merged) redacts it there.
 DOC_URL_CRED = re.compile(
     r"""[?&#][\w.-]*(?:token|key|secret|password|auth|sig|credential)[\w.-]*"""
     r"""=([^&#\s"'`<>)\]}\\]+)""", re.I)
@@ -644,8 +710,10 @@ def _looks_machine_generated(value: str) -> bool:
     function and is therefore never reported. That is the accepted cost of
     tolerating `?key=K&token=T` and `?key=SECRETKEYVALUE&…`, which are the
     literal deliberately-fake values `tests/test_adapters.py` (CG-23) and
-    `tests/test_log_redaction.py` (PR #33) are built on — files this item does
-    not own and cannot annotate.
+    `tests/test_log_redaction.py` (CG-34, PR #33, merged during this cycle) are
+    built on — files this item does not own and cannot annotate. Both now sit
+    inside the scanned trees, so that tolerance is re-proved by the aggregate
+    scan on every run instead of being asserted here.
     """
     core = _PCT.sub("", value)
     if len(core) < 24:
@@ -668,7 +736,8 @@ def _scan_line(line):
     # MATCH, not the captured value, so `"customer": "customers/Cexample1"`
     # clears on either half carrying the marker.
     for rule, rx in (("DOC_CUSTOMER", DOC_CUSTOMER),
-                     ("DOC_TENANT_ASSIGN", DOC_TENANT_ASSIGN)):
+                     ("DOC_TENANT_ASSIGN", DOC_TENANT_ASSIGN),
+                     ("DOC_TENANT_TABLE", DOC_TENANT_TABLE)):
         for m in rx.finditer(line):
             if "example" not in m.group(0).lower():
                 yield rule, m.group(0)
@@ -696,9 +765,10 @@ def scan_text_for_real_identity(text, source="<sample>"):
 
 def docs_and_tests_files():
     files = sorted(
-        p
-        for subdir, pattern in SCANNED_TREES
-        for p in (REPO_ROOT / subdir).rglob(pattern)
+        {p
+         for subdir, pattern in SCANNED_TREES
+         for p in (REPO_ROOT / subdir).rglob(pattern)}
+        | set(REPO_ROOT.glob(SCANNED_ROOT_GLOB))
     )
     assert files, "no docs or tests found — this scan must never pass vacuously"
     return files
@@ -784,6 +854,13 @@ def test_docs_scan_covers_this_file_and_the_plan_that_quotes_it():
     refactor that scopes it to `docs/` "because that is where the incidents
     were" — and everything else in this module would stay green while the one
     file most likely to carry a real value on purpose went unread again.
+
+    The last two names are the markdown holes the original two trees left, and
+    each reaches the walker by a DIFFERENT mechanism — `CLAUDE.md` only through
+    the non-recursive root glob, `tests/fixtures/README.md` only through
+    `tests/**/*.md`. Naming both is what makes a partial revert visible: drop
+    either mechanism and the aggregate scan still passes, because fewer files
+    produce fewer findings, which is exactly what passing looks like.
     """
     scanned = {p.relative_to(REPO_ROOT).as_posix() for p in docs_and_tests_files()}
     assert "tests/test_fixtures_scrubbed.py" in scanned, (
@@ -793,16 +870,33 @@ def test_docs_scan_covers_this_file_and_the_plan_that_quotes_it():
         "docs/superpowers/plans/2026-07-29-live-verification-followups.md"
         in scanned
     ), "the docs/tests scan no longer reads the plan document that leaked"
+    for widened, mechanism in (("CLAUDE.md", "the root glob"),
+                               ("tests/fixtures/README.md", "tests/**/*.md")):
+        assert widened in scanned, (
+            f"{widened} is no longer scanned — {mechanism} has been dropped, and "
+            "with it the guard's coverage of a document nobody would call peripheral"
+        )
 
 
 def test_docs_guard_rejects_each_leak_shape():
-    """Six shapes, six rules, each proven to fire — bait invented and composed.
+    """Seven shapes, seven rules, each proven to fire — bait invented and composed.
 
     These are the shapes the two incidents were made of, plus the two that would
     make a third one worse. Every value is invented; every one is assembled from
     fragments at import time, because writing any of them as a literal here
     would make this file fail `test_docs_and_tests_carry_no_real_identity`
     above. That is the convention working, not a workaround for it.
+
+    The last case is a markdown TABLE ROW, and it is here because a
+    reconstruction of incident 1 — the plan draft that leaked a live capability
+    token — was run against the shipped rules and this was one of two classes
+    they missed. A scrub plan records every anonymization as a mapping row, and
+    the raw value is still on screen when that row gets written, so the table
+    cell is not an exotic hiding place; it is the ordinary one. Its third cell
+    carries the `example` marker deliberately: the replacement column of a real
+    mapping row does, and suppression keys on the MATCH rather than the line, so
+    a rule that read the whole row would clear a leak that sits two cells to the
+    left of a marker.
 
     Asserted by RULE NAME rather than by "some finding was produced". A bait
     string can trip the wrong rule — a `customers/C…` value inside a
@@ -815,6 +909,8 @@ def test_docs_guard_rejects_each_leak_shape():
         (_BAIT_PEM_BLOCK, "DOC_PEM"),
         ("the space belongs to " + _CUSTOMER_ID_BAIT, "DOC_CUSTOMER"),
         ('    "domainId": "' + _TENANT_BAIT + '",', "DOC_TENANT_ASSIGN"),
+        ("| `$.chat.user.domainId` | `" + _TENANT_BAIT + "` | `example1` |",
+         "DOC_TENANT_TABLE"),
         ("curl " + _BAIT_URL_CRED, "DOC_URL_CRED"),
     ):
         fired = {rule for _, _, rule, _ in scan_text_for_real_identity(bait)}
@@ -861,6 +957,15 @@ begins with the line BEGIN RSA PRIVATE KEY. None of those is a leaked key.
 Synthetic and elided identifiers: users/000000000000000000001,
 customers/Cexample1, domainId "example1", and the elided reference
 customers/C0… that the docs use to point at incident 2 without reprinting it.
+
+A scrub plan's mapping rows, marked in the replacement column exactly as
+docs/superpowers/plans/2026-07-30-classic-fixtures-cg22-cg9.md writes them:
+| `$.user.domainId` | `example1` | `TENANT_KEY` marker |
+| `$.space.customer` | `customers/Cexample1` | `TENANT_KEY` marker |
+
+...and a decision row naming both tenant fields, whose next cell is a sentence
+rather than a backticked value:
+| DEC-6 | `example`-marker guard for `domainId` / `customer` | Path allowlist for those two fields | rejected |
 """
 
 
@@ -885,18 +990,24 @@ def test_docs_guard_tolerates_what_this_repo_publishes_on_purpose():
       NOT ported down here.
     - **Google service-account addresses** — published constants, in the IaC and
       in the setup doc.
-    - **Deliberately-fake credentials, as CG-23 and PR #33 (CG-34) write them**
-      — and these are the load-bearing ones. `tests/test_adapters.py` is CG-23's
-      and `tests/test_log_redaction.py` is PR #33's, both unmergeable-into by
-      this item, so the scan has to tolerate their values BY DESIGN rather than
-      by annotation. Worse than merely inconvenient: those files are the tests
-      that PROVE hard rule #2 holds — that a webhook URL's key and token never
-      reach a log. Breaking them to satisfy this guard would trade a real
-      control for a cosmetic one.
+    - **Deliberately-fake credentials, as CG-23 and CG-34 write them** — and
+      these are the load-bearing ones. `tests/test_adapters.py` is CG-23's and
+      `tests/test_log_redaction.py` is CG-34's (PR #33, **merged** onto main
+      during this cycle); neither is a file this item may edit, so the scan has
+      to tolerate their values BY DESIGN rather than by annotation. The merge
+      made that argument better-evidenced rather than moot: both files now sit
+      inside the scanned trees, so `test_docs_and_tests_carry_no_real_identity`
+      re-proves the tolerance on every run — 26 files, zero findings — where it
+      previously rested on a side check. And it would be worse than
+      inconvenient if it broke: those files are the tests that PROVE hard rule
+      #2 holds — that a webhook URL's key and token never reach a log. Breaking
+      them to satisfy this guard would trade a real control for a cosmetic one.
     - **Prose and regex-source mentions of the hosts and headers the rules hunt**
-      — seventeen `googleusercontent.com` mentions sit in the scanned trees as
-      of this commit, nine of them in this module, and a blunt port would flag
-      every one of them; the PEM header is discussed
+      — 14 `googleusercontent.com` mentions sit in the scanned trees as of this
+      commit, 6 of them in this module, and a blunt port would flag every one of
+      them. That figure is re-measured, not inherited: the seventeen recorded
+      here before counted the bare token and overstated it, as `DOC_AVATAR` now
+      explains. The PEM header is discussed
       in three documents, all of them elided or bracketed, so there the armour
       requirement is prophylactic rather than load-bearing (spelled out at
       `DOC_PEM`). Both rules are narrowed — scheme-and-path, `-----` armour — so
@@ -907,6 +1018,15 @@ def test_docs_guard_tolerates_what_this_repo_publishes_on_purpose():
       `customers/Cexample1` on the RFC 2606 marker, `customers/C0…` on the
       `{3,}` floor. Each is a different mechanism, and each is used by real
       committed documents.
+    - **Markdown table rows about tenant fields** — the class `DOC_TENANT_TABLE`
+      was added for, sampled in BOTH directions because the rule's precision
+      lives entirely in one required backtick. The two mapping rows clear on the
+      marker in their replacement cell, which is how every scrub plan in `docs/`
+      already writes them. The `DEC-6` row is the false-positive trap: its middle
+      cell names both tenant fields and its next cell is a sentence, so a rule
+      that did not require the value to be backticked would report the word
+      `Path` as a leaked tenant id. Both rows are copied from shapes this repo
+      actually commits, not invented for the sample.
 
     Zero findings, asserted as a whole rather than class by class. A per-class
     version would let a new rule fire on a class nobody thought to enumerate;
@@ -944,16 +1064,31 @@ def test_an_inlined_tenant_literal_would_be_flagged_in_this_very_file():
         "convention has stopped working and this file leaks by construction"
     )
 
-    # Naming note, measured while writing this test rather than predicted. The
-    # obvious name for the second variable below ends in `customer` — and
-    # mentioning it in the loop tuple, followed by a comma and the quoted rule
-    # name, IS a DOC_TENANT_ASSIGN match: a Python identifier ending in a tenant
-    # key, a separator, and a quoted string is precisely the assignment shape
-    # the rule hunts, and the rule cannot tell a variable name from a JSON key.
-    # This is the guard's one measured false-positive shape; it is recorded in
-    # `tests/fixtures/README.md` with the two fixes the README gives for any
-    # false positive — rename, or add a marker word. Renamed here, twice: the
-    # first draft of THIS comment tripped it as well.
+    # Naming note, and the measurement that changed a rule. The obvious name for
+    # the second variable below ends in `customer` — and mentioning it in the
+    # loop tuple, followed by a comma and the quoted rule name, WAS a
+    # DOC_TENANT_ASSIGN match: an identifier ending in a tenant key, then a
+    # separator, then a quoted string is precisely the assignment shape the rule
+    # hunts, and the rule could not tell a variable name from a JSON key. It
+    # fired twice on this item's own source — once on a variable, once on the
+    # first draft of THIS comment — and firing twice on one PR is what turns
+    # "unlucky names" into "the rule is too wide".
+    #
+    # So it was narrowed rather than worked around. `DOC_TENANT_ASSIGN` now
+    # carries a `(?<!\w)` left boundary: the key must START an identifier, not
+    # merely end one. Measured before the change went in — across every scanned
+    # file, not one existing finding moved, because every real target shape has
+    # a quote, punctuation, whitespace or line-start in front of the key. The
+    # variables keep their current names; churning them back would prove
+    # nothing.
+    #
+    # The residual blind spot, stated rather than left to be discovered: a
+    # COMPOUND identifier assignment — `tenantDomainId = "<opaque>"` — is now
+    # matched by nothing here. For the customer form that is mitigated by
+    # `DOC_CUSTOMER`, which needs no lookbehind of its own because its
+    # eleven-character literal prefix makes a suffix collision implausible. For
+    # a bare `domainId` value it is genuinely uncovered, and that is the price
+    # paid for the false-positive class above being gone.
     inlined_domain_line = '        "domainId": {"chat": {"user": {"domainId": "' + _TENANT_BAIT + '"}}},'
     inlined_customer_line = ('        "customer": {"chat": {"spaces": [{"customer": "'
                              + _CUSTOMER_ID_BAIT + '"}]}},')
