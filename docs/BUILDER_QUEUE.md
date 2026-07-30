@@ -95,7 +95,7 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-24 → CG-8 → CG-12 → CG-11 → CG-20 →
+Remaining order: **CG-24 → CG-25 → CG-8 → CG-12 → CG-11 → CG-20 →
 CG-22 → CG-19 → CG-21 → CG-23** (CG-7, CG-4 and CG-5 have since shipped). CG-14 is now
 `⏸ blocked` (E1 removed its rationale, so it needs a decision, not code);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
@@ -241,6 +241,29 @@ inference), so Part G adopts §7 rather than paraphrasing it.
 | **Depends on** | nothing |
 | **Touches** | `docs/google-cloud-setup.md`, `docs/architecture/decisions/2026-07-29-tier2-interaction-model.md` — docs only |
 
+> **⚠ SCOPE WIDENED 2026-07-30, and this half is now the more urgent one.**
+> CG-5's review caught that this item's original scope — record the E1/E2
+> findings — did **not** cover the fact that `chat-gateway-prod` is **deleted**,
+> even though `docs/google-cloud-setup.md` is the file that asserts it exists.
+> CG-5 corrected `CLAUDE.md`; deferring the rest here was only legitimate if
+> this row actually owned it, and it did not. It does now:
+>
+> | Location | Currently says | Reality |
+> |---|---|---|
+> | step 1 (~L34) | `gcloud projects create chat-gateway-prod` | the live project is `chat-gateway-gw` (`#860649224827`) |
+> | steps 2–4 (~L45) | ✅ **Provisioned for `chat-gateway-prod`** | that project no longer exists — the ✅ is **false** |
+> | step 5 (~L143) | point the console at `projects/chat-gateway-prod/topics/…` | wrong project |
+> | step 8 (~L235, ~L315) | hand back / rotate `chat-gateway-sa.json` | the live key is `chat-gateway-sa-gw.json`; `iac/chat-gateway-sa.json` is **dead** |
+>
+> A reader following this doc today would create a second project named after a
+> deleted one and wire credentials by a dead filename. Also record that the app
+> is the classic **"Agent Comms"** in the **JobHunt space only**, and that tier 1
+> is project-independent (four identities delivered immediately after the project
+> deletion) — the doc asserts that already; it is now observed.
+>
+> Do **not** silently reuse the ✅ box. A provisioning claim for a deleted project
+> should be rewritten as history, dated, not left looking current.
+
 Two traps cost real time on this project and together they are the whole story
 of how it ended up on the wrong runtime. CG-6 corrected the first (the
 Marketplace SDK does **not** gate installability). This records the second,
@@ -338,6 +361,16 @@ Scope is comments only — no resource changes, no behaviour change. It is filed
 separately rather than folded into CG-6 because touching `iac/` requires a user
 pause, and CG-6 was the credential fix that had to ship first.
 
+**Scope widened 2026-07-30** (CG-5's review, LOW): while in these three files,
+also update the illustrative project name and key filename. `iac/gcloud-setup.sh:3,7`,
+`iac/gcloud-setup.ps1:25,49` and `iac/terraform/main.tf:10` use
+`PROJECT_ID=chat-gateway-prod` as the example and default `KEY_FILE` to
+`chat-gateway-sa.json`. These are genuinely parameterized examples, not status
+claims — which is why this is LOW and not the same finding as CG-20's false ✅
+box — but an operator copy-pasting them would reuse a project name this repo has
+just declared deleted and a key filename it has declared dead. Still
+comments/defaults only; no resource changes.
+
 ---
 
 ### CG-23 · The `resp.text[:200]` echo survives in both sibling adapters  📋 queued · ⏸ merge gate
@@ -417,6 +450,42 @@ Scope the clear honestly, as CG-4 and CG-5 do:
 Do **not** widen this into the `chat-api-push@system.gserviceaccount.com` grant —
 that question is permanently unresolvable (both principals were bound in
 `chat-gateway-prod`, which is deleted) and is recorded as closed, not open.
+
+---
+
+### CG-25 · `send_text()` has no transport-error guard, unlike `send()`  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by CG-5's review — a code asymmetry found while checking the docstring split |
+| **Depends on** | nothing (CG-5 shipped the docstrings; this is the behaviour) |
+| **Touches** | `src/chat_gateway/adapters/chat_api.py` + a test |
+
+`ChatApiAdapter.send()` wraps its POST in `try/except httpx.HTTPError` and
+re-raises as `ChatApiError`, naming the identity. **`send_text()` does not wrap
+it at all** — a connection reset, DNS failure or read timeout propagates as a raw
+`httpx` exception.
+
+Not a crash: `CallbackForwarder` catches broad `Exception` and logs, so nothing
+goes silent. The defect is that the failure arrives **untyped**, in the one method
+whose entire job is to be reliable about telling a user something went wrong:
+
+- jobhunt **R7** — the in-thread notice that a tap did not land.
+- jobhunt **R4** — the refusal shown to an unauthorized user.
+
+So the delivery log records `ConnectError` where every other adapter path records
+`ChatApiError`, and a caller cannot distinguish "Google refused us" from "we never
+reached Google" without string-matching an exception type. That is the same
+class of ambiguity `PubSubError` was introduced to remove in CG-7.
+
+Expected shape: mirror `send()`'s guard — `except httpx.HTTPError` → `ChatApiError`
+carrying the type name only, never the response body (that is CG-23's separate
+concern, and `send_text()`'s non-200 branch is already correct on it). One test
+driving a transport failure through `httpx.MockTransport`.
+
+Note this does **not** re-open CG-5's flag clear: both of `send_text()`'s
+*threading* branches were verified live. The transport-error branch was never
+exercised against Google and CG-5's docstring says so.
 
 ---
 
