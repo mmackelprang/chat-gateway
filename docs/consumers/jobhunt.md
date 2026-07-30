@@ -6,6 +6,11 @@ level integration only (R8) — appserver-local HTTP + one tenant config file;
 no code imports either direction; jobhunt keeps working (tier-1 webhook +
 its review UI) if the gateway is down or never ships (R9).
 
+> **Building against this?** [`jobhunt-handoff.md`](jobhunt-handoff.md) is the
+> companion **handoff** doc — the gateway's answer back to jobhunt's R1–R9, with
+> the card convention, the required registry configuration, and the state of
+> each guarantee. This file stays the contract.
+
 ## Requirements → implementation
 
 | R | Requirement | Where |
