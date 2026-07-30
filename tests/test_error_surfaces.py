@@ -304,7 +304,7 @@ def _parameters(scope: ast.AST) -> set[str]:
     return names
 
 
-def _literal_parameters(scope: ast.AST) -> dict[str, ast.AST]:
+def _literal_parameters(scope: ast.AST, trees=None) -> dict[str, ast.AST]:
     """`param -> ast.Constant` for parameters that are a string LITERAL at every
     in-package call of `scope`.
 
@@ -326,18 +326,34 @@ def _literal_parameters(scope: ast.AST) -> dict[str, ast.AST]:
     passing a non-literal only makes this STRICTER — the parameter stops
     resolving and the slot is rejected. And finding zero calls rejects too, so a
     function this guard cannot locate never resolves by default.
+
+    That safety argument covers the name matching. It does NOT cover the scan
+    scope, and the two must not be run together: `_modules()` walks
+    `src/chat_gateway/` only, so "every in-package call" is only "every call"
+    for a function nothing outside the package calls. **Restricted to
+    underscore-private names for exactly that reason** — `_post` qualifies; a
+    public method's callers live in consumer code this guard has never seen, and
+    proving its parameter constant here would prove nothing about them. A
+    non-private scope resolves nothing and its slots are rejected, which is the
+    same safe direction as every other giving-up branch above. Widening this to
+    public methods needs a different proof, not a bigger glob.
+
+    `trees` overrides the package for the one test that drives this directly.
+    The privacy rule is the only branch here with no observable effect on the
+    real tree — `_post` is the sole scope that reaches it — so without a seam it
+    would be a comment, and this file's whole argument is that comments rot.
     """
     positional = [a.arg for a in scope.args.posonlyargs + scope.args.args] \
         if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) else []
-    if not positional:
+    if not positional or not scope.name.startswith("_"):
         return {}
     # A method is called as `x.<name>(...)` and its first parameter is bound by
     # the call itself, so every positional index shifts by one.
     is_method = positional[0] in ("self", "cls")
 
     calls = []
-    for py in _modules():
-        for node in ast.walk(_tree(py)):
+    for tree in (trees if trees is not None else [_tree(py) for py in _modules()]):
+        for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             if is_method:
@@ -600,6 +616,49 @@ def test_the_guard_above_actually_finds_the_construction_sites():
         "ChatApiError": 5, "PubSubError": 1, "UnrecognizedEventError": 4,
         "WebhookDeliveryError": 2,
     }
+
+
+def test_a_parameter_only_resolves_for_a_scope_whose_callers_are_all_in_package():
+    """`_literal_parameters` proves a parameter constant by reading its CALLERS.
+
+    That proof is only as wide as the scan, and the scan is `src/chat_gateway/`.
+    For an underscore-private function that is the whole population; for a
+    public one the callers that matter are in consumer code nobody here has
+    read, so the same evidence proves nothing and the parameter must not
+    resolve. Identical sources but for the leading underscore, so the underscore
+    is demonstrably what decides it — and `verb` is checked on the real `_post`
+    as well, because a rule that only ever fires on a synthetic tree is not
+    known to fire at all.
+    """
+    def scope_of(src, name):
+        tree = ast.parse(src)
+        fn = next(n for n in ast.walk(tree)
+                  if isinstance(n, ast.FunctionDef) and n.name == name)
+        return fn, [tree]
+
+    private, trees = scope_of(
+        "class C:\n"
+        "    def _helper(self, verb): pass\n"
+        "    def go(self): self._helper('pull')\n", "_helper")
+    assert "verb" in _literal_parameters(private, trees)
+
+    public, trees = scope_of(
+        "class C:\n"
+        "    def helper(self, verb): pass\n"
+        "    def go(self): self.helper('pull')\n", "helper")
+    assert _literal_parameters(public, trees) == {}
+
+    # ...and one non-literal caller is enough to un-resolve the private case
+    mixed, trees = scope_of(
+        "class C:\n"
+        "    def _helper(self, verb): pass\n"
+        "    def go(self, x): self._helper('pull'); self._helper(x)\n", "_helper")
+    assert _literal_parameters(mixed, trees) == {}
+
+    # the real one, so this is not purely a test of synthetic input
+    post = next(n for n in ast.walk(_tree(SRC / "adapters" / "pubsub.py"))
+                if isinstance(n, ast.FunctionDef) and n.name == "_post")
+    assert sorted(_literal_parameters(post)) == ["verb"]
 
 
 # --------------------------------------------------------------------------
