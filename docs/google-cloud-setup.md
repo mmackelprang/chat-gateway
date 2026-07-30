@@ -292,7 +292,8 @@ avatar URL → copy the webhook URL.
   put the project on the add-ons runtime; the **create-time-only add-on toggle**
   (E2 — *"⚠ The add-on toggle is CREATE-TIME ONLY"*, in step 5 above) is why it
   could not simply be switched back, and why the escape cost a whole new GCP
-  project (`chat-gateway-prod` → `chat-gateway-gw`). Together they are the entire
+  project (`chat-gateway-prod`, since **deleted 2026-07-30** → `chat-gateway-gw`,
+  the live one). Together they are the entire
   story of how this project ended up on the wrong runtime and what it cost to
   leave — which is why each one points at the other rather than standing alone.
 
