@@ -467,7 +467,7 @@ the secret-handling path and therefore needs a pause.
 
 ---
 
-### CG-25 · `send_text()` has no transport-error guard, unlike `send()`  📋 queued
+### CG-25 · `send_text()` has no transport-error guard, unlike `send()`  🔨 in flight
 
 | | |
 |---|---|
@@ -755,7 +755,8 @@ old one.)_
 
 ## In flight
 
-_(nothing)_
+- **CG-25** — `send_text()`'s missing transport-error guard. Claimed 2026-07-30
+  by Builder on `fix/cg25-send-text-transport-guard`.
 
 ---
 
