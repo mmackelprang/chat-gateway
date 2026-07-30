@@ -822,7 +822,7 @@ there on the host"*. Filed with the observation, not the answer.
 
 ---
 
-### CG-37 · Two `src/` comments still name **add-ons** as the runtime we are deployed on  📋 queued
+### CG-37 · Two `src/` comments still name **add-ons** as the runtime we are deployed on  🔨 in flight
 
 > **Renumbered from CG-35 on merge, 2026-07-30.** CG-19 had already taken CG-35
 > and CG-32 took CG-36 while all three ran in parallel. Queue numbers have no
