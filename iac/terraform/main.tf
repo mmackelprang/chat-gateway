@@ -7,7 +7,13 @@
 #
 # Usage:
 #   terraform init
-#   terraform apply -var project_id=chat-gateway-prod
+#   terraform apply -var project_id=your-project-id
+#
+# This config is project-agnostic and names no project on purpose — the id of
+# the project this repo actually runs on is recorded once, in
+# docs/google-cloud-setup.md. The example above used to read
+# `chat-gateway-prod`, which was DELETED on 2026-07-30, so copy-pasting it
+# aimed the whole apply at a project that no longer exists.
 
 terraform {
   required_providers {
@@ -73,9 +79,29 @@ resource "google_project_service" "gsuiteaddons" {
   disable_on_destroy = false
 }
 
-# The Google Workspace Marketplace SDK. Without it the app never appears under
-# ⚙ → Apps & integrations → Add apps (docs/google-cloud-setup.md §6).
-# *Publishing* the app has no IaC surface and stays console-only.
+# The Google Workspace Marketplace SDK.
+#
+# ⚠ CORRECTED 2026-07-30 (CG-19) — DO NOT REINSTATE THE OLD CLAIM. This comment
+# used to read "Without it the app never appears under ⚙ → Apps & integrations →
+# Add apps". That is FALSE, and it is the exact sentence that put this project on
+# the Workspace Add-ons runtime — which is why the correction is left here as a
+# warning rather than quietly deleted. If you are choosing a runtime for a NEW
+# project, read the ADR cited below BEFORE you apply this.
+#
+# Installability comes from Chat API → Configuration → Visibility: list your own
+# address (or a Google Group) there and you can add the app to a space
+# immediately. Google states its Marketplace settings are ignored for Chat
+# outright — "Any visibility or testing settings that you've configured in the
+# Google Workspace Marketplace SDK are ignored"
+# (https://developers.google.com/workspace/add-ons/chat). Marketplace publishing
+# is needed only to reach people BEYOND that Visibility list, has no IaC surface,
+# and stays console-only either way.
+#
+# The API stays enabled: it is harmless, it costs nothing, and it shortens a
+# later publish. It is simply not a prerequisite for anything provisioned here.
+# Full account: CG-6, which corrected the same claim in
+# docs/google-cloud-setup.md, and ADR-0001 §5 option D / §14 —
+# docs/architecture/decisions/2026-07-29-tier2-interaction-model.md.
 resource "google_project_service" "appsmarket" {
   service            = "appsmarket-component.googleapis.com"
   disable_on_destroy = false

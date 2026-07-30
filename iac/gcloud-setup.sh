@@ -1,14 +1,33 @@
 #!/usr/bin/env bash
 # Idempotent Google Cloud setup for chat-gateway tier 2 (two-way Chat app).
-# Usage: PROJECT_ID=chat-gateway-prod ./gcloud-setup.sh
+# Usage: PROJECT_ID=your-project-id ./gcloud-setup.sh
 # Prereq: gcloud auth login; project exists (or uncomment the create line).
+#
+# This script is project-agnostic and names no project on purpose — the id of
+# the project this repo actually runs on is recorded once, in
+# docs/google-cloud-setup.md. The example above used to read
+# `chat-gateway-prod`, which was DELETED on 2026-07-30, so copy-pasting it
+# aimed every gcloud call below at a project that no longer exists.
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:?set PROJECT_ID, e.g. PROJECT_ID=chat-gateway-prod}"
+PROJECT_ID="${PROJECT_ID:?set PROJECT_ID, e.g. PROJECT_ID=your-project-id}"
 TOPIC="${TOPIC:-chat-gateway-events}"
 SUBSCRIPTION="${SUBSCRIPTION:-chat-gateway-sub}"
 SA_NAME="${SA_NAME:-chat-gateway}"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+# ⚠ Pass a per-project KEY_FILE — e.g. KEY_FILE=chat-gateway-sa-<project>.json.
+# The "already exists — not minting another" branch near the bottom matches on
+# FILENAME ONLY; it cannot tell which project a key belongs to, so a key left
+# over from a different project satisfies it. That is not hypothetical: the
+# deleted `chat-gateway-prod` minted its key under this exact default, so any
+# working tree that provisioned it still holds a `chat-gateway-sa.json` that
+# authenticates to nothing. Re-run here for a fresh project and the script
+# prints "not minting another", then emits a .env block pointing
+# GOOGLE_APPLICATION_CREDENTIALS at that dead credential.
+#
+# The default is left unchanged ON PURPOSE (CG-19): renaming it would make this
+# script mint a SECOND service-account key on every host that already has one,
+# and a comment fix must not create credentials as a side effect.
 KEY_FILE="${KEY_FILE:-chat-gateway-sa.json}"
 
 # ⚠ VERIFY on the Chat API Configuration page when you wire the topic:
@@ -25,9 +44,29 @@ echo "== project: ${PROJECT_ID}"
 # gcloud projects create "${PROJECT_ID}" --name="chat-gateway"   # if not created yet
 gcloud config set project "${PROJECT_ID}" >/dev/null
 
-# appsmarket-component = the Google Workspace Marketplace SDK. Without it the
-# app never appears under ⚙ → Apps & integrations → Add apps (step 6), so the
-# API is enabled here; *publishing* the app remains console-only.
+# appsmarket-component = the Google Workspace Marketplace SDK.
+#
+# ⚠ CORRECTED 2026-07-30 (CG-19) — DO NOT REINSTATE THE OLD CLAIM. This comment
+# used to read "Without it the app never appears under ⚙ → Apps & integrations
+# → Add apps". That is FALSE, and it is the exact sentence that put this project
+# on the Workspace Add-ons runtime — which is why the correction is left here as
+# a warning rather than quietly deleted. If you are choosing a runtime for a NEW
+# project, read the ADR cited below BEFORE you run this script.
+#
+# Installability comes from Chat API → Configuration → Visibility: list your own
+# address (or a Google Group) there and you can add the app to a space
+# immediately. Google states its Marketplace settings are ignored for Chat
+# outright — "Any visibility or testing settings that you've configured in the
+# Google Workspace Marketplace SDK are ignored"
+# (https://developers.google.com/workspace/add-ons/chat). Marketplace publishing
+# is needed only to reach people BEYOND that Visibility list, and it is
+# console-only either way.
+#
+# The API stays enabled: it is harmless, it costs nothing, and it shortens a
+# later publish. It is simply not a prerequisite for anything provisioned here.
+# Full account: CG-6, which corrected the same claim in
+# docs/google-cloud-setup.md, and ADR-0001 §5 option D / §14 —
+# docs/architecture/decisions/2026-07-29-tier2-interaction-model.md.
 echo "== enabling APIs (chat, pubsub, workspace add-ons, marketplace SDK)"
 gcloud services enable chat.googleapis.com pubsub.googleapis.com \
   gsuiteaddons.googleapis.com appsmarket-component.googleapis.com
@@ -83,6 +122,8 @@ echo "== grant the gateway SA subscribe"
 gcloud pubsub subscriptions add-iam-policy-binding "${SUBSCRIPTION}" \
   --member="serviceAccount:${SA_EMAIL}" --role="roles/pubsub.subscriber" >/dev/null
 
+# ⚠ Filename-only check — it does not know which project the existing key
+# belongs to. See the KEY_FILE note at the top of this script.
 if [[ -f "${KEY_FILE}" ]]; then
   echo "== key file ${KEY_FILE} already exists — not minting another"
 else
