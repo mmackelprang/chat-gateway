@@ -1,0 +1,27 @@
+{
+  "type": "ADDED_TO_SPACE",
+  "eventTime": "2026-07-30T00:24:51.910485Z",
+  "user": {
+    "name": "users/000000000000000000001",
+    "displayName": "Test User",
+    "avatarUrl": "https://example.com/avatar.png",
+    "email": "agent-user@example.com",
+    "type": "HUMAN",
+    "domainId": "example1"
+  },
+  "space": {
+    "name": "spaces/_AAAAtestDm",
+    "type": "DM",
+    "singleUserBotDm": true,
+    "spaceThreadingState": "THREADED_MESSAGES",
+    "spaceType": "DIRECT_MESSAGE",
+    "spaceHistoryState": "HISTORY_ON",
+    "lastActiveTime": "2026-07-30T00:24:51.910485Z",
+    "membershipCount": {
+      "joinedDirectHumanUserCount": 1
+    },
+    "spaceUri": "https://chat.google.com/dm/_AAAAtestDm?cls=11"
+  },
+  "configCompleteRedirectUrl": "https://chat.google.com/api/bot_config_complete?token=<SCRUBBED>",
+  "_pubsub_message_id": "21339851456542226"
+}

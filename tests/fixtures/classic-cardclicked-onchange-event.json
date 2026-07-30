@@ -1,0 +1,152 @@
+{
+  "type": "CARD_CLICKED",
+  "eventTime": "2026-07-30T12:48:52.884583Z",
+  "message": {
+    "name": "spaces/AAAAclassicRoom/messages/ONCH1.ONCH1",
+    "sender": {
+      "name": "users/000000000000000000002",
+      "displayName": "Chat Gateway",
+      "avatarUrl": "https://example.com/app-avatar.png",
+      "type": "BOT"
+    },
+    "createTime": "2026-07-30T02:31:09.634223Z",
+    "text": "chat-gateway: change the dropdown (no button) to capture the onChangeAction event shape",
+    "thread": {
+      "name": "spaces/AAAAclassicRoom/threads/ONCH1",
+      "retentionSettings": {
+        "state": "PERMANENT"
+      }
+    },
+    "space": {
+      "name": "spaces/AAAAclassicRoom",
+      "type": "ROOM",
+      "displayName": "Test Room",
+      "spaceThreadingState": "THREADED_MESSAGES",
+      "spaceType": "SPACE",
+      "spaceHistoryState": "HISTORY_ON",
+      "lastActiveTime": "2026-07-30T02:31:09.634223Z",
+      "membershipCount": {
+        "joinedDirectHumanUserCount": 1
+      },
+      "customer": "customers/Cexample1",
+      "spaceUri": "https://chat.google.com/room/AAAAclassicRoom?cls=11"
+    },
+    "argumentText": "chat-gateway: change the dropdown (no button) to capture the onChangeAction event shape",
+    "cardsV2": [
+      {
+        "cardId": "onchange-capture",
+        "card": {
+          "header": {
+            "title": "chat-gateway",
+            "subtitle": "onChangeAction capture — change the dropdown ONLY"
+          },
+          "sections": [
+            {
+              "widgets": [
+                {
+                  "decoratedText": {
+                    "text": "Just <b>change the dropdown</b>. There is no button on purpose — the dropdown itself is what we need to capture.",
+                    "wrapText": true
+                  }
+                },
+                {
+                  "selectionInput": {
+                    "name": "verdict",
+                    "label": "Verdict",
+                    "type": "DROPDOWN",
+                    "items": [
+                      {
+                        "text": "(choose)",
+                        "value": "none",
+                        "selected": true
+                      },
+                      {
+                        "text": "Approve",
+                        "value": "approve"
+                      },
+                      {
+                        "text": "Reject",
+                        "value": "reject"
+                      }
+                    ],
+                    "onChangeAction": {
+                      "function": "onVerdictChanged",
+                      "parameters": [
+                        {
+                          "key": "jobId",
+                          "value": "onchange-001"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "retentionSettings": {
+      "state": "PERMANENT"
+    },
+    "messageHistoryState": "HISTORY_ON",
+    "formattedText": "chat-gateway: change the dropdown (no button) to capture the onChangeAction event shape",
+    "markupSyntax": "MARKUP_SYNTAX_CHAT"
+  },
+  "user": {
+    "name": "users/000000000000000000001",
+    "displayName": "Test User",
+    "avatarUrl": "https://example.com/avatar.png",
+    "email": "agent-user@example.com",
+    "type": "HUMAN",
+    "domainId": "example1"
+  },
+  "space": {
+    "name": "spaces/AAAAclassicRoom",
+    "type": "ROOM",
+    "displayName": "Test Room",
+    "spaceThreadingState": "THREADED_MESSAGES",
+    "spaceType": "SPACE",
+    "spaceHistoryState": "HISTORY_ON",
+    "lastActiveTime": "2026-07-30T02:31:09.634223Z",
+    "membershipCount": {
+      "joinedDirectHumanUserCount": 1
+    },
+    "customer": "customers/Cexample1",
+    "spaceUri": "https://chat.google.com/room/AAAAclassicRoom?cls=11"
+  },
+  "action": {
+    "actionMethodName": "onVerdictChanged",
+    "parameters": [
+      {
+        "key": "jobId",
+        "value": "onchange-001"
+      }
+    ]
+  },
+  "common": {
+    "userLocale": "en",
+    "hostApp": "CHAT",
+    "timeZone": {
+      "id": "America/New_York",
+      "offset": -14400000
+    },
+    "formInputs": {
+      "verdict": {
+        "stringInputs": {
+          "value": [
+            "approve"
+          ]
+        }
+      }
+    },
+    "parameters": {
+      "jobId": "onchange-001"
+    },
+    "invokedFunction": "onVerdictChanged"
+  },
+  "thread": {
+    "name": "spaces/AAAAclassicRoom/threads/ONCH1"
+  },
+  "_pubsub_message_id": "20759411966000501"
+}

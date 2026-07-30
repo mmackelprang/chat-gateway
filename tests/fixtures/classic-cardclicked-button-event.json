@@ -1,0 +1,176 @@
+{
+  "type": "CARD_CLICKED",
+  "eventTime": "2026-07-30T00:26:59.445482Z",
+  "message": {
+    "name": "spaces/AAAAclassicRoom/messages/MIG1.MIG1",
+    "sender": {
+      "name": "users/000000000000000000002",
+      "displayName": "Chat Gateway",
+      "avatarUrl": "https://example.com/app-avatar.png",
+      "type": "BOT"
+    },
+    "createTime": "2026-07-30T00:26:52.650943Z",
+    "text": "chat-gateway: classic migration check - pick a reason, then Approve",
+    "thread": {
+      "name": "spaces/AAAAclassicRoom/threads/MIG1",
+      "retentionSettings": {
+        "state": "PERMANENT"
+      }
+    },
+    "space": {
+      "name": "spaces/AAAAclassicRoom",
+      "type": "ROOM",
+      "displayName": "Test Room",
+      "spaceThreadingState": "THREADED_MESSAGES",
+      "spaceType": "SPACE",
+      "spaceHistoryState": "HISTORY_ON",
+      "lastActiveTime": "2026-07-30T00:26:52.650943Z",
+      "membershipCount": {
+        "joinedDirectHumanUserCount": 1
+      },
+      "customer": "customers/Cexample1",
+      "spaceUri": "https://chat.google.com/room/AAAAclassicRoom?cls=11"
+    },
+    "argumentText": "chat-gateway: classic migration check - pick a reason, then Approve",
+    "cardsV2": [
+      {
+        "cardId": "migration-verify",
+        "card": {
+          "header": {
+            "title": "chat-gateway",
+            "subtitle": "classic migration verification"
+          },
+          "sections": [
+            {
+              "widgets": [
+                {
+                  "decoratedText": {
+                    "text": "Pick a reason, then tap <b>Approve</b>.",
+                    "wrapText": true
+                  }
+                },
+                {
+                  "selectionInput": {
+                    "name": "reason",
+                    "label": "Reason",
+                    "type": "DROPDOWN",
+                    "items": [
+                      {
+                        "text": "(choose)",
+                        "value": "none",
+                        "selected": true
+                      },
+                      {
+                        "text": "Good fit",
+                        "value": "good_fit"
+                      },
+                      {
+                        "text": "Salary",
+                        "value": "salary"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "buttonList": {
+                    "buttons": [
+                      {
+                        "text": "Approve",
+                        "onClick": {
+                          "action": {
+                            "function": "approve",
+                            "parameters": [
+                              {
+                                "key": "jobId",
+                                "value": "mig-001"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "text": "Reject",
+                        "onClick": {
+                          "action": {
+                            "function": "reject",
+                            "parameters": [
+                              {
+                                "key": "jobId",
+                                "value": "mig-001"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "retentionSettings": {
+      "state": "PERMANENT"
+    },
+    "messageHistoryState": "HISTORY_ON",
+    "formattedText": "chat-gateway: classic migration check - pick a reason, then Approve",
+    "markupSyntax": "MARKUP_SYNTAX_CHAT"
+  },
+  "user": {
+    "name": "users/000000000000000000001",
+    "displayName": "Test User",
+    "avatarUrl": "https://example.com/avatar.png",
+    "email": "agent-user@example.com",
+    "type": "HUMAN",
+    "domainId": "example1"
+  },
+  "space": {
+    "name": "spaces/AAAAclassicRoom",
+    "type": "ROOM",
+    "displayName": "Test Room",
+    "spaceThreadingState": "THREADED_MESSAGES",
+    "spaceType": "SPACE",
+    "spaceHistoryState": "HISTORY_ON",
+    "lastActiveTime": "2026-07-30T00:26:52.650943Z",
+    "membershipCount": {
+      "joinedDirectHumanUserCount": 1
+    },
+    "customer": "customers/Cexample1",
+    "spaceUri": "https://chat.google.com/room/AAAAclassicRoom?cls=11"
+  },
+  "action": {
+    "actionMethodName": "approve",
+    "parameters": [
+      {
+        "key": "jobId",
+        "value": "mig-001"
+      }
+    ]
+  },
+  "common": {
+    "userLocale": "en",
+    "hostApp": "CHAT",
+    "timeZone": {
+      "id": "America/New_York",
+      "offset": -14400000
+    },
+    "formInputs": {
+      "reason": {
+        "stringInputs": {
+          "value": [
+            "good_fit"
+          ]
+        }
+      }
+    },
+    "parameters": {
+      "jobId": "mig-001"
+    },
+    "invokedFunction": "approve"
+  },
+  "thread": {
+    "name": "spaces/AAAAclassicRoom/threads/MIG1"
+  }
+}
