@@ -123,10 +123,23 @@ no reverse-proxy exposure needed (Pub/Sub is outbound pull).
 ## Status — honest seams
 
 Fully built and tested offline: envelope, registry, auth, inboxes, all three
-adapters' logic, the HTTP surface, the client. **LIVE-UNVERIFIED** until first
-run against real Google endpoints (flagged in docstrings): the webhook send
-(incl. threadKey mechanics), the Chat API send, and Pub/Sub pull/ack. First
-consumers and the tier model trace back to the aiteam plan (F14/F19).
+adapters' logic, the HTTP surface, the client. Flag status is per-seam and lives
+in the docstrings — `CLAUDE.md` carries the authoritative list; this is the
+summary:
+
+| Seam | Status |
+|---|---|
+| **Webhook send** (tier 1) | ✅ **verified** 2026-07-29, re-confirmed 2026-07-30 through the real `WebhookAdapter`. Success path only — the non-200 and transport-error branches are still unexercised. The threadKey param-vs-body question is settled: both work, we send the body form. |
+| **Chat API send** (tier 2) | ⚠ `LIVE-UNVERIFIED` — see queue item CG-5. |
+| **Pub/Sub pull / ack** | ⚠ `LIVE-UNVERIFIED` in the committed docstring — see queue item CG-24. |
+
+**Tier 1 does not depend on any Cloud project.** A webhook URL is issued by the
+space, so no tier-2 change — migration, project deletion, credential rotation,
+subscription breakage — can take the notification path down. Observed
+2026-07-30: all four webhook identities delivered through the real adapter
+immediately after a Cloud project was deleted.
+
+First consumers and the tier model trace back to the aiteam plan (F14/F19).
 
 ## License
 
