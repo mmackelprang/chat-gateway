@@ -110,7 +110,7 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-25 → CG-12 → CG-11 → CG-20 →
+Remaining order: **CG-25 → CG-12 → CG-27 → CG-28 → CG-11 → CG-20 →
 CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24, CG-8 and CG-22+CG-9 have since shipped). CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
@@ -621,6 +621,91 @@ none. The guard is the control that matters, and it runs on what lands.
 
 ---
 
+### CG-27 · Consumer handoff doc — **aitrader**  📋 queued
+
+| | |
+|---|---|
+| **Origin** | user request 2026-07-29, **lost to the outage that night**; re-filed 2026-07-30 |
+| **Depends on** | nothing |
+| **Touches** | `docs/consumers/aitrader.md` (or a sibling handoff doc) — docs only |
+
+The user asked for handoff docs for both consumers before the 2026-07-29 outage.
+No artifact exists — not in this repo, not in `D:\prj\aitrader`, not in memory.
+Re-filed rather than assumed done.
+
+**The direction matters.** `D:\prj\aitrader\docs\chat-gateway-requirements.md` is
+what aitrader sent **to** the gateway. This is the gateway's answer **back**:
+what is implemented, how to integrate, and what is verified versus not.
+
+Must cover: `/v1/notify` severity routing (`alert` → `aitrader-alerts` loud,
+`warning`/`info` → `aitrader-reports` quiet), the dedupe window, the async
+dispatcher with retry backoff + per-source delivery log, titles-only logging, and
+`/v1/heartbeat`'s dead-man monitor — tz-aware `weekdays` schedule rolling weekend
+due-dates to Monday, daily repeat, JSON-persisted checks, and **US market
+holidays deliberately not modeled** (the contract says widen grace).
+
+**State plainly that aitrader has no inbound path and never will.**
+`allow_inbound: false` is hard rule #6, its own contract treats any two-way path
+as a security hole in a real-money system, and `callback_url` on such an app is a
+registry validation error. This is a feature of the contract, not a gap in it.
+
+**State honestly that tier 1 is project-independent, empirically** — all four
+webhook identities delivered immediately after `chat-gateway-prod` was deleted.
+That is what makes tier 1 the floor under aitrader's alerting, which matters
+precisely because aitrader has no inbound path to fall back on.
+
+For the residue, **link `CLAUDE.md`'s verification ledger — do not restate it.**
+Every restatement of it in this repo has drifted within two PRs.
+
+---
+
+### CG-28 · Consumer handoff doc — **jobhunt**  📋 queued
+
+| | |
+|---|---|
+| **Origin** | user request 2026-07-29, **lost to the outage that night**; re-filed 2026-07-30 |
+| **Depends on** | nothing (CG-11 owns the prose corrections it references) |
+| **Touches** | `docs/consumers/jobhunt.md` (or a sibling handoff doc) — docs only |
+
+Same origin and same direction as CG-27:
+`D:\prj\jobhunt\docs\chat-gateway-requirements.md` (R1–R9) is what jobhunt sent
+**to** the gateway; this is the answer back, per requirement.
+
+Must cover: **R1** multi-tenant dumb pipe (registry directory mode, per-app
+`callback_url`); **R3** whole-event forwarding with `dedupe_key` — Pub/Sub is
+at-least-once, so **jobhunt's callback must be idempotent**; **R4** per-user
+authorization via `allowed_users`, refusal posted in-thread; **R6** structured
+reject reasons via selection widgets; **R7** fail-loudly-in-thread via
+`unreachable_message` after 0s/3s/7s retries; **R9** migration continuity — no
+outbound rendering change.
+
+Must document the producer card convention from `GET /v1/identities`:
+`interaction.routing_target` goes in `onClick.action.function`,
+`interaction.action_key` is `__cg_action__`. Outbound `parameters` is **always**
+an array of `{key, value}`; the **inbound** shape is a property of the RUNTIME,
+not of the direction (classic → array, add-ons → map). Do **not** compress that
+to *"send an array, receive a map"* — it is wrong, and `CLAUDE.md` pins it with a
+test for exactly that reason.
+
+**Record the 2026-07-30 finding:** on the classic runtime a selection widget's
+`onChangeAction` fires with **no button on the card at all** — a widget *is* an
+interaction trigger, contrary to the older add-ons-derived claim. Landed as
+`tests/fixtures/classic-cardclicked-onchange-event.json` (CG-22+CG-9). **CG-11
+owns correcting the prose** in `CLAUDE.md` and ADR-0001 §7; this doc must not
+race it into a contradiction.
+
+**State the live blocker precisely, because it has already been described
+wrongly once.** Routing resolves today —
+`apps_for_space('spaces/AAQAgjGR7J4')` → `['job-hunter']` — and `callback_url`
+genuinely is the only missing registry value. But **jobhunt has no receiver**:
+`pipeline/review_ui.py` is its only HTTP listener and serves `/verdict`,
+`/recheck`, `/override`, `/applied`. Setting `callback_url` before the endpoint
+exists makes every tap post *"couldn't reach jobhunt"* in-thread — which is R7
+working, not R3 working. Also note modal dialogs are impossible over Pub/Sub
+transport; selection widgets are the supported path.
+
+---
+
 ## Experiments
 
 CG-15 and CG-16 **ran on 2026-07-29** and are recorded below with their results.
@@ -676,7 +761,7 @@ _(nothing)_
 
 ## Recently shipped
 
-### CG-22 + CG-9 · The real **classic** fixtures — `CARD_CLICKED` ×2 and `ADDED_TO_SPACE`  🔨 in review 2026-07-30 · [PR #20](https://github.com/mmackelprang/chat-gateway/pull/20) ⛔ merge gate
+### CG-22 + CG-9 · The real **classic** fixtures — `CARD_CLICKED` ×2 and `ADDED_TO_SPACE`  ✅ shipped 2026-07-30 · [PR #20](https://github.com/mmackelprang/chat-gateway/pull/20)
 
 Plan: [`superpowers/plans/2026-07-30-classic-fixtures-cg22-cg9.md`](superpowers/plans/2026-07-30-classic-fixtures-cg22-cg9.md).
 One PR for both items. Three real captures from the live project
