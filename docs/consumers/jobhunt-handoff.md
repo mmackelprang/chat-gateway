@@ -244,9 +244,10 @@ existed. As of this file's date:
 
 | Location | State |
 |---|---|
-| `docs/integration-guide.md`, *"Collecting structured input"* | **already scoped by runtime**, and already records that `onChangeAction` fires on classic. Its one staleness is calling add-ons *"the runtime deployed today"*, which production left on 2026-07-29 |
+| `docs/integration-guide.md`, *"Collecting structured input"* | **already scoped by runtime**, and already records that `onChangeAction` fires on classic. Its one staleness is the parenthetical `(deployed today)` on the add-ons runtime, which production left on 2026-07-29 |
 | ADR-0001 §7 | still carries the unscoped sentence *"A selection widget is not an interaction trigger"* in its body — the one place that flatly contradicts §6. The ADR's own status banner records E1's opposite result |
-| `CLAUDE.md`, and `jobhunt.md` R6 | *"modal dialogs are impossible over Pub/Sub transport — selection widgets are the supported path"* — which states the dialog inference as settled fact and frames widgets as input-only |
+| `CLAUDE.md` | *"modal dialogs are impossible over Pub/Sub transport — selection widgets are the supported path"* (verbatim) — states the dialog inference as settled fact and frames widgets as input-only |
+| `jobhunt.md` R6 | the same two claims, differently worded — *"True modal dialogs are NOT possible…; the selection-widget path is the supported one"* |
 
 Queue item **CG-11** owns all of it and had not shipped when this file was
 written. Apart from ADR-0001 §7's body sentence, none of those locations
@@ -442,12 +443,13 @@ error**, not a silently ignored field.
 Two things are true at once, and collapsing them has already produced one wrong
 description of this situation.
 
-**Routing resolves today.** Against the live registry,
+**Routing resolves today.** Against the development registry
+(`config/registry.yaml`, gitignored — see the third paragraph),
 `apps_for_space('spaces/AAQAgjGR7J4')` returns `['job-hunter']`. `callback_url`
 genuinely is the only registry value that was missing. An earlier claim that the
 identity's `space` was *also* missing was **wrong** — that check had been run
-against `config/registry.example.yaml`, not against the live gitignored
-`config/registry.yaml`.
+against the committed `config/registry.example.yaml`, where every `space` is
+`""`, rather than against `config/registry.yaml` itself.
 
 **But jobhunt has no receiver.** `pipeline/review_ui.py` is jobhunt's only HTTP
 listener, and it serves `/verdict`, `/recheck`, `/override` and `/applied`.
