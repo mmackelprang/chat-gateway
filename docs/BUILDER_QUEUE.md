@@ -834,7 +834,8 @@ registry validation error.
 ledger is **linked, not restated** — the doc's §11 is a per-link table for
 jobhunt's own chain (parse / pull / reply / outbound / callback), the same shape
 the contract doc already carries, and it explicitly refuses to copy the residue.
-### CG-27 · Consumer handoff doc — **aitrader**  ✅ shipped 2026-07-30 · PR-PENDING
+
+### CG-27 · Consumer handoff doc — **aitrader**  ✅ shipped 2026-07-30 · [PR #25](https://github.com/mmackelprang/chat-gateway/pull/25)
 
 `docs/consumers/aitrader.md` rewritten from a thin requirement→where table into
 the handoff the row asked for: the gateway's answer **back** to
