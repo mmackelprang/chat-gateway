@@ -133,7 +133,7 @@ summary:
 | **Chat API `send()`** (tier 2) | ✅ **verified** 2026-07-29 — text + Cards v2 posted as the app, response carried a real `sender`. Its `thread.threadKey` threading branch is **not** covered (the live posts were unthreaded). |
 | **Chat API `send_text()`** | ✅ **verified** 2026-07-30, **both** branches — in-thread and top-level. This is jobhunt R7's failure notice and R4's authorization refusal. |
 | **Pub/Sub `pull()` / `acknowledge()`** | ✅ **verified** 2026-07-30 through the real class. `acknowledge()` was proven *selectively* — one id acked, two others kept redelivering — which is what makes at-least-once dedupe trustworthy rather than assumed. |
-| **Every adapter's error branches** | ⚠ `LIVE-UNVERIFIED`. No non-200 or transport-error path has been driven against Google in any adapter. |
+| **What is still `⚠ LIVE-UNVERIFIED`** | every adapter's non-200 and transport-error branches; **plus** `send()`'s `thread.threadKey` threading branch and Pub/Sub's undecodable-payload branches, which are *not* error paths. `CLAUDE.md` carries the complete table. |
 
 `CLAUDE.md` carries the authoritative per-seam list; the flag vocabulary is
 capped at `⚠ LIVE-UNVERIFIED` plus `⚠ SHAPE-VERIFIED` (hard rule #3).

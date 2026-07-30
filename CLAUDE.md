@@ -83,9 +83,23 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   **Provisioning is not verification** — see below.
 - **Verification ledger** (was "⚠ LIVE-UNVERIFIED"; renamed 2026-07-30 because
   most of it is now cleared and a list titled after the flag invites a reader to
-  assume everything under it still carries one). **What is still flagged, in one
-  line: every adapter's error branches, and nothing else.** No non-200 or
-  transport-error path has been driven against Google in any adapter.
+  assume everything under it still carries one).
+
+  **What is still unexercised against Google — the complete list, because a
+  one-line summary of this was drafted as "every adapter's error branches, and
+  nothing else" and that was FALSE:**
+
+  | Surface | Why it is not an error branch |
+  |---|---|
+  | every adapter's **non-200** branches (`webhook.send`, `chat_api.send`, `chat_api.send_text`, `pubsub._post`) | — |
+  | `webhook.send` + `chat_api.send`'s **`httpx.HTTPError`** branches | — (`send_text` has none at all — that is CG-25) |
+  | **`chat_api.send()`'s `thread.threadKey` threading branch** | a **success** path, not an error path. The live `send()` posts were unthreaded, and `send_text()`'s clear does not reach it — different field, different request shape. |
+  | **`pubsub.pull()`'s `_undecodable` branches** | malformed-payload handling. Nothing on the live subscription was malformed, so both stay reasoned-about. |
+  | **`SubscriberLoop`'s long-run thread behaviour** | not a branch at all — no multi-hour live run has happened. |
+
+  Kept as a table rather than a sentence precisely because the sentence was
+  wrong: "error branches" is the *majority* of the residue, which is what makes
+  the shorthand tempting and inaccurate.
   - Events DO reach the subscription — proven 2026-07-29, and re-proven
     2026-07-30 through our own `PubSubPuller` rather than an ad-hoc client.
   - **CLOSED BY CIRCUMSTANCE, not answered — stop carrying it as open work:**
