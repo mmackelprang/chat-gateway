@@ -1,7 +1,7 @@
 # Builder queue — chat-gateway
 
 **Last updated:** 2026-07-30 (Builder — **CG-32 shipped**
-([PR #PRNUM](https://github.com/mmackelprang/chat-gateway/pull/PRNUM)): the
+([PR #32](https://github.com/mmackelprang/chat-gateway/pull/32)): the
 dedupe counter now **yields to the app's content** instead of overflowing it.
 `render` appending `" (×N since last notice)"` to a deduped re-delivery could
 push an `info` payload the gateway had **already accepted with a 202** back over
@@ -797,7 +797,7 @@ CG-32 through CG-34 were taken by the other two while it was in flight.)_
 
 ## Recently shipped
 
-### CG-32 · The dedupe counter overflowed an `info` payload the gateway had just accepted  ✅ shipped 2026-07-30 · [PR #PRNUM](https://github.com/mmackelprang/chat-gateway/pull/PRNUM)
+### CG-32 · The dedupe counter overflowed an `info` payload the gateway had just accepted  ✅ shipped 2026-07-30 · [PR #32](https://github.com/mmackelprang/chat-gateway/pull/32)
 
 CG-30's request-time bound — `len(title) + len(body)` ≤ **3989** — deliberately
 did not reserve the dedupe counter, so `render` appending
