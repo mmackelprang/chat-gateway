@@ -372,7 +372,7 @@ comments/defaults only; no resource changes.
 
 ---
 
-### CG-23 · The `resp.text[:200]` echo survives in both sibling adapters  📋 queued · ⏸ merge gate
+### CG-23 · The `resp.text[:200]` echo survives in both sibling adapters  🔨 in flight · ⏸ merge gate
 
 | | |
 |---|---|
