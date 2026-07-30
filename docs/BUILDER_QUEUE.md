@@ -396,7 +396,7 @@ Do not start this until CG-20 lands and the user says go.
 
 ---
 
-### CG-22 + CG-9 · Land the real **classic** fixtures — `CARD_CLICKED` ×2 and `ADDED_TO_SPACE`  📋 queued
+### CG-22 + CG-9 · Land the real **classic** fixtures — `CARD_CLICKED` ×2 and `ADDED_TO_SPACE`  🔨 in flight
 
 | | |
 |---|---|
