@@ -44,6 +44,12 @@ agentic applications; aiteam's harness is the first consumer, not the owner.
    events with a dedupe key; what an Approve *means* is enforced by the
    consumer's own write-path (jobhunt R4). Do not widen any tenant's
    inbound surface without explicit user sign-off naming this rule.
+   App ids beginning with `_` are **reserved** for the gateway's own audit
+   buckets (`_unrouted`) and are rejected at registry load. Registering one would
+   have drained every unroutable and every `UNPARSEABLE` event, from every space,
+   straight past this rule's checks — because the paths that write to that bucket
+   bypass the per-app authorization block *by design* (an unparseable event has
+   no space and cannot be authorized against anything).
 
 ## Layout
 

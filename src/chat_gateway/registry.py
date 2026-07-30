@@ -17,9 +17,64 @@ import yaml
 CHANNELS = ["google_chat"]
 MODES = ["webhook", "app"]
 
+# App ids the gateway reserves for its own audit buckets. `_unrouted` is where
+# unroutable and UNPARSEABLE events are filed, and the paths that write to it —
+# the except branch in dispatch(), and the `or [UNROUTED]` fallback — bypass the
+# per-app authorization block BY DESIGN, because an unparseable event has no
+# space and cannot be authorized against anything. An app registered under that
+# id with allow_inbound: true would therefore drain every unroutable and every
+# UNPARSEABLE event from every space through /v1/inbox, with no hard-rule-#6
+# check ever running.
+#
+# The whole `_` prefix is reserved, not just the one literal, so the next
+# internal bucket is safe without anyone remembering to add it here.
+#
+# This constant lives in core, not in adapters/pubsub.py where it started:
+# registry.py must not import from an adapter (hard rule #3 puts Google-facing
+# code in adapters/, and core reaching into it inverts the layering). The
+# adapter imports it from here, which is the direction that already exists.
+UNROUTED = "_unrouted"
+RESERVED_APP_ID_PREFIX = "_"
+
 
 class RegistryError(ValueError):
     pass
+
+
+def _require_id_str(kind: str, value) -> None:
+    """Registry keys must be clean strings, and say so as a config error.
+
+    Two failure modes, both invisible in a YAML diff and neither worth debugging
+    twice:
+
+    * **Not a string.** YAML coerces unquoted keys, so `1:` is an `int`, `true:`
+      a `bool`, `null:` a `None`, `1.5:` a `float`. Every id is compared as text
+      — against an API key's owner, against reserved prefixes, against an app's
+      identity allowlist — so a non-string id cannot be validated at all.
+    * **Surrounding whitespace.** `" aitrader"` is a different key from
+      `"aitrader"` and looks identical in review. It would silently fail to match
+      the id the consuming app sends, and a per-app allowlist that quietly
+      matches nothing is precisely the shape hard rule #4 exists to prevent.
+    """
+    if isinstance(value, str) and not value:
+        raise RegistryError(
+            f"{kind} id is the empty string. Every id is a name something else "
+            "refers to — an API key's owner, an app's identity allowlist — and "
+            "nothing can refer to an unnamed entry."
+        )
+    if not isinstance(value, str):
+        raise RegistryError(
+            f"{kind} id {value!r} must be a string, not {type(value).__name__} — "
+            "YAML coerces unquoted keys (`1:`, `true:`, `null:`), so quote it. "
+            "Ids are matched as text everywhere, including against the reserved "
+            "prefix and each app's identity allowlist."
+        )
+    if value != value.strip():
+        raise RegistryError(
+            f"{kind} id {value!r} has leading or trailing whitespace. It is a "
+            "different key from the trimmed form and identical in review, so it "
+            "would silently fail to match the id the app actually sends."
+        )
 
 
 @dataclass
@@ -140,7 +195,10 @@ def load_registry(path: str | Path) -> Registry:
     if p.is_dir():
         data: dict = {"identities": {}, "apps": {}}
         for f in sorted(p.glob("*.yaml")):
-            part = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            try:
+                part = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except (OSError, yaml.YAMLError) as exc:
+                raise RegistryError(f"cannot parse {f.name}: {exc}") from exc
             for section in ("identities", "apps"):
                 for name, spec in (part.get(section) or {}).items():
                     if name in data[section]:
@@ -149,13 +207,22 @@ def load_registry(path: str | Path) -> Registry:
     else:
         try:
             data = yaml.safe_load(p.read_text(encoding="utf-8"))
-        except OSError as exc:
+        # yaml.YAMLError is caught alongside OSError deliberately: malformed YAML
+        # is a CONFIG error, and letting a ScannerError or ConstructorError escape
+        # raw means the gateway dies at startup with a parser traceback instead of
+        # a message naming the file. Same reasoning as _require_id_str above —
+        # every way a registry can be wrong should arrive as RegistryError.
+        except (OSError, yaml.YAMLError) as exc:
             raise RegistryError(f"cannot read registry: {exc}") from exc
     if not isinstance(data, dict) or "identities" not in data or "apps" not in data:
         raise RegistryError(f"{path}: registry needs top-level 'identities' and 'apps' maps")
 
     identities: dict[str, Identity] = {}
     for name, spec in (data["identities"] or {}).items():
+        # Same coercion trap as app ids below. An identity name is cross-referenced
+        # from each app's `identities:` list, so a coerced or whitespace-padded name
+        # fails that lookup for a reason nobody can see in the file.
+        _require_id_str("identity", name)
         spec = spec or {}
         ident = Identity(
             name=name,
@@ -177,6 +244,21 @@ def load_registry(path: str | Path) -> Registry:
 
     apps: dict[str, App] = {}
     for app_id, spec in (data["apps"] or {}).items():
+        # Type-check BEFORE the prefix check, because YAML coerces unquoted keys:
+        # `1:`, `true:`, `null:` and `1.5:` arrive as int / bool / None / float,
+        # and calling .startswith on any of them raises AttributeError — which
+        # escapes load_registry as an unhandled traceback instead of the config
+        # error an operator can act on. Found by adversarially testing the prefix
+        # guard this function gained in CG-8; the guard introduced the crash.
+        _require_id_str("app", app_id)
+        if app_id.startswith(RESERVED_APP_ID_PREFIX):
+            raise RegistryError(
+                f"app id {app_id!r} is reserved: ids beginning with "
+                f"{RESERVED_APP_ID_PREFIX!r} are gateway-internal audit buckets "
+                f"(e.g. {UNROUTED!r}). An app registered under one would receive "
+                "every unroutable and every UNPARSEABLE event from every space, "
+                "bypassing the per-app inbound authorization check (hard rule #6)."
+            )
         spec = spec or {}
         if not spec.get("key_env"):
             raise RegistryError(f"app {app_id!r}: key_env is required")

@@ -43,11 +43,13 @@ import httpx
 
 from ..envelope import CG_ACTION_KEY, CG_RESERVED_PREFIX, InboundReply
 from ..inbox import Inbox
-from ..registry import Registry
+# UNROUTED is imported, not defined here: core must own it (hard rule #3).
+# Re-exported by this import so `from ...adapters.pubsub import UNROUTED`
+# keeps resolving for the call sites that already do it.
+from ..registry import UNROUTED, Registry
 
 PUBSUB_API = "https://pubsub.googleapis.com/v1"
 PUBSUB_SCOPE = "https://www.googleapis.com/auth/pubsub"
-UNROUTED = "_unrouted"
 UNPARSEABLE = "UNPARSEABLE"
 
 # chat.<key> -> normalized event_type. Google models these as a proto union
