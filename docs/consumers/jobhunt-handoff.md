@@ -26,7 +26,7 @@ Two files, deliberately not one:
 | R4 | authZ at the gateway, again at the tenant | **implemented** — `allowed_users`, in-thread refusal, never forwarded |
 | R5 | traffic shape (digest, instant lane, retro, health) | **producer-side**; the instant lane is `POST /v1/messages` (synchronous) or `POST /v1/notify` (accept-fast) |
 | R6 | structured reject reason | **implemented** — selection-widget values arrive merged into `action.params` |
-| R7 | fail loudly in-thread | **implemented**; the one inbound link today's configuration actually exercises — see §10 |
+| R7 | fail loudly in-thread | **implemented**; the link today's configuration would exercise **first**, because there is no receiver yet — see §10 |
 | R8 | separability | **implemented** — HTTP only, no code imports either direction |
 | R9 | migration continuity | **held, twice** — see §8 |
 
@@ -41,9 +41,9 @@ tests. It does **not** mean the path has met Google. §11 says which links have.
 file or a **directory**: every `*.yaml` in it is merged, and a duplicate
 identity or app name across files is a load error rather than a silent
 last-writer-wins. That is the `notification_routing/` one-file-per-project
-convention R1 asked for. The live deployment currently uses the single-file
-form; switching to directory mode is an operator change of one env var
-(`CHAT_GATEWAY_REGISTRY`) and needs nothing from jobhunt.
+convention R1 asked for. The repo's example registry and the development
+registry are both single-file; switching to directory mode is an operator change
+of one env var (`CHAT_GATEWAY_REGISTRY`) and needs nothing from jobhunt.
 
 **No jobhunt semantics live in the gateway.** The gateway owns identity,
 delivery, threading and inbound routing. It never parses a card, never learns
@@ -51,11 +51,12 @@ what `approve` means, and never renders on jobhunt's behalf — gateway hard rul
 #1. The single exception to "forwards everything untouched" is one Google-owned
 field, documented in §4.
 
-**Your app id is `job-hunter`, with a hyphen.** The contract doc's sample
-config and the integration guide's sample callback body both say `jobhunt`;
-the **live registry** registers the app and the identity as `job-hunter`, so
-that is the value that arrives in the callback's `app` field. Worth knowing
-before a receiver is written against the example payload.
+**Your app id is `job-hunter`, with a hyphen.** The contract doc's sample config
+and the integration guide's sample callback body both say `jobhunt`; the app and
+the identity are registered as **`job-hunter`** in `config/registry.example.yaml`
+and in the development registry, so that is the value that arrives in the
+callback's `app` field. Worth knowing before a receiver is written against the
+example payload.
 
 ---
 
@@ -77,12 +78,23 @@ before a receiver is written against the example payload.
   serializes under **30KB**, which is Chat's own message limit. Either failure is
   a **422** — naming the offending index, or naming the limit — never a silent
   truncation.
-- `thread_key` is jobhunt's own conversation key, echoed back on inbound events.
+- `thread_key` is jobhunt's own conversation key. It comes **back** on an
+  inbound event only if Google echoes a sender-set `thread.threadKey`, and
+  **no capture to date has carried one** — every real event so far normalizes
+  `thread_key` to `null`. Correlate inbound against `thread_name` (which is
+  always present on a threaded event) and treat `thread_key` as a bonus.
 
 `POST /v1/notify` is the accept-fast lane (202 on enqueue, async delivery with
 backoff, dedupe window, delivery log). jobhunt's rare health alerts (its J14
 zero-yield scans) fit it; the latency-sensitive instant-lane pings of R5 are
 better served by `/v1/messages`, which returns the delivery result inline.
+
+**`/v1/notify` needs one extra registry value that §9.3 does not list.** Routing
+there is `(app, severity) → identity`, read from a `routes` map on the app.
+`job-hunter` has none, so `/v1/notify` would answer **503** naming the missing
+route. If jobhunt wants that lane, ask the operator for
+`routes: {default: job-hunter}` (or per-severity entries — each must name one of
+the app's own identities). Nothing about R3/R4/R7 needs it.
 
 ---
 
@@ -94,7 +106,7 @@ to it as one JSON body:
 ```json
 {"app": "job-hunter",
  "space": "spaces/XXXX",
- "thread_key": "digest-2026-07-30",
+ "thread_key": null,
  "thread_name": "spaces/XXXX/threads/T1",
  "message_id": "spaces/XXXX/messages/M1",
  "sender_display": "Mark",
@@ -105,7 +117,7 @@ to it as one JSON body:
  "dedupe_key": "20759411966000501",
  "event_type": "CARD_CLICKED",
  "envelope_format": "classic",
- "received_at": "2026-07-30T12:48:52.884583Z",
+ "received_at": "2026-07-30T12:49:01.117204Z",
  "raw": {"...": "the whole Google event, one field redacted — see below"}}
 ```
 
@@ -154,8 +166,9 @@ ignore it, but a change in it means the runtime underneath moved.
 
 `allowed_users` on the app is an email allowlist, compared **case-insensitively**
 (the registry lower-cases on load, and the sender's address is lower-cased on
-arrival). jobhunt's list is exactly one address, as R4 specified. An empty list
-means no restriction.
+arrival). R4 specified exactly one address, and that is how it was configured on
+the development registry on 2026-07-30 (§10) — an empty list would mean **no
+restriction**, which is why the value is worth checking rather than assuming.
 
 A sender who is not on the list:
 
@@ -223,16 +236,21 @@ event, with the widget's own `onChangeAction.function` arriving as `action.id`
 `tests/fixtures/classic-cardclicked-onchange-event.json` and pinned by
 `test_normalize_real_classic_onchange_with_no_button_at_all`.
 
-That corrects an older claim, derived from the **add-ons** runtime, that a
-widget is never an interaction trigger — under add-ons its `onChangeAction`
-does fail (`gsuiteaddons` code 13), and that scoping was lost when the sentence
-was written down. **The correction has not yet reached every document.**
-`CLAUDE.md`, `docs/consumers/jobhunt.md` R6, ADR-0001 §7 and the integration
-guide's producer convention still carry the older wording; queue item **CG-11**
-owns fixing all of them and had not shipped when this file was written. Where
-they and this file disagree about whether a widget can trigger an interaction,
-**this file and the fixture are right** — but do not take that as licence to
-assume the rest of those documents are stale.
+**Where the older, add-ons-derived framing survives — precisely, because
+"those docs are stale" is too broad to be true.** Under the add-ons runtime a
+widget's `onChangeAction` genuinely does fail (`gsuiteaddons` code 13), and
+several documents were written from that evidence before the classic capture
+existed. As of this file's date:
+
+| Location | State |
+|---|---|
+| `docs/integration-guide.md`, *"Collecting structured input"* | **already scoped by runtime**, and already records that `onChangeAction` fires on classic. Its one staleness is calling add-ons *"the runtime deployed today"*, which production left on 2026-07-29 |
+| ADR-0001 §7 | still carries the unscoped sentence *"A selection widget is not an interaction trigger"* in its body — the one place that flatly contradicts §6. The ADR's own status banner records E1's opposite result |
+| `CLAUDE.md`, and `jobhunt.md` R6 | *"modal dialogs are impossible over Pub/Sub transport — selection widgets are the supported path"* — which states the dialog inference as settled fact and frames widgets as input-only |
+
+Queue item **CG-11** owns all of it and had not shipped when this file was
+written. Apart from ADR-0001 §7's body sentence, none of those locations
+actually contradicts §6 on whether a widget can *trigger* an interaction.
 
 **True modal dialogs.** They are believed impossible over Pub/Sub transport,
 because a dialog requires the app to answer the interaction **synchronously**
@@ -253,8 +271,9 @@ On exhaustion:
 
 1. records `failed` in the delivery log with
    `gave up after 3 attempts (ConnectError)`;
-2. posts the app's `unreachable_message` into **the same thread the user tapped
-   in**, so the person who tapped sees that it did not land.
+2. posts the app's `unreachable_message` into **the thread the user tapped in**
+   — or top-level in the space if the event carried no `thread_name` — so the
+   person who tapped sees that it did not land.
 
 Silent failure is R7's one unacceptable outcome, and this is the path that
 prevents it.
@@ -278,7 +297,9 @@ quietly reworded.
 
 **Tier-1-only deployments cannot post the notice.** With no Chat app credentials
 there is no reply path, and the outcome is logged as `failed-silent` with
-`no reply_fn (tier 1) — in-thread notice impossible`. **Full R7 requires tier
+`no reply_fn (tier 1) — in-thread notice impossible`. The same branch is taken
+for an event that carried no `space` at all, so that log line means *"no way to
+reply"*, not always *"tier 1"*. **Full R7 requires tier
 2.** This is a documented limitation, not a defect: `GET /v1/deliveries` still
 shows every callback attempt and its terminal status, so the failure is never
 invisible to an operator — only to the person who tapped.
@@ -288,12 +309,13 @@ invisible to an operator — only to the person who tapped.
 ## 8. R9 — migration continuity, twice over
 
 **Adopting the gateway costs jobhunt no rendering change.** jobhunt already
-produces Cards v2 payloads; the gateway accepts them verbatim. Today the
-`job-hunter` identity is registered `mode: webhook`, so the digest still goes out
-over the tier-1 named incoming webhook exactly as it did before — R9's
-"until you ship" state is still the live one for outbound. Moving outbound to
-tier 2 is a **registry-side** change (`mode: webhook` → `mode: app`); jobhunt's
-payload does not move.
+produces Cards v2 payloads; the gateway accepts them verbatim. In every registry
+this repo carries — the committed example and the development copy read on
+2026-07-30 — the `job-hunter` identity is `mode: webhook`, so the digest goes out
+over the tier-1 named incoming webhook exactly as it did before: R9's
+"until you ship" state is still the operative one for outbound. Moving outbound
+to tier 2 is a **registry-side** change (`mode: webhook` → `mode: app`);
+jobhunt's payload does not move.
 
 **And the runtime migration underneath cost zero card changes.** Between
 2026-07-29 and 2026-07-30 the gateway's Chat app moved from the Workspace
@@ -379,7 +401,7 @@ apps:
     key_env: CHAT_GATEWAY_API_KEY__JOB_HUNTER     # env-var NAME; the key lives in .env
     identities: [job-hunter]
     allow_inbound: true                            # already the default; explicit once inbound is live
-    callback_url: "http://127.0.0.1:8710/chat-callback"    # appserver-local
+    callback_url: "http://127.0.0.1:8710/chat-callback"    # appserver-local — see the port note
     allowed_users: [mark@mackelprang.com]          # R4 — exactly one
     unreachable_message: "⚠️ couldn't reach jobhunt — use the review UI"   # R7
 ```
@@ -404,6 +426,14 @@ environment at call time.
 
 `callback_url` on an `allow_inbound: false` app is a **registry validation
 error**, not a silently ignored field.
+
+> **⚠ The port above is not yet agreed, and jobhunt owns the decision.** `8710`
+> is what the contract doc and the development registry carry. jobhunt's only
+> HTTP listener, `pipeline/review_ui.py`, defaults to **`8763`** (its
+> `--port` argument), and §10 recommends the receiver live there. Whichever port
+> jobhunt serves `/chat-callback` on, the registry value must match it — a
+> mismatch is indistinguishable from R7's no-receiver case, because both are a
+> refused connection.
 
 ---
 
@@ -435,11 +465,14 @@ integration *requires*, and the paragraph above as a dated observation of a dev
 box — not as a description of production.
 
 **The remaining work is jobhunt's, and it is small.** Add a `/chat-callback`
-endpoint to `review_ui.py` that (a) returns 2xx immediately, (b) keys on
-`dedupe_key`, and (c) routes `action.id` + `action.params` into the existing
-verdict write-path. When it lands, nothing in the gateway's configuration
-changes — the same `callback_url` starts succeeding, and the delivery log flips
-from `failed` to `forwarded`.
+endpoint to `review_ui.py` — which already routes `/verdict`, `/recheck`,
+`/override` and `/applied`, and already owns the verdict write-path — that
+(a) returns 2xx immediately, (b) keys on `dedupe_key`, and (c) routes
+`action.id` + `action.params` into that write-path. When it lands, one gateway
+value may still need to move: `callback_url`'s **port** must match whatever
+`review_ui.py` is actually served on (see §9.3's port note — the registry says
+`8710`, `review_ui.py` defaults to `8763`). With that agreed, nothing else
+changes; the delivery log simply flips from `failed` to `forwarded`.
 
 ---
 
