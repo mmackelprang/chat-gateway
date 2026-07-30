@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Date** | 2026-07-29 |
-| **Status** | Proposed — five items need an explicit user yes (§12) |
+| **Status** | **Superseded by its own outcome** — see the banner below. All five §12 questions are answered (recorded 2026-07-30); none is open. |
 | **Decides** | N1 … N4 from [the live-verification spec](../../superpowers/specs/2026-07-29-live-verification-followups-design.md) §2 |
-| **Unblocks** | `CG-10` (empty `action.id`), `CG-11` (selection-widget wording) — both filed `⏸ blocked · ADR` |
+| **Unblocks** | `CG-10` (empty `action.id`) — **shipped 2026-07-29**; `CG-11` (selection-widget wording) — **shipped 2026-07-30**, and it corrected §7 rather than adopting it |
 | **Hard rules engaged** | #1 (transport, never schemas), #2 (secrets), #3 (adapters + flag discipline), #5 (honest `/healthz`), #6 (inbound opt-in) |
 
 > ## ⚠ Status: SUPERSEDED BY ITS OWN OUTCOME — 2026-07-29, later the same day
@@ -179,14 +179,15 @@ the add-ons runtime in the 2025-05-12 release notes, and `payload.action` is
 absent. `_normalize_addon` consults exactly those three sources and falls through
 its `or ""`. Action identity must therefore be carried in `parameters`.
 
-**C2 — selection widgets work, as form inputs, not as triggers.** The dropdown
-value arrived as `"decision":"approve"`, harvested from
+**C2 — under *this* runtime selection widgets work as form inputs, not as
+triggers.** The dropdown value arrived as `"decision":"approve"`, harvested from
 `commonEventObject.formInputs` at button-submit time and merged into
 `action.params` by the existing `_merge_form_inputs`. So `CLAUDE.md`'s
-*"selection widgets are the supported path"* is **wrong as written** — a widget
-is not an interaction trigger — but right in spirit: widgets are the supported
-way to collect *structured input*, which is what jobhunt R6 actually needs.
-Restated precisely in §7.
+*"selection widgets are the supported path"* is **wrong as written** — under
+add-ons a widget is not an interaction trigger — but right in spirit: widgets are
+the supported way to collect *structured input*, which is what jobhunt R6
+actually needs. **Scope this to add-ons and nothing further:** on classic a widget
+*is* a trigger, which §7's correction banner covers. Restated precisely in §7.
 
 **C3 — a fallback exists but is unproven.** Slash commands (`/approve 123`) are
 message-class, and message-class events demonstrably reach the topic (§2.1). The
@@ -342,12 +343,12 @@ installability comes from the **Chat API Visibility setting**, and on an
 | ✅ | **Google's own current Pub/Sub quickstart makes clearing the add-on box step one** (*"Clear Build this Chat app as a Google Workspace add-on… click Disable"*, <https://developers.google.com/workspace/chat/quickstart/pub-sub>, updated 2026-05-06). The officially documented way to build exactly what we are building is classic, not add-ons. |
 | ✅ | **Classic is not deprecated.** A full grep of the Chat release notes for `deprecat\|sunset\|turndown\|no longer` finds exactly one deprecation in the product's history — Cards v1, 2022. Two independent passes, same result. Google still presents both frameworks as a live choice. |
 | ✅ | Pub/Sub remains a documented classic connection setting (<https://developers.google.com/workspace/chat/receive-respond-interactions>, 2026-04-20). |
-| ✅ | Action identity becomes native — `action.function` is a function *name* again, unconsumed — and `onChangeAction` plausibly returns, removing §7's two-tap UX cost. |
-| ❌ | **Q2 is still unverified.** That classic Pub/Sub apps receive `CARD_CLICKED` is an *inference* both research passes reached and **neither could cite**. The indirect evidence is good: the classic Pub/Sub quickstart's own limitations — *"Can't use dialogs"*, *"Can't update individual cards with a synchronous response. Instead, update the entire message by calling the `patch` method"* — only make sense if clicks arrive. Good, but not a citation. It is the load-bearing assumption of the whole option (E1). |
-| ❌ | **Reversibility is contradictory.** Google documents an explicit clear-and-confirm flow in two live quickstarts; a third-party vendor doc warns *"This setting cannot be disabled once saved… you must create a new Google Cloud Project"* (CloudM, 2026-03-16). No Google statement affirms or denies reversibility **after a `gsuiteaddons` deployment exists** — which is our case. |
+| ✅ | Action identity becomes native — `action.function` is a function *name* again, unconsumed — and `onChangeAction` **does return**: first-hand on classic (E1, 2026-07-29, and again in a live capture 2026-07-30 — §10.0), including on a card carrying **no button at all**. §7's two-tap UX cost is removed, not merely likely to be. This row read *"plausibly returns"* until the experiments ran. |
+| ✅ | **Q2 is SETTLED — experiment E1, 2026-07-29.** Classic Pub/Sub apps **do** receive `CARD_CLICKED`: it arrived natively in a throwaway project, with `action.id` populated (`'approve'`) and `onChangeAction` firing. This row previously read *"Q2 is still unverified… the load-bearing assumption of the whole option"*, and it was — that classic Pub/Sub apps receive card clicks was an inference both research passes reached and neither could cite. The indirect evidence read correctly: the classic quickstart's own limitations (*"Can't use dialogs"*, *"Can't update individual cards with a synchronous response. Instead, update the entire message by calling the `patch` method"*) only make sense if clicks arrive. |
+| ❌ | **Reversibility is SETTLED — experiment E2, 2026-07-29 — and the answer is NO.** The *"Build this Chat app as a Google Workspace add-on"* toggle is **create-time only**: it cannot be cleared on an existing app. This row previously called reversibility *"contradictory"* — Google's explicit clear-and-confirm flow in two live quickstarts versus a third-party vendor doc warning *"This setting cannot be disabled once saved… you must create a new Google Cloud Project"* (CloudM, 2026-03-16). The quickstarts describe a **never-saved** state on a fresh app; CloudM described ours, and CloudM was right. Consequence: escaping add-ons needs a **new Chat app**, and Chat app config is per-project, so it needs a **new GCP project**. D7's parallel-project path was the **only** available one, not merely the prudent one. |
 | ⚠ | **Visibility scale limit:** *"Up to five individuals, or one or more Google Groups"*, and dynamic groups are unsupported. Ample for a single-operator homelab; a constraint to remember if the gateway ever fronts a wider audience. |
 | ⚠ | Slash commands land differently: classic delivers them as a **MESSAGE** event carrying `message.slashCommand`, whereas add-ons uses `appCommandPayload` (a breaking change, add-ons release notes 2024-12-18). A migration would need the normalizer to handle both — additive, but real. |
-| ⏳ | Both unknowns are scratch-project experiments (E1, E2 in §10), and §6 D7 removes the reversibility risk from the critical path entirely. |
+| ✅ | **Both unknowns were settled by the scratch-project experiments (E1, E2 in §10), which ran 2026-07-29.** D7 removed the reversibility risk from the critical path *before* the answer was known; E2 then showed the risk was real. |
 
 ### Option E — do nothing (leave `action.id` empty)
 
@@ -585,30 +586,83 @@ makes recommending D at all responsible.
 
 ## 7. Restating the selection-widget claim (unblocks CG-11)
 
-`CLAUDE.md` and `docs/consumers/jobhunt.md` R6 currently say *"modal dialogs are
-impossible over Pub/Sub transport — selection widgets are the supported path."*
-The sentence conflates a false claim and an untested one under a single confident
-dash. Proposed replacement wording, for CG-11 to adopt verbatim:
+> ### ⚠ CORRECTED 2026-07-30 — this section's own replacement wording was wrong
+>
+> The block quote below originally read **"A selection widget is not an
+> interaction trigger"** with no runtime scope, and told CG-11 to adopt it
+> *verbatim*. That is false on the runtime this project now runs, and it
+> contradicted this ADR's own status banner above, which records E1's opposite
+> result. The file disagreed with itself for a day.
+>
+> **The disproof is a real capture from the live project `chat-gateway-gw`:**
+> changing a dropdown on a card with **no button on it at all** produced a whole
+> `CARD_CLICKED`, carrying the widget's own `onChangeAction.function`
+> (`onVerdictChanged`) as the action identity and the changed value harvested
+> into params. Landed as
+> `tests/fixtures/classic-cardclicked-onchange-event.json` and pinned by
+> `test_normalize_real_classic_onchange_with_no_button_at_all`.
+>
+> **Nothing below is deleted — it is re-scoped.** The add-ons statements were
+> true, and they are now the only surviving record of a runtime whose projects
+> have all been deleted (see the status banner). They apply to the add-ons
+> runtime, which is where the evidence came from and the only place it ever
+> applied.
+>
+> **Why the original was wrong is worth naming, because it is a repeatable
+> mistake.** Every observation in §2 came from an add-ons deployment, and §7
+> generalised from it to *"over Pub/Sub transport"* — the **transport**, not the
+> **runtime**. Pub/Sub was never the constraint. The add-ons runtime was. The
+> same substitution is what makes the dialog claim below sound stronger than it
+> is, so the two are kept apart deliberately.
 
-> Over Pub/Sub transport a card's interactive elements cannot trigger the app by
-> the documented mechanism: under the add-ons runtime `action.function` is the
+`CLAUDE.md` and `docs/consumers/jobhunt.md` R6 said *"modal dialogs are
+impossible over Pub/Sub transport — selection widgets are the supported path."*
+The sentence put a proven claim and an untested one on either side of one
+confident dash, and got the proven half's scope wrong as well. Replacement
+wording, corrected 2026-07-30 and adopted by CG-11:
+
+> **Under the Workspace Add-ons runtime** a card's interactive elements cannot
+> trigger the app by the documented mechanism: `action.function` is the
 > interaction's *destination* (documented as an HTTPS URL), and a card click is
 > not one of the four configurable triggers — so `onClick.action` and
 > `onChangeAction` both fail with `gsuiteaddons` code 13 unless routed by the
-> topic-as-function pattern (ADR-0001). **A selection widget is not an
-> interaction trigger.** The supported pattern is *widgets for input, one button
-> to submit* — widget values arrive in `commonEventObject.formInputs` and are
-> merged into `action.params` at submit time (capture-verified 2026-07-29), which
-> is what jobhunt R6 actually needs. True modal dialogs are **believed**
-> impossible over this transport because they require a synchronous HTTP
-> interaction endpoint — doc-derived inference, never tested.
+> topic-as-function pattern (ADR-0001). **On that runtime a selection widget is
+> not an interaction trigger.**
+>
+> **Under a classic Chat app on Pub/Sub — the runtime this project runs — a
+> selection widget IS an interaction trigger.** A dropdown's `onChangeAction`
+> fires the moment the value changes, delivering its own function name as
+> `action.id`, on a card with no button at all. A card carrying both fires
+> **twice** per user decision: once on change, once on submit.
+>
+> ***Widgets for input, one button to submit* is therefore the portable
+> pattern** — the only one that works on add-ons, and still the better default
+> on classic, because it yields **one event per user decision** instead of two:
+> fewer events to make idempotent, and one obvious commit point. Widget values
+> arrive in the event's form inputs and are merged into `action.params` at
+> submit time. That is what jobhunt R6 actually needs. `onChangeAction` is there
+> for genuine live reactivity, not as the default.
+>
+> True modal dialogs are **believed** impossible over Pub/Sub transport, because
+> they require the app to answer the interaction synchronously over HTTP and
+> Pub/Sub delivery gives the gateway no response channel at all. That is
+> **doc-derived inference and has never been tested, on either runtime.** Do not
+> restate it as an observation.
 
-Three labels, kept apart: **proven false** (widgets as triggers), **capture-
-verified** (widgets as inputs), **doc-derived inference** (dialogs).
+Four labels, kept apart, because the original collapsed them into two:
 
-**UX implication, flagged not specified** (Designer's call, not mine): jobhunt's
-cards need an explicit submit button; select-to-act is not available. Where a
-card previously implied a one-tap flow, it is now two taps — choose, then submit.
+| Claim | Status |
+|---|---|
+| a widget cannot trigger an interaction **under add-ons** | **proven false as a general claim, true as an add-ons claim** — code 13, `deploymentFunction: cgSelectProbe`, 2026-07-29 |
+| a widget **can** trigger an interaction **under classic** | **capture-verified** 2026-07-30, on a card with no button at all |
+| a widget's **value** rides the submit event's form inputs | **capture-verified on both runtimes** |
+| true modal dialogs are impossible | **doc-derived inference, never tested** on either runtime |
+
+**UX implication, flagged not specified** (Designer's call, not mine): under
+add-ons, cards needed an explicit submit button and select-to-act was
+unavailable — a one-tap flow became two taps. Under classic that cost is
+**optional**: select-to-act works, so the submit button is now a design choice
+about event volume and commit points, not a workaround for a runtime limitation.
 
 ---
 
@@ -665,7 +719,41 @@ delivers events, which neither detector above would notice.
 
 ## 10. Experiments that would settle what we could not verify
 
+> **All four experiments are resolved or deferred; none is outstanding.** E1 and
+> E2 **ran on 2026-07-29** and their results are recorded in each subsection
+> below and summarised in the status banner at the top of this ADR. E3 and E4
+> are **deferred and must not be executed** — E1 lowered the value of both, since
+> each probes a limitation of the add-ons runtime this project no longer deploys
+> on. Tracked as CG-15 / CG-16 (ran) and CG-17 / CG-18 (deferred).
+
+### 10.0 What the two runtimes can actually do — the capability comparison
+
+Recorded here because **every project that produced the add-ons evidence has
+been deleted** (see the status banner), so none of the left-hand column can ever
+be re-observed by anybody. This table and the committed fixtures are the only
+surviving record.
+
+| Capability | Workspace Add-ons + Pub/Sub | Classic Chat app + Pub/Sub | Evidence |
+|---|---|---|---|
+| Card **button** click reaches the topic | **No** by the documented mechanism — `gsuiteaddons` code 13, `deploymentFunction: approve`. Works **only** via the undocumented topic-as-function pattern (§2.3) | **Yes, natively**, with an ordinary function name | first-hand on both — §2.2/§2.3 (add-ons), E1 + the migration verification (classic) |
+| Selection widget `onChangeAction` | **No** — code 13, `deploymentFunction: cgSelectProbe`, identical to a button | **Yes, it fires** — including on a card with **no button on it at all**, delivering the widget's own function name | first-hand on both — §2.2 (add-ons), E1 2026-07-29 plus a live capture 2026-07-30 (classic) |
+| Action identity (`action.id`) | **Absent.** The function slot is consumed as the routing destination, so no action name arrives; identity must ride in `__cg_action__` (D2) | **Native** — `action.function` is a function name again and echoes back as `action.id` | real captures on both — §2.5 (`action.id: ""`), E1 (`action.id: 'approve'`) |
+| Envelope format | `commonEventObject` + `chat.<x>Payload` — reported as `envelope_format: "addon"` | flat `type` / `space` / `message` / `user` — reported as `envelope_format: "classic"` | real captures on both; the gateway normalizes either |
+| Slash-command shape | `chat.appCommandPayload` | a **MESSAGE** event carrying `message.slashCommand` | **documentation only — never observed here, on either runtime.** Add-ons release notes 2024-12-18 record the difference as a breaking change. E3 (§10, CG-17) is the experiment that would settle it and it is deferred |
+| True modal dialogs | believed impossible | believed impossible | **doc-derived inference, never tested on either runtime.** Dialogs need a synchronous HTTP interaction endpoint; Pub/Sub gives the gateway no response channel. This one is a property of the **transport**, not the runtime — the only row here for which that is true |
+
+**Four of those six rows are first-hand on both runtimes. Two are not, and the
+distinction is deliberate.** The slash-command row is read off Google's release
+notes and has never been exercised here; the dialog row has never been tested at
+all. A summary of this table that calls it "the two live-verified capability
+tables" over-claims by exactly those two rows — which is why they carry their
+evidence in the same table rather than in a footnote somebody can drop.
+
 ### E1 — Does a classic Pub/Sub Chat app actually receive `CARD_CLICKED`? *(~20 min, decides option D)*
+
+**RAN 2026-07-29 · PASSED.** Delivery was native, `action.id` came through as
+`'approve'`, and `onChangeAction` fired. §11 trigger 1 has fired; the recipe
+below is kept as the record of what was run.
 
 **Scratch GCP project only. Never `chat-gateway-prod`.**
 
@@ -700,6 +788,11 @@ fixture.
 
 ### E2 — Is the add-on toggle reversible? *(~2 min, ride-along on E1)*
 
+**RAN 2026-07-29 · ANSWERED: NO.** The toggle is create-time only — see §5
+option D. The stated limit below turned out not to matter: the answer was
+negative even on a project whose add-on was never deployed via `gsuiteaddons`,
+which is the *weaker* case.
+
 In the same scratch project after E1: tick the add-on box, Save, then try to
 clear it and Save again. **Stated limit, which is the whole point:** this tests a
 project whose add-on was never *deployed* via `gsuiteaddons`. A clean clear is a
@@ -708,6 +801,11 @@ for our real project, which has a live deployment. D7 exists precisely so that
 E2's answer does not gate anything.
 
 ### E3 — Do slash commands reach the topic? *(~10 min, decides whether B has a fallback)*
+
+**DEFERRED — do not run** (CG-17). It was the bridge's escape hatch; the escape
+hatch is now the classic migration, which is proven and done. Kept filed because
+slash commands land differently on classic (see §10.0), so the normalizer would
+need the classic shape, not this one.
 
 On the **current** deployment: configure an App command trigger, type
 `/approve 123`, pull. Record (a) whether anything arrives at all, (b) the command
@@ -723,6 +821,11 @@ Google's documentation** — the only published JSON is a three-field skeleton.
 This is a genuine doc gap; nobody should fill it from memory.
 
 ### E4 — Does `onChangeAction` work with the topic path as its function? *(~5 min)*
+
+**DEFERRED — do not run** (CG-18), and largely answered sideways. E1 settled the
+question that mattered: `onChangeAction` fires natively on classic, so §7's
+two-tap cost disappeared at migration regardless of whether it was recoverable
+under the bridge.
 
 Re-run the failed `cgSelectProbe` with `function` set to the topic path instead
 of a name. Settles whether select-to-act is recoverable — i.e. whether §7's
@@ -767,6 +870,21 @@ Revisit this ADR when **any** of these fires:
 
 ## 12. Open questions — need an explicit user yes
 
+> ### ⚠ ALL FIVE ARE ANSWERED — none of this is outstanding (updated 2026-07-30)
+>
+> This section's title is kept for referential stability (D2, D6 and the queue
+> all cite "§12"), but nothing below awaits a user. The decisions are recorded in
+> `docs/BUILDER_QUEUE.md`'s decisions table, which is authoritative if these ever
+> disagree.
+>
+> | # | Question | Answer |
+> |---|---|---|
+> | 1 | **D2** — `__cg_action__` as a gateway-reserved key | **APPROVED** 2026-07-29, including the topic-path guard; shipped as CG-10. Since **reframed to an add-ons compatibility fallback**: on classic, action identity is native and `__cg_action__` is inert. It is kept because it is load-bearing on add-ons and still outranks the native slot, so one card behaves identically on both runtimes. |
+> | 2 | **D6** — a third flag word | **NO.** `⚠ SHAPE-VERIFIED` stays the only addition; hard rule #3's cap holds. Routing fragility lives in prose and `/healthz`, never a new flag word. |
+> | 3 | **E1 / E2 authorization** | **GRANTED**, and both ran 2026-07-29 in a throwaway project. The prohibition on running them against `chat-gateway-prod` was honoured — and is now moot, because `prod` and E1's own project were both deleted 2026-07-30. |
+> | 4 | **§8's `interaction-canary` dead-man** | **APPROVED, then closed as obsolete before it was built** (CG-14, user decision 2026-07-30). **Nothing was implemented.** E1 removed its premise: it was designed to detect silent breakage of *undocumented* routing, and classic has no undocumented dependency to break. CG-7's subscriber-liveness checks cover the residual failure modes faster and more precisely. |
+> | 5 | **Migrate to option D in principle** | **YES** — and it is **done and live-verified**, 2026-07-29, on `chat-gateway-gw`. E2 then showed D7's parallel-project path was the only one available anyway. Tracked as CG-21. |
+
 1. **D2 — approve `__cg_action__` as a gateway-reserved parameter key?** This
    changes the shared envelope contract in the inbound direction and asks
    producers to know a gateway-defined key. Recommended **yes**; the rule #1
@@ -796,22 +914,46 @@ Revisit this ADR when **any** of these fires:
 
 Recorded plainly, because an unrecorded gap becomes a silent assumption:
 
+> **Two of these gaps have since been CLOSED by experiment — E1 and E2, both
+> 2026-07-29 — and are rewritten below rather than deleted.** They stayed in
+> their original wording until 2026-07-30, which meant the one section a reader
+> consults for *what is still open* was handing back the pre-experiment answer
+> while §5, §10.0, §12 and the status banner all said otherwise. The rest of
+> this list still stands.
+
 - **Topic-as-function is undocumented.** Not contradicted — *absent*. Two
   research passes across ~50 pages, both changelogs, two sample repos and
   multiple search engines found nothing. That is strong but not proof of absence;
   the sitemap crawl was not exhaustive.
-- **Classic Pub/Sub CARD_CLICKED delivery is inferred, never cited** (E1). The
-  indirect evidence is good and two passes reached it independently; that neither
-  could cite it is itself informative — probably real, genuinely undocumented.
+- **Classic Pub/Sub CARD_CLICKED delivery — SETTLED, first-hand, 2026-07-29**
+  (E1). This bullet previously read *"inferred, never cited… the indirect
+  evidence is good and two passes reached it independently; that neither could
+  cite it is itself informative — probably real, genuinely undocumented."* It is
+  now observed, not inferred: a real card click arrived natively in a throwaway
+  classic project with `action.id: 'approve'`, and it has since been re-observed
+  on the live `chat-gateway-gw` (§5 option D, §10.0). **The bullet's own
+  observation held up** — "probably real, genuinely undocumented" was the right
+  read of the silence. Neither research pass could cite it because Google does
+  not document it, not because the inference was weak; the behaviour and its
+  absence from the documentation are independent facts, which is the same pairing
+  §2.3 found from the other direction.
 - **Slash commands over Pub/Sub are unobserved here** (E3). Delivery is
   documented in prose but contradicted by the commands page, and the two are
   unreconciled anywhere. The command-id field is verified in the field
   reference; the argument-text field is expected, not confirmed. No expanded
   `appCommandPayload` example exists in Google's docs at all.
-- **Add-on toggle reversibility is contradictory** (E2) — Google's quickstarts
-  versus one third-party vendor doc, with no Google statement covering the
-  post-deployment case that is actually ours. D7 routes around it rather than
-  resolving it.
+- **Add-on toggle reversibility — SETTLED, and the answer is NO** (E2,
+  2026-07-29). This bullet previously read *"contradictory — Google's
+  quickstarts versus one third-party vendor doc, with no Google statement
+  covering the post-deployment case that is actually ours. D7 routes around it
+  rather than resolving it."* D7 did route around it, and that was the right
+  call; the contradiction is now resolved rather than merely avoided. The toggle
+  is **create-time only** — it cannot be cleared once the app has been saved. Of
+  the two contradicting sources it was the **third-party vendor doc (CloudM) that
+  was right**: Google's quickstarts describe a never-saved state on a fresh app,
+  which is a different case from ours. Escaping add-ons therefore needs a new
+  Chat app and, because Chat app config is per-project, a new GCP project — see
+  §5 option D.
 - **The StackOverflow corroborations in §2.7 were not read directly** — the
   research fetch was blocked. Leads, not citations.
 - **Research coverage was ~50 pages plus multi-engine search across two passes,
@@ -833,22 +975,36 @@ Recorded plainly, because an unrecorded gap becomes a silent assumption:
   §4.5 — the `__action_method_name__` prediction this ADR **supersedes**, and
   DEC-3, whose reasoning D2 follows deliberately.
 - `docs/consumers/jobhunt.md` — R3 (`action.id` semantics), R6 (structured
-  reasons); both need the §7 restatement.
-- `docs/integration-guide.md` — the inbound example at line 87 shows
-  `"action":{"id":"verdict",…}`, which is unreachable under the current runtime
-  without D2. Needs correcting alongside the card convention (D3).
-- `docs/google-cloud-setup.md` — **contains a factual error this ADR corrects.**
-  The note under step 7 (*"The app will not appear under ⚙ → Apps &
-  integrations → Add apps until the Google Workspace Marketplace SDK … is enabled
-  and the app is published"*) is contradicted by Google's own documentation:
-  installability comes from Chat API **Visibility**, and the Marketplace SDK's
-  settings are explicitly *ignored* for Chat (§5, option D). That error is why we
-  are on the add-ons runtime at all. It needs correcting whether or not the
-  migration happens, so a future reader does not repeat the choice.
-  Step 5 would additionally change under option D.
+  reasons). **Both restated — CG-11, 2026-07-30.** R6 carried §7's original,
+  unscoped *"a selection widget is not an interaction trigger"*; §7 itself was
+  corrected in the same item, so what R6 now restates is the runtime-scoped
+  version rather than the add-ons-derived one.
+- `docs/integration-guide.md` — the inbound example at line 87 showed
+  `"action":{"id":"verdict",…}`, unreachable under the add-ons runtime without
+  D2. **Corrected — CG-13, 2026-07-29**, alongside the card convention (D3),
+  which shipped in the same item.
+- `docs/google-cloud-setup.md` — **contained a factual error this ADR corrects;
+  both halves are now fixed.** The note under step 7 (*"The app will not appear
+  under ⚙ → Apps & integrations → Add apps until the Google Workspace
+  Marketplace SDK … is enabled and the app is published"*) is contradicted by
+  Google's own documentation: installability comes from Chat API **Visibility**,
+  and the Marketplace SDK's settings are explicitly *ignored* for Chat (§5,
+  option D). That error is why we were on the add-ons runtime at all — so it
+  needed correcting whether or not the migration happened, and it was:
+  **CG-6, 2026-07-29**, kept in place as a `⚠ CORRECTED` block rather than
+  quietly deleted. Step 5 changed under option D as predicted here —
+  **CG-20, 2026-07-30** — which also added the create-time-only toggle trap
+  beside it (E2).
 
-**Queue impact (Planner's call, not written here):** CG-10 is unblocked by D2 +
-D4; CG-11 is unblocked by §7's wording. Newly implied and unqueued: D3
+**Queue impact — all of it is now resolved; this paragraph is kept as the record
+of what was implied at the time.** It read *"Planner's call, not written
+here"* and listed the following as open. CG-10 (unblocked by D2 + D4) **shipped
+2026-07-29**; CG-11 (unblocked by §7's wording) **shipped 2026-07-30**, and it
+corrected §7 rather than adopting it. Of the four then-unqueued implications: D3
 (`interaction_routing_target` on `/v1/identities` + the card convention in the
-integration guide), §8's interaction dead-man, the E1–E4 experiment items, and
-the `google-cloud-setup.md` correction above.
+integration guide) **shipped as CG-13**; §8's interaction dead-man was queued as
+CG-14 and **closed as obsolete without being built** (E1 removed its premise);
+E1 and E2 **ran** as CG-15 / CG-16 while E3 and E4 are **deferred, do-not-run**
+as CG-17 / CG-18; and the `google-cloud-setup.md` correction shipped in two
+parts, **CG-6** (the Marketplace error) and **CG-20** (step 5, the deleted
+project, and the toggle trap).
