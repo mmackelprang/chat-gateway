@@ -1,6 +1,25 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-23 shipped**
+**Last updated:** 2026-07-30 (Builder — **CG-21 shipped: reconciliation, not
+execution.** The add-ons → classic migration was executed and live-verified
+**2026-07-29**, outside any PR — the row never had code in it. Four documents
+still described it as pending, or named add-ons as production: `CLAUDE.md`
+(*"a migration is underway"*), `.env.example` (the routing-target block labelled
+add-ons *"(today)"*), `docs/google-cloud-setup.md` step 8 (which gave the
+add-ons answer for `CHAT_GATEWAY_INTERACTION_ROUTING_TARGET` unconditionally —
+**not** part of CG-20's rewrite), and `docs/integration-guide.md` (which
+contradicted itself within ten lines).
+
+**The load-bearing finding: rollback has expired.** ADR-0001 D7 promised it as
+*"switching two env values back"*, and both the ADR and the CG-21 row still said
+so. `chat-gateway-prod` was deleted 2026-07-30, so there is nothing to point
+those env names at, and E2 already proved classic cannot be toggled back —
+reverting now means a **third project**. Not a defect in D7: the reversibility
+was real while both projects existed, and it was spent deliberately. **CG-35
+filed** — two `src/` comments still name add-ons as the runtime we are deployed
+on. Docs only; suite unchanged by this PR at **144**.
+
+Previously: **CG-23 shipped**
 ([PR #29](https://github.com/mmackelprang/chat-gateway/pull/29)): the
 `resp.text[:200]` echo is gone from `webhook.send` and `chat_api.send`. Measured,
 not argued: driving a real 403 through the real gateway over real TCP put the
@@ -90,7 +109,7 @@ unblocks half this queue.
 | **D6** — a third flag word | **NO.** `⚠ SHAPE-VERIFIED` stays the only addition; hard rule #3 caps the vocabulary. Routing fragility is recorded in prose + `/healthz`, never a new flag. |
 | **§8** — interaction dead-man | **APPROVED** at `every:7d`, cleared by any `CARD_CLICKED`. A genuinely quiet week raising a false alarm is accepted; the remediation is one tap. Filed as CG-14. |
 | **E1 / E2** — classic-deployment experiments | ~~DEFERRED, do not run~~ — **SUPERSEDED 2026-07-29: the user authorized them, E1 RAN AND PASSED, E2 is answered.** See the section below. CG-15 / CG-16 are closed as executed; CG-17 / CG-18 remain deferred. |
-| **Migration to option D** | **APPROVED IN PRINCIPLE** if E1 later passes — and it did. Migration is now **underway** (a fresh project is provisioned; see below). D3's portable card convention shipped as CG-13, so the exit stays cheap and must be kept that way. |
+| **Migration to option D** | **APPROVED IN PRINCIPLE** if E1 later passes — and it did. Migration is **DONE**: production cut over **2026-07-29** and it is live-verified. *(This cell read "now **underway** (a fresh project is provisioned)" until CG-21 reconciled it on 2026-07-30 — provisioning was the last state anyone wrote down, not the last state that happened.)* D3's portable card convention shipped as CG-13 and **paid for itself**: the migration cost zero producer card changes. The exit is no longer cheap in one direction, though — see CG-21 under **Recently shipped** for what rollback costs now. |
 | **DEC-1** (CG-4 threadKey) | Keep the body `thread.threadKey`, drop the query parameter. The `messageReplyOption` caveat is mandatory in the docstring. |
 | **CG-12** shape | **Option A** — a bare counter on `/healthz`. No space id, no app id, no content. Pure rule-5 visibility, zero rule-6 surface change; note in code that `/healthz` is unauthenticated. |
 | **CG-12** — one counter or two? *(2026-07-30)* | **KEEP BOTH.** CG-12 shipped `suppressed_opt_out` and `suppressed_not_authorized` while the row above says "a bare counter" (singular). Reviewed and settled: the spec sanctions the split explicitly, option A's constraint governs what is **stored** (no space, no app id, no content — which two ints satisfy), and one number cannot distinguish *"500 people were refused"* from *"500 events landed in a space nobody serves"*. Two different investigations. **Do not collapse them.** |
@@ -130,12 +149,19 @@ be toggled on an existing app. ADR-0001 §5 option D recorded this as
 per-project). ADR D7's parallel-project-and-cut-over approach was therefore not
 merely prudent — it was the only available path.
 
-**Migration status: underway.** New project `chat-gateway-gw` (`#860649224827`)
-is provisioned. The CG-2 setup script ran **clean end to end** on it, including
-the add-ons service-agent step. That is the **second virgin-project run**, which
-matters for flag discipline: CG-2's IaC was previously reviewed-by-reading only
-and is now genuinely exercised. (The Terraform path is still unapplied — only
-the script path has run.)
+**Migration status: DONE and live-verified 2026-07-29** — corrected 2026-07-30
+by CG-21, which found this line still reading *"underway"* a day after cutover.
+Project `chat-gateway-gw` (`#860649224827`) is the live one and the only one.
+The CG-2 setup script ran **clean end to end** on it, including the add-ons
+service-agent step. That is the **second virgin-project run**, which matters for
+flag discipline: CG-2's IaC was previously reviewed-by-reading only and is now
+genuinely exercised. (The Terraform path is still unapplied — only the script
+path has run.)
+
+**Provisioning was never the finish line, which is how this line went stale:**
+it recorded the last thing written down rather than the last thing that
+happened. `chat-gateway-prod` was deleted 2026-07-30, so the migration is also
+now **irreversible** — see CG-21 under **Recently shipped**.
 
 This is the work list Builder clears, one PR per item. Planner appends; the
 user sets priority. Builder claims the topmost `📋 queued` item whose
@@ -185,16 +211,23 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-19 → CG-21 → CG-26** (CG-7, CG-4, CG-5, CG-24,
-CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30 and CG-23 have
-since shipped). **CG-29** was filed by Builder from CG-25's UAT, **CG-31** by
-Builder from CG-11+CG-20's pre-merge review, **CG-32** by Builder from CG-30's
-verification pass, and **CG-33 + CG-34** by Builder from CG-23's pre-merge review
-and UAT; all five are
+Remaining order: **CG-19 → CG-26** (CG-7, CG-4, CG-5, CG-24,
+CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23 and
+CG-21 have since shipped). **CG-29** was filed by Builder from CG-25's UAT,
+**CG-31** by Builder from CG-11+CG-20's pre-merge review, **CG-32** by Builder
+from CG-30's verification pass, **CG-33 + CG-34** by Builder from CG-23's
+pre-merge review and UAT, and **CG-35** by Builder from CG-21's inventory; all
+six are
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
-CG-19 and CG-21 carry **merge gates** — pause and report rather than
+CG-19 carries a **merge gate** — pause and report rather than
 auto-merging; CG-17 and CG-18 stay deferred and must not be executed.
+
+**CG-21 shipped 2026-07-30 as documentation reconciliation only.** The migration
+it names was executed and live-verified **2026-07-29**, outside any PR; the row
+had no code in it. Its entry under **Recently shipped** records what the row's
+future-tense body used to promise and which parts held — including the one that
+did not: **rollback has expired**, because `chat-gateway-prod` was deleted.
 
 **CG-9 was unblocked and shipped on 2026-07-30**, merged into CG-22's slot
 because the two items land the same kind of artifact behind the same guard. Its
@@ -292,45 +325,6 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 > appeared to contain nothing but a closed row, CG-25 and CG-26, which
 > contradicted the order line at the top of this section. Content unchanged; only
 > the closing tag moved.
-
----
-
-### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  🔨 in flight · reconciliation only
-
-> **Status correction, 2026-07-30.** This row still reads as unstarted work
-> below; it is not. **The migration has been executed and live-verified** — see
-> ADR-0001's status banner, which records a real card through our real
-> `ChatApiAdapter` on `chat-gateway-gw` returning `action.id: 'approve'` and
-> `envelope_format: 'classic'`. `chat-gateway-prod` has since been **deleted**.
-> Nothing here is left to build: what remains is reconciling the docs to the
-> live state. Read the body below as the plan that was followed, and note that
-> the merge gate still applies to the reconciliation PR because it touches the
-> deploy/secret-handling path.
-
-| | |
-|---|---|
-| **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **D7** — parallel project, then cut over; never toggle production |
-| **Depends on** | CG-20 (write the findings down before acting on them) — **met: CG-20 shipped 2026-07-30** |
-| **Merge gate** | **touches the IaC / deploy / secret-handling path — Builder must pause and report before merging** |
-
-E1 passed and E2 proved the toggle is one-way, so D7's parallel-project path is
-the only one available. `chat-gateway-gw` (`#860649224827`) is provisioned and
-the setup script ran clean on it.
-
-Gateway-side cost should be near zero — that was CG-13's whole purpose. Expected
-scope: two env values (`CHAT_GATEWAY_PUBSUB_SUBSCRIPTION`,
-`GOOGLE_APPLICATION_CREDENTIALS`) plus
-`CHAT_GATEWAY_INTERACTION_ROUTING_TARGET`, and **zero producer card changes**.
-Console-only work (re-adding the app to each space, a new tier-2 sender
-identity) is the user's. Rollback is switching the env values back. Tier-1
-webhook identities are per-space and unaffected throughout.
-
-**CG-20 shipped 2026-07-30, so this row's one dependency is met** — the findings
-are written down, and `docs/google-cloud-setup.md` now names `chat-gateway-gw`
-as the live project rather than the deleted `chat-gateway-prod`. That does not
-make this startable. It still needs the user's **explicit go**, and it still
-carries its **merge gate**: what remains is reconciliation on the deploy and
-secret-handling path, which is exactly the class of change that pauses.
 
 ---
 
@@ -745,11 +739,50 @@ CG-30, not why it is imaginary.
 
 ---
 
+### CG-35 · Two `src/` comments still name **add-ons** as the runtime we are deployed on  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-21's** inventory — found, deliberately not fixed |
+| **Depends on** | nothing |
+| **Touches** | `src/chat_gateway/adapters/pubsub.py`, `src/chat_gateway/service.py` — comments only, no behaviour |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
+
+CG-21 reconciled every *document* that still described the add-ons → classic
+migration as pending. Two **source comments** say the same stale thing and were
+left alone, because CG-21 was a docs-only row and `adapters/` is hard-rule-#3
+territory where the flag discipline lives.
+
+| Location | Text | Why it is wrong |
+|---|---|---|
+| `src/chat_gateway/adapters/pubsub.py:104-105` | *"…or `action.id` is permanently dead under the **runtime we are actually deployed on**."* | The runtime we are actually deployed on is **classic**, where `action.id` arrives natively. The sentence is true of **add-ons**, which production left on 2026-07-29. |
+| `src/chat_gateway/service.py:42-44` | *"the two are only coincidentally related **today** — **under a classic deployment** it is any constant"* | Mechanically correct, but it positions classic as the hypothetical alternative when classic **is** production. Milder than the first. |
+
+**Neither is a defect in behaviour** — the guard and the env indirection both do
+the right thing, and `TOPIC_PATH_RE` (`pubsub.py:136`) is explicitly written for
+the classic runtime already. This is comment tense only.
+
+**Fixing them must not disturb the surrounding reasoning.** The `pubsub.py` block
+is the `__cg_action__` rule-#1 justification, which is load-bearing prose; the
+correction is that add-ons is where `action.id` was dead, not "the runtime we are
+deployed on". **No verification flag is involved and none may be touched.**
+
+---
+
 ## Experiments
 
 CG-15 and CG-16 **ran on 2026-07-29** and are recorded below with their results.
 CG-17 and CG-18 remain deferred — and E1 lowered their value, since both probe
-limitations of the add-ons runtime this project is migrating off.
+limitations of the add-ons runtime this project **left on 2026-07-29**.
+
+> **Their premise weakened further than "lower value", and CG-21 is recording
+> that rather than acting on it (2026-07-30).** Both rows were written while
+> add-ons was production. It is not: every project that ran it is deleted, so
+> neither experiment is *runnable* even if wanted. **Status unchanged — both stay
+> `⏸ deferred` and must not be executed.** Whether a deferred item whose runtime
+> no longer exists should be closed like CG-14 or kept filed for its
+> classic-shaped residue is a **Planner/user call**, not Builder's; the tense
+> below is corrected, the decision is not.
 
 ### CG-15 · E1 — does a classic Pub/Sub Chat app receive `CARD_CLICKED`?  ✅ RAN 2026-07-29 · **PASSED**
 
@@ -768,7 +801,7 @@ available one, not merely the prudent one.
 ### CG-17 · E3 — do slash commands reach the topic?  ⏸ deferred · lower value after E1
 
 Was the bridge's escape hatch. Less interesting now: the escape hatch is the
-classic migration, which is proven and underway. Keep filed — slash commands
+classic migration, which is proven and **done** (2026-07-29). Keep filed — slash commands
 land differently on classic (a MESSAGE carrying `message.slashCommand`, versus
 add-ons' `appCommandPayload`) so if they are ever wanted, the normalizer needs
 the classic shape, not this one.
@@ -777,8 +810,10 @@ the classic shape, not this one.
 
 Asked whether select-to-act is recoverable *under the bridge*. E1 answered the
 question that actually mattered: `onChangeAction` **fires natively on classic**,
-so the two-tap cost disappears at migration regardless. Only worth running if
-the add-ons deployment has to be lived with longer than expected.
+so the two-tap cost disappeared at migration regardless. Its remaining condition
+— *"only worth running if the add-ons deployment has to be lived with longer
+than expected"* — **can no longer be met**: the add-ons deployment is gone, not
+merely superseded.
 
 ---
 
@@ -794,16 +829,13 @@ old one.)_
 
 ## In flight
 
-**CG-21** — branch `docs/cg-21-migration-reconciliation`. Claimed 2026-07-30 on
-the user's explicit go. **Reconciliation only: nothing is being built.** The
-migration itself was executed and live-verified 2026-07-29; this PR aligns the
-docs to that live state. Carries a **merge gate** — Builder opens the PR and
-stops.
-
-_(Previously: **CG-30 shipped** on 2026-07-30, and **CG-11 + CG-20** as one PR
-before it, and CG-27 and CG-28 before those. **CG-27 was worked in parallel** by
-a second Builder in its own worktree; per the CG-25 concurrency incident, one
-worktree per Builder and never a shared working directory.)_
+_(nothing — **CG-21 shipped** on 2026-07-30 as reconciliation only; its PR is
+open and **paused at its merge gate** rather than merged, per the gate on the
+deploy/secret-handling path. Previously: **CG-23 shipped**, and **CG-30** before
+it, and **CG-11 + CG-20** as one PR before that, and CG-27 and CG-28 before
+those. **CG-21, CG-30 and CG-27 were each worked in parallel** by a second
+Builder in its own worktree; per the CG-25 concurrency incident, one worktree
+per Builder and never a shared working directory.)_
 
 ---
 
@@ -956,6 +988,98 @@ payloads that succeed today, which is the one thing this item was forbidden to
 do, so it is a separate row rather than a silent gap. It is now the only
 remaining 500 on this path, and `docs/consumers/aitrader.md` §11 says so rather
 than claiming the 500 is gone.
+---
+
+### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  ✅ shipped 2026-07-30 · [PR #TBD](https://github.com/mmackelprang/chat-gateway/pulls)
+
+**The migration itself was executed and live-verified on 2026-07-29 — outside a
+PR, by the user in the Google Cloud console plus a live round-trip.** This row
+never had code in it. What shipped under its number is the **documentation
+reconciliation**, and the row is retired here rather than deleted because its
+body was a *plan in future tense* for work already finished, and that text is
+what needed correcting.
+
+**What the row used to say, and why each line had to go:**
+
+| Row text | Status |
+|---|---|
+| *"`chat-gateway-gw` is provisioned and the setup script ran clean on it"* | Provisioning was the last thing **written down**, not the last thing that **happened**. Cutover followed on 2026-07-29. |
+| *"Expected scope: two env values … plus `CHAT_GATEWAY_INTERACTION_ROUTING_TARGET`"* | Correct, and it held. Names only — the values are runtime env (hard rule #2). |
+| *"zero producer card changes"* | **Held, observed rather than predicted.** D3's portable card convention (CG-13) paid for itself. |
+| *"Console-only work … is the user's"* | **Still true and still outstanding** — see below. |
+| *"Rollback is switching the env values back"* | **Expired.** The one genuinely load-bearing correction in this PR — see below. |
+| *"Tier-1 webhook identities are per-space and unaffected throughout"* | **Held**, and is now empirical rather than predicted. Evidence and its exact scope: `CLAUDE.md`'s verification ledger — linked, not restated. |
+
+**The migration is now IRREVERSIBLE, and no document said so.** D7 offered
+rollback as *"switching two env values back"*
+(`CHAT_GATEWAY_PUBSUB_SUBSCRIPTION`, `GOOGLE_APPLICATION_CREDENTIALS`), and both
+ADR-0001 §D7 and this row still promised it. `chat-gateway-prod` was **deleted
+2026-07-30**, so there is nothing to point those names back at, and E2 already
+proved a classic app cannot be toggled to add-ons. Reverting today means
+provisioning a **third** project and redoing the console work — a fresh
+migration, not a rollback. That is **not a defect in D7**: reversibility was real
+while both projects existed, which is exactly what made cutting over safe, and it
+was then spent deliberately. Recorded in ADR-0001 §D7, `CLAUDE.md` and here,
+because *"All bounded, none irreversible"* sat two lines above the rollback
+bullet and is now the opposite of the situation.
+
+**What CG-20 had already fixed, and this PR deliberately did NOT re-touch:**
+`docs/google-cloud-setup.md`'s project names, its dated provisioning-history
+table, step 5's topic path, the dead-key callout for `iac/chat-gateway-sa.json`,
+and ADR-0001 §5/§7/§10/§12/§13 and §2.6 C2. The largest risk on this row was
+redundant or contradictory work, so the inventory came first and CG-20's
+territory was left alone.
+
+**What was genuinely left — four documents still describing the migration as
+pending, or add-ons as production:**
+
+- `CLAUDE.md` — *"a migration is underway"*, and `__cg_action__` justified as
+  *"load-bearing on the runtime deployed **today**"*. On classic it is **inert**;
+  it stays because it still **outranks** the native slot so one card works on
+  either runtime. The keep-it instruction is unchanged; its *justification* is
+  now the weaker one, and the file says so instead of quoting the strong one.
+- `.env.example` — the routing-target block labelled the add-ons row **"(today)"**
+  and defaulted its hint to the topic path. Rows are **dated** now, and the
+  classic answer (any constant) leads. A stale topic path under classic is
+  **harmless** — the gateway discards topic-path-shaped values from
+  Google-native sources rather than promote one into an action name — it merely
+  costs the native slot.
+- `docs/google-cloud-setup.md` step 8 — gave the topic path as *the*
+  `CHAT_GATEWAY_INTERACTION_ROUTING_TARGET` answer, unconditionally. That is the
+  add-ons answer, in the document an operator sets up the **live** project from.
+  Now a per-deployment table. This paragraph was **not** part of CG-20's rewrite.
+- `docs/integration-guide.md` — *"add-ons + Pub/Sub today"* and *"**and it is
+  moving**"*, seven lines above its own correct *"Production migrated … on
+  2026-07-29"*. The file contradicted itself.
+
+Plus the queue's own stale status: the ADR-decisions table, the E1/E2 section's
+*"Migration status: underway"*, and the CG-17/CG-18 premise (below).
+
+**Still console work for the user — this repo cannot verify any of it.** Adding
+the classic app to each space, and the new tier-2 sender identity. The one dated
+observation that exists is CG-20's, in step 6 of the setup doc: as of
+**2026-07-30** the classic app **"Agent Comms"** was in the **JobHunt space
+only**, so tier 2 is not live in the aitrader or FamilyWorkspace spaces. That is
+a console snapshot, not repository state, and it is linked rather than repeated.
+
+**No deployed state is asserted anywhere in this PR.** `config/registry.yaml` and
+`.env` are gitignored dev-box files and the deploy target `/srv/chat-gateway/`
+has its own copies; this worktree contains only `config/registry.example.yaml`,
+so no claim is made from it. Docs only — `src/`, `tests/`, `iac/` and `config/`
+untouched; **this PR adds and removes no test**, and the suite stands at **144**
+where main leaves it (136 → 140 by CG-30, → 144 by CG-23, both of which merged
+while this branch was open). No verification flag added, cleared or reworded,
+and `CLAUDE.md`'s ledger is linked rather than restated.
+
+**Two findings filed rather than fixed** (both in `src/`, both out of scope for a
+docs row): see **CG-35**.
+
+> **Renumbered during rebase, recorded rather than quietly fixed.** This row's
+> finding was filed as **CG-32** and had to become **CG-35**: CG-30's Builder
+> claimed CG-32 and CG-23's claimed CG-33 + CG-34 while this branch was open.
+> Three Builders appending to one queue in parallel will collide on the next
+> free number, and the collision is invisible until rebase — worth knowing the
+> next time two run at once.
 
 ### CG-11 + CG-20 · The selection-widget claim, E1/E2, and a deleted project  ✅ shipped 2026-07-30 · [PR #27](https://github.com/mmackelprang/chat-gateway/pull/27)
 
