@@ -1,10 +1,13 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-22 + CG-9 shipped** as one PR: the
-three real classic captures are landed, scrubbed and re-derived, and the guard
-gained the two rules that had never been proven to fire. CG-4, CG-5, CG-8, CG-24
-also shipped; CG-14 closed as obsolete. **CG-26 gained a finding** — see its
-row.)
+**Last updated:** 2026-07-30 (Builder — **CG-25 shipped**: `send_text()` now has
+the transport-error guard `send()` always had, so jobhunt R7/R4's reply path
+fails *typed*. **CG-29 filed** from its UAT — the fix is a net win in the R7
+delivery log and a measured loss on one R4 console line; both are evidenced, not
+argued. Previously: CG-22 + CG-9 shipped as one PR — the three real classic
+captures are landed, scrubbed and re-derived, and the guard gained the two rules
+that had never been proven to fire. CG-4, CG-5, CG-8, CG-24 also shipped; CG-14
+closed as obsolete. **CG-26 gained a finding** — see its row.)
 
 ## User decisions on ADR-0001 (2026-07-29) — final, do not re-ask
 
@@ -110,8 +113,10 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-25 → CG-12 → CG-27 → CG-28 → CG-11 → CG-20 →
-CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24, CG-8 and CG-22+CG-9 have since shipped). CG-14 is **✖ closed as obsolete**
+Remaining order: **CG-12 → CG-27 → CG-28 → CG-11 → CG-20 →
+CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24, CG-8, CG-22+CG-9 and
+CG-25 have since shipped). **CG-29** was filed by Builder from CG-25's UAT and is
+appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
 auto-merging; CG-17 and CG-18 stay deferred and must not be executed.
@@ -467,42 +472,6 @@ the secret-handling path and therefore needs a pause.
 
 ---
 
-### CG-25 · `send_text()` has no transport-error guard, unlike `send()`  📋 queued
-
-| | |
-|---|---|
-| **Origin** | filed by CG-5's review — a code asymmetry found while checking the docstring split |
-| **Depends on** | nothing (CG-5 shipped the docstrings; this is the behaviour) |
-| **Touches** | `src/chat_gateway/adapters/chat_api.py` + a test |
-
-`ChatApiAdapter.send()` wraps its POST in `try/except httpx.HTTPError` and
-re-raises as `ChatApiError`, naming the identity. **`send_text()` does not wrap
-it at all** — a connection reset, DNS failure or read timeout propagates as a raw
-`httpx` exception.
-
-Not a crash: `CallbackForwarder` catches broad `Exception` and logs, so nothing
-goes silent. The defect is that the failure arrives **untyped**, in the one method
-whose entire job is to be reliable about telling a user something went wrong:
-
-- jobhunt **R7** — the in-thread notice that a tap did not land.
-- jobhunt **R4** — the refusal shown to an unauthorized user.
-
-So the delivery log records `ConnectError` where every other adapter path records
-`ChatApiError`, and a caller cannot distinguish "Google refused us" from "we never
-reached Google" without string-matching an exception type. That is the same
-class of ambiguity `PubSubError` was introduced to remove in CG-7.
-
-Expected shape: mirror `send()`'s guard — `except httpx.HTTPError` → `ChatApiError`
-carrying the type name only, never the response body (that is CG-23's separate
-concern, and `send_text()`'s non-200 branch is already correct on it). One test
-driving a transport failure through `httpx.MockTransport`.
-
-Note this does **not** re-open CG-5's flag clear: both of `send_text()`'s
-*threading* branches were verified live. The transport-error branch was never
-exercised against Google and CG-5's docstring says so.
-
----
-
 ### CG-26 · The fixture guard's remaining rules have never been proven to fire  📋 queued
 
 | | |
@@ -706,6 +675,52 @@ transport; selection widgets are the supported path.
 
 ---
 
+### CG-29 · `poll_once`'s type-name-only print swallows the detail CG-25 just created  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-25's UAT** — measured, not predicted |
+| **Depends on** | nothing (CG-25 shipped the guard that exposes it) |
+| **Touches** | `src/chat_gateway/adapters/pubsub.py` — one print, plus whatever import shape the fix needs |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
+
+CG-25 made `send_text()` raise `ChatApiError` on transport failure instead of a
+raw `httpx` exception. That is right for callers, and it is a **measured
+improvement** in the R7 delivery log. But `SubscriberLoop.poll_once`
+(`adapters/pubsub.py:750`) prints `type(exc).__name__` and **discards the
+message** — which is exactly where CG-25 put the distinguishing detail. On the R4
+path (an authorization refusal to a non-allowlisted sender) the console line
+therefore lost specificity:
+
+| Failure | Before CG-25 | After CG-25 |
+|---|---|---|
+| transport (reset / DNS / timeout) | `ConnectError` | `ChatApiError` |
+| non-200 from Google | `ChatApiError` | `ChatApiError` |
+
+Two distinguishable console lines collapsed into one. Both UAT-observed, not
+reasoned about — see the CG-25 PR body for the transcript. The detail is not
+destroyed, only unprinted: the full message is `in-thread reply failed:
+ConnectError` and `__cause__` is the original `httpx` exception.
+
+**Do not "fix" this by widening the print.** The type-name-only rule at that line
+is deliberate and hard rule #2 is its reason: a pydantic `ValidationError` embeds
+the offending input value, and these events carry capability URLs. The comment
+above the line says so.
+
+**The open question, which is a design call and deliberately NOT decided here:**
+gateway-authored exceptions (`ChatApiError`, `PubSubError`, `WebhookDeliveryError`)
+carry messages this repo constructs and which are provably rule-#2-clean — type
+name or HTTP status, never a body. Whether `poll_once` should print `str(exc)` for
+*those* and stay type-only for everything else — and if so, whether the
+discrimination is an `isinstance` check, a marker base class, or something that
+avoids `adapters/pubsub.py` importing `adapters/chat_api.py` — is Planner's call,
+not Builder's. Filed with the observation, not a prescription.
+
+Note the R7 path does **not** have this problem: `forwarder.py:_fail_loudly` logs
+the full `{exc}`, so it gained detail where `poll_once` lost it.
+
+---
+
 ## Experiments
 
 CG-15 and CG-16 **ran on 2026-07-29** and are recorded below with their results.
@@ -755,11 +770,79 @@ old one.)_
 
 ## In flight
 
-_(nothing)_
+_(nothing from this Builder — note CG-12 was being worked in parallel; see the
+concurrency note in CG-25's shipped entry.)_
 
 ---
 
 ## Recently shipped
+
+### CG-25 · `send_text()`'s transport-error guard — the untyped-failure hole  ✅ shipped 2026-07-30 · PR-PENDING
+
+`ChatApiAdapter.send_text()` now wraps its POST in `try/except httpx.HTTPError`
+and re-raises `ChatApiError(f"in-thread reply failed: {type(exc).__name__}") from
+exc`, mirroring `send()`. Five lines of behaviour, one test, two docstring
+corrections and one `CLAUDE.md` ledger row.
+
+**Message shape held deliberately narrow.** Type name only — no body, no URL, no
+space. It is byte-symmetric with the sibling non-200 branch three lines below it
+(`in-thread reply failed: HTTP {status}`), because the *shape* of this file's
+error text is **CG-23's** scope and that row explicitly records `send_text` as
+"the half that was already right". Adding the space id here would have preempted
+it. `from exc` is preserved, so `__cause__` is still the original `httpx`
+exception for anyone who needs it.
+
+**Flag discipline: nothing cleared, nothing reworded.** This does not re-open
+CG-5's clear — `send_text()`'s two *threading* branches stay verified-live
+2026-07-30. A branch that has never met Google was *added* to a method whose
+verified claims are unchanged, so the module docstring's "the `httpx.HTTPError`
+branch" became "branches", `send_text()`'s docstring records the new uncovered
+branch, and the ledger row that said *"`send_text` has none at all — that is
+CG-25"* now names all three methods. The ledger was **not** restated anywhere.
+
+**UAT was run, and it is the reason CG-29 exists.** Not gates — the actual
+jobhunt R7 chain, driven through production wiring (`reply_fn =
+chat_adapter.send_text`, as `__main__.py` wires it): callback unreachable ×3 →
+`_fail_loudly` → `send_text` → Chat API *also* unreachable. Run twice, once with
+the guard monkey-removed, so before/after are observed rather than argued:
+
+| Path | Before | After |
+|---|---|---|
+| R7 delivery log (`forwarder.py` logs full `{exc}`) | `in-thread notice also failed: connection refused` | `in-thread notice also failed: in-thread reply failed: ConnectError` |
+| R4 console (`poll_once` prints type name ONLY) | `ConnectError` | `ChatApiError` |
+
+The R7 line **gained**: `connection refused` sat one line under `gave up after 3
+attempts (ConnectError)` and did not say *which* connection — a reader could take
+it for a fourth callback retry. It now names the operation and the type. The
+stutter is real and was accepted rather than silently designed away, because
+`forwarder.py` was out of scope.
+
+The R4 line **lost**: two distinguishable types collapsed to one, because
+`poll_once` discards the message that now carries the distinction. Filed as
+**CG-29**, not fixed here — it lives in `adapters/pubsub.py`, which a second
+Builder held for CG-12, and the fix is a design call (how to discriminate
+gateway-authored messages from value-embedding ones without breaking hard rule
+#2) rather than a one-liner.
+
+**Pre-existing gap left alone, stated so it is not mistaken for coverage:**
+`self._tokens()` is evaluated *inside* the new `try`, but a `google.auth` failure
+is not an `httpx.HTTPError`, so it still escapes untyped. Exactly symmetric with
+`send()`, which has always had the same hole. Out of CG-25's stated scope
+("mirror `send()`'s guard"); not a regression, not fixed, not hidden.
+
+Suite **124 → 125**. The guard was mutation-tested: deleting the `try/except`
+fails the new test and nothing else compensates.
+
+> **⚠ Concurrency incident, recorded because it nearly shipped the wrong diff.**
+> CG-12 was worked in **parallel in the same working directory**, and git
+> worktrees are per-directory: the two sessions checked branches out over each
+> other. Three CG-12 commits (`0b65758`, `5887745`, `e309357`) landed on
+> **`fix/cg25-send-text-transport-guard`**, this item's branch, because the shared
+> tree was left pointing at it. Nothing was lost and nothing was force-pushed —
+> CG-25 shipped from `fix/cg25-transport-guard`, a clean branch cut at commit
+> `92f1d54` in a **separate `git worktree`**, verified to contain only this item's
+> four files. **Two Builders must not share one working directory.** Use
+> `git worktree add` per item, or run them sequentially.
 
 ### CG-22 + CG-9 · The real **classic** fixtures — `CARD_CLICKED` ×2 and `ADDED_TO_SPACE`  ✅ shipped 2026-07-30 · [PR #20](https://github.com/mmackelprang/chat-gateway/pull/20)
 

@@ -25,7 +25,7 @@ Summary as of 2026-07-30, against project `chat-gateway-gw`:
 What remains unexercised against Google, in either method: the `thread.threadKey`
 + `messageReplyOption` branch of `send()` (a different field from the
 `thread.name` branch `send_text()` uses, so send_text's clear does NOT cover
-it), the non-200 branches, and the `httpx.HTTPError` branch.
+it), the non-200 branches, and the `httpx.HTTPError` branches.
 """
 
 from __future__ import annotations
@@ -151,15 +151,20 @@ class ChatApiAdapter:
         status ONLY — deliberately unlike `send()` above, which still
         interpolates `resp.text[:200]`. That inconsistency inside one file is
         queue item CG-23; this method is the half that was already right.
+        Also NOT covered: the `httpx.HTTPError` branch added by CG-25 — a
+        transport failure has never been exercised against Google here either.
         """
         body: dict = {"text": text}
         params = {}
         if thread_name:
             body["thread"] = {"name": thread_name}
             params["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
-        resp = self._client.post(
-            f"{CHAT_API}/{space}/messages", json=body, params=params,
-            headers={"Authorization": f"Bearer {self._tokens()}"},
-        )
+        try:
+            resp = self._client.post(
+                f"{CHAT_API}/{space}/messages", json=body, params=params,
+                headers={"Authorization": f"Bearer {self._tokens()}"},
+            )
+        except httpx.HTTPError as exc:
+            raise ChatApiError(f"in-thread reply failed: {type(exc).__name__}") from exc
         if resp.status_code != 200:
             raise ChatApiError(f"in-thread reply failed: HTTP {resp.status_code}")
