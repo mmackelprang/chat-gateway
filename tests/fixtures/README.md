@@ -85,8 +85,9 @@ one parametrized test per file:
 | `TENANT_KEY` | a `.domainId` / `.customer` value not containing `example` | RFC 2606 marker; a real Workspace tenant id cannot contain `example` |
 | `EMAIL` / `EXAMPLE_DOMAIN` | any address whose domain is not an RFC 2606 `example.*` one | `fullmatch`, not `search` — `…@example.com.realcorp.net` is a real domain wearing a reserved one as camouflage |
 
-**On `docs/**/*.md` and `tests/**/*.py`** — every line, **including
-`test_fixtures_scrubbed.py`'s own source**:
+**On `docs/**/*.md`, `tests/**/*.py`, `tests/**/*.md` and every root-level
+`*.md`** — every line, **including `test_fixtures_scrubbed.py`'s own source and
+this file**:
 
 | Rule | Rejects | Precision basis |
 |---|---|---|
@@ -94,13 +95,20 @@ one parametrized test per file:
 | `DOC_AVATAR` | a real `https://…googleusercontent.com/` URL | narrowed — see the asymmetry below |
 | `DOC_PEM` | an armoured `-----BEGIN … PRIVATE KEY-----` header | the `-----` armour is required, so describing the rule is not violating it |
 | `DOC_CUSTOMER` | `customers/C<alnum>` without an `example` marker | same RFC 2606 convention as `TENANT_KEY`; the `{3,}` floor lets a document write the elided `customers/C0…` |
-| `DOC_TENANT_ASSIGN` | a `domainId`/`customer` key, a `:`/`=`/`,` separator, and a quoted value of 4+ identifier characters, without an `example` marker | the shape incident 2 was literally written in — a Python tuple of `(key, value)` pairs. No opacity test here, unlike `DOC_URL_CRED`: a tenant id has no entropy signature to test |
+| `DOC_TENANT_ASSIGN` | a `domainId`/`customer` key, a `:`/`=`/`,` separator, and a quoted value of 4+ identifier characters, without an `example` marker | the shape incident 2 was literally written in — a Python tuple of `(key, value)` pairs. A `(?<!\w)` left boundary keeps it from matching the key as the *suffix* of a longer identifier; every real target shape has a quote, punctuation, whitespace or line-start in front of the key, so the boundary costs no detection. No opacity test here, unlike `DOC_URL_CRED`: a tenant id has no entropy signature to test |
+| `DOC_TENANT_TABLE` | the same two keys in a markdown **table row** — `\| key \| value \|` — where the value cell is backticked, without an `example` marker | the cell form `DOC_TENANT_ASSIGN` structurally cannot see, because the separator is `\|` and not `[:=,]`. Precision comes from requiring the value's backticks: this repo always backticks a literal in a table cell, so demanding them costs no detection, while a *prose* cell beside these two field names is common and would otherwise be captured as a tenant id |
 | `DOC_URL_CRED` | a credential in a URL query or fragment, when the value is opaque | the narrowed replacement for a `SUSPECT_KEY`/`SUSPECT_VALUE` port — see below |
 
-Scope, stated because it is easy to assume otherwise: the second scan's trees
-are exactly `docs/**/*.md` and `tests/**/*.py`. **This README is not itself
-scanned** — it is a `.md` outside `docs/`. The fixtures beside it are covered by
-the first scan, and this file is prose about them.
+Scope, stated because it is easy to assume otherwise, and because the previous
+version of this paragraph is now false: the second scan's trees are
+`docs/**/*.md`, `tests/**/*.py`, `tests/**/*.md` and root-level `*.md`
+(**non**-recursive at the root, so it cannot wander into `.claude/worktrees/`).
+**This README is scanned** — it used to be exempt for the accidental reason that
+it is a `.md` outside `docs/`, which also left `CLAUDE.md` and the root
+`README.md` outside. The point worth stating: the document that explains the
+guard is now covered by the guard, so an example written here carelessly fails
+the suite rather than being published. The fixtures beside it stay covered by
+the first scan.
 
 ### The deliberate asymmetry: same concern, two precisions
 
@@ -108,13 +116,19 @@ Inside a JSON fixture, **any** mention of `googleusercontent.com` is a leak. A
 proxy avatar URL is by construction some real person's, and no fixture has a
 reason to name that host at all, so the blunt rule costs nothing.
 
-In prose the host is a legitimate **subject**. Nine mentions sat in `docs/` and
-`tests/` on the day the prose rule was written — in rule tables, in quoted regex
-sources, in scrub notes — and seventeen sit there now, because documenting a
-rule means naming what it hunts. Porting the blunt form would have produced a
-nine-hit false-positive storm on the guard's first run, and the fix a reader
-reaches for at that point is to delete the rule. So `DOC_AVATAR` demands a real
-URL: scheme, host, path separator.
+In prose the host is a legitimate **subject** — in rule tables, in quoted regex
+sources, in scrub notes. The counts here are re-measured rather than inherited,
+because the pair written down first were both wrong. **4** mentions sat in the
+scanned trees on the day the prose rule was written, all four of them in
+`docs/`. **14** sit there now: 4 in `docs/`, 6 in `test_fixtures_scrubbed.py`,
+and 4 in this file — which the widened trees have just brought inside the guard
+— because documenting a rule means naming what it hunts. The figures this
+replaces, nine and seventeen, counted the bare
+token `googleusercontent`, which sweeps up regex-source spellings a blunt rule
+could never match, and so overstated the exact quantity the number exists to
+size. A blunt port would still have flagged every one of them on the guard's
+first run, and the fix a reader reaches for at that point is to delete the rule.
+So `DOC_AVATAR` demands a real URL: scheme, host, path separator.
 
 The same reasoning, weaker, applies to `DOC_PEM`'s `-----` armour, and it is
 worth stating precisely rather than by analogy: every place this repo discusses
@@ -150,26 +164,40 @@ comes with it, so nobody re-files it as a gap.
   classifies space ids as non-secret, and a guard that contradicts our own
   published classification would lose that argument, correctly. Anonymizing them
   in fixtures stays a convention — followed, never enforced.
-- **Email addresses, in `docs/` and `tests/`.** The `EMAIL`/`EXAMPLE_DOMAIN`
+- **Email addresses, in the scanned trees.** The `EMAIL`/`EXAMPLE_DOMAIN`
   rule is **deliberately not ported** out of `tests/fixtures/`, and the
   measurements are the reason rather than a shrug:
   - It would have caught **neither** incident. Incident 1's leaked address is
     the author's own — which the guard is *required* to tolerate, since it is in
     the authorship metadata of every commit. Incident 2 had no email in it at
     all.
-  - Of the **71** addresses in `docs/` + `tests/` today, 32 occurrences across
-    **7 distinct values** are not `example.*`. Two of those seven are spellings
-    of the author's own address (13 occurrences) and two are Google
-    service-account addresses (12) — all four mandatory tolerances. The **only**
-    remaining three are `someone@realcorp.io`, `alice.smith@partner.co.uk` and
-    `someone@example.com.realcorp.net`: the deliberately-fake bait values inside
-    this guard's own negative tests. **100% false positives, on values those
-    tests need to keep working.**
+  - Of the **81** addresses in the scanned trees today, **40** occurrences
+    across **8 distinct values** are not `example.*`. Two of those are spellings
+    of the author's own address (16 occurrences) and two are Google
+    service-account addresses (13) — four mandatory tolerances. Every one that
+    remains is a deliberately-fake bait value out of a test:
+    `someone@realcorp.io`, `alice.smith@partner.co.uk` and
+    `someone@example.com.realcorp.net` from this guard's own negative cases (9,
+    three of them the mentions in this very bullet), plus `a@b.test` from
+    `tests/test_log_redaction.py` (2, one of them here) — whose reserved `.test`
+    TLD is RFC 2606 as well, just not one `EXAMPLE_DOMAIN` recognises. **100%
+    false positives, on values those tests need to keep working.**
+  - These figures are re-measured, not carried forward. The ones printed here
+    before — 71 / 32 / 7 distinct, with 13 for the author — reproduce at the
+    point *before* `tests/test_log_redaction.py` merged into these trees, which
+    is what brought the eighth distinct value in; the widening then moved them
+    again. Method, so the next reader can reproduce rather than trust:
+    `EMAIL.findall` over every scanned file, then `EXAMPLE_DOMAIN.fullmatch` on
+    each result — the guard's own two regexes, no hand-filtering.
   - Any allowlist wide enough to pass those is wide enough to pass a real leak.
 - **`SUSPECT_KEY` / `SUSPECT_VALUE`, ported only in the narrowed URL form.** The
   fixture rule keys off a JSON path, and prose has none. A naive port scores
-  **39 hits in `docs/` + `tests/` today** (28 before this item was written) —
-  every one a false positive, mostly documentation of the rule itself.
+  **64 hits across the scanned trees today** — every one a false positive,
+  mostly documentation of the rule itself. Method, because the two figures
+  printed here before (39, and 28 "before this item") were taken by different
+  methods at different moments and neither reproduced afterwards: apply
+  `SUSPECT_VALUE` to every line of every scanned file and count the matches.
+  Expect it to climb — this bullet is one of the things it counts.
   `DOC_URL_CRED` replaces it with the shape that actually leaks: a credential in
   a URL query or fragment. The fragment half is not theoretical — an OAuth
   implicit-flow token arrives there, and `tests/test_log_redaction.py` redacts
@@ -192,13 +220,16 @@ independent clearances, either of which passes a value:
    the threshold would let a short secret hide behind its escaping.
 
 **Why no annotation-based exemption.** An `# allow` marker would have to be
-added to files this item does not own — `tests/test_log_redaction.py` is in
-PR #33 and unmerged, `tests/test_adapters.py` is CG-23's — so the guard has to
-tolerate those values *by design*, not by annotation. It does, and that is
-measured, not hoped: both files scan clean today. Given it must work without
-annotations, adding them anywhere would be a second mechanism doing the first
-one's job, and an exemption marker is precisely what a future scrub forgets to
-remove.
+added to files this item does not own — `tests/test_log_redaction.py` is
+CG-34's (PR #33, **merged** onto main during this cycle) and
+`tests/test_adapters.py` is CG-23's — so the guard has to tolerate those values
+*by design*, not by annotation. It does, and the merge upgraded the evidence
+rather than retiring the argument: `test_log_redaction.py` is now **inside the
+scanned trees**, so `test_docs_and_tests_carry_no_real_identity` re-proves the
+tolerance on every run instead of a side check having proved it once. Given the
+guard must work without annotations anyway, adding them anywhere would be a
+second mechanism doing the first one's job, and an exemption marker is precisely
+what a future scrub forgets to remove.
 
 **Where it fails, stated plainly:**
 
@@ -210,13 +241,26 @@ remove.
 - Conversely, a genuinely fake value that is long, mixed-case and marker-free
   **will be flagged** — the false-positive direction. The fix is to add a marker
   word, which is exactly why the marker vocabulary is generous.
-- One more false-positive shape, measured while writing the guard rather than
-  predicted: `DOC_TENANT_ASSIGN` fires on a **Python identifier ending in a
-  tenant key** followed by a separator and a quoted string — the rule cannot
-  tell a variable name from a JSON key. It fired twice on CG-26's own source,
-  once on a variable and once on the comment explaining the variable. Recorded
-  rather than regex'd away: renaming is cheaper than the precision that would
-  suppress it.
+- One false-positive shape was found by measurement rather than predicted, and
+  then **fixed**: `DOC_TENANT_ASSIGN` used to fire on a **Python identifier
+  ending in a tenant key** followed by a separator and a quoted string, because
+  the rule cannot tell a variable name from a JSON key. It fired twice on
+  CG-26's own source — once on a variable, once on the comment explaining the
+  variable — and firing twice on one change is the evidence that the rule was
+  too wide rather than the names unlucky. The `(?<!\w)` left boundary now
+  requires the key to *start* an identifier; measured across every scanned file,
+  not one existing finding moved.
+- The narrow blind spot that boundary leaves, stated rather than left to be
+  rediscovered: a **compound** identifier assignment — `tenantDomainId = "…"` —
+  is no longer matched at all. For the customer spelling that is mitigated by
+  `DOC_CUSTOMER`, which needs no lookbehind of its own because its
+  eleven-character literal prefix makes a suffix collision implausible. For a
+  bare `domainId` value it is genuinely uncovered, and that is the price of the
+  false-positive class above being gone.
+- `DOC_TENANT_TABLE` misses an **unbackticked** value cell. That is the same
+  trade in the other direction: requiring the backticks is what keeps the rule
+  off a prose cell sitting beside those two field names, and this repo always
+  backticks a literal in a table.
 
 **The convention that keeps all of this working: negative-case bait is composed
 at runtime, never inlined.** Every value the scan must reject is assembled from
@@ -270,9 +314,10 @@ that value **is** the finding — remove it and the fixture stops demonstrating
 why `action.id` is empty.
 
 `test_fixtures_scrubbed.py` enforces all of the above recursively on every file
-in this directory — **and, since CG-26, scans `docs/**/*.md` and
-`tests/**/*.py` as well, including its own source.** The widening is not
-tidiness: neither of this project's two PII incidents was in a fixture, so
+in this directory — **and, since CG-26, scans `docs/**/*.md`, `tests/**/*.py`,
+`tests/**/*.md` and root-level `*.md` as well, including its own source, this
+README and `CLAUDE.md`.** The widening is not tidiness: neither of this
+project's two PII incidents was in a fixture, so
 everything the first scan enforces was, for both of them, aimed at the wrong
 directory. None of it is a checklist item — it is a test, because the checklist
 version already failed once.
