@@ -42,10 +42,21 @@
 > of two**. §7 framed *widgets for input, one button to submit* as an add-ons
 > limitation; it is actually the better design on classic too.
 >
-> `chat-gateway-prod` is deliberately **not deleted** — see CG-20. It holds the
-> add-ons-runtime evidence behind the fixtures and this ADR. E1's own project
-> (`chat-gw-e1-20260729`) **was** deleted, so E1's findings now survive only in
-> docs and fixtures; CG-20 and CG-22 exist to make them stand alone.
+> **Every project that produced the add-ons-runtime evidence is now gone.**
+> `chat-gateway-prod` and E1's own project (`chat-gw-e1-20260729`) were both
+> **deleted** on 2026-07-30, leaving exactly one live project
+> (`chat-gateway-gw`). So none of the add-ons behaviour recorded below can be
+> re-observed by anybody, ever — §2's captures, the code-13 failures, and E1's
+> capability table survive **only** in this ADR and in the committed fixtures.
+> That makes CG-20 and CG-22 load-bearing rather than tidy, and it is why a
+> reader must not be told to go reproduce any of it.
+>
+> One consequence is worth stating as a closed question rather than an open one:
+> the `chat-api-push@system.gserviceaccount.com` publisher-grant question is
+> **permanently unresolvable.** Both candidate principals were bound in
+> `chat-gateway-prod`; that project no longer exists, so which one actually
+> delivered the first event can never be determined. Closed by circumstance, not
+> answered — do not carry it as outstanding work.
 
 ---
 

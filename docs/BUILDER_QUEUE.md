@@ -342,7 +342,17 @@ questions E1/E2 have now answered.
 
 ---
 
-### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  📋 queued · ⏸ merge gate
+### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  ⚠ DONE LIVE · needs reconciliation, not execution
+
+> **Status correction, 2026-07-30.** This row still reads as unstarted work
+> below; it is not. **The migration has been executed and live-verified** — see
+> ADR-0001's status banner, which records a real card through our real
+> `ChatApiAdapter` on `chat-gateway-gw` returning `action.id: 'approve'` and
+> `envelope_format: 'classic'`. `chat-gateway-prod` has since been **deleted**.
+> Nothing here is left to build: what remains is reconciling the docs to the
+> live state. Read the body below as the plan that was followed, and note that
+> the merge gate still applies to the reconciliation PR because it touches the
+> deploy/secret-handling path.
 
 | | |
 |---|---|
@@ -484,7 +494,7 @@ _(nothing)_
 
 ## Recently shipped
 
-### CG-13 · Publish `interaction_routing_target`; the portable card convention  ✅ shipped 2026-07-29 · PR-PLACEHOLDER
+### CG-13 · Publish `interaction_routing_target`; the portable card convention  ✅ shipped 2026-07-29 · [PR #12](https://github.com/mmackelprang/chat-gateway/pull/12)
 
 **ADR-0001 D3 — the item that keeps the bridge cheap to leave.** `GET
 /v1/identities` now returns `interaction.routing_target` (what a card puts in
