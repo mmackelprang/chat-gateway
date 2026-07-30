@@ -1,6 +1,34 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-36 shipped**
+**Last updated:** 2026-07-30 (Builder — **CG-42 shipped**
+([PR #37](https://github.com/mmackelprang/chat-gateway/pull/37)): two consumer docs
+stated `0s / 5s / 15s` as when the three callback attempts land in the running
+gateway. §7's *rule* was already right — *"an attempt fires on the first poll tick
+at or after its due time, never earlier"* — but the worked example beneath it read
+as a timetable, and it is **systematically optimistic in the exhaustion case**,
+which is the only case those sections describe. `_run` polls, *then* calls
+`process_due()`, *then* waits, so a poll cycle costs the attempt's own duration
+**plus** the interval; an unreachable host times out rather than refusing, so every
+attempt in that scenario is slow by definition.
+
+**Four measured rows replace one worked example, and every row was re-measured
+here** — including CG-31's two, because a number two documents got wrong is worth
+a second independent measurement rather than a citation. Through the real
+`CallbackForwarder` over real `httpx`: `0.3 / 3.3 / 10.4` free-running (the
+contract), `0 / 5 / 15` on the fake clock (where the old figure came from), and on
+a real `SubscriberLoop` thread at its real 5.0s interval `0.0 / 7.1 / 14.1`
+(CG-31's figure, reproduced) and `0.0 / 15.0 / 30.1` against a callback that hangs
+to the production 10s client timeout — **in-thread notice at 40.1s, against a
+documented 15**. That last row was a *prediction* in CG-42's own body; it is
+measured now. The rule is kept verbatim, `jobhunt.md` R7 links to §7 rather than
+restating it, `BACKOFF_S`/retry logic/poll interval are untouched, suite unchanged
+at **190**, and no ⚠ flag was cleared, added or reworded. **Two findings reported
+not fixed** — *"retries span ~10s"* in `integration-guide.md`'s interaction
+rules-of-the-road paragraph (CG-36's file, and **not** the paragraph CG-36 just
+corrected) and a real email as an example value in `jobhunt.md`'s registry snippet
+(CG-26's scrub).
+
+Previously: **CG-36 shipped**
 ([PR #36](https://github.com/mmackelprang/chat-gateway/pull/36)): one clause and a
 link, in one paragraph of `docs/integration-guide.md`. The `/v1/notify` summary
 stated the collapsed dedupe count unconditionally; CG-32 made it degrade on an
@@ -319,12 +347,12 @@ outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-26** (CG-7, CG-4, CG-5, CG-24,
 CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23, CG-19,
-CG-32, CG-21, CG-34, CG-31, CG-29 and CG-36 have since shipped). **CG-33** was filed
+CG-32, CG-21, CG-34, CG-31, CG-29, CG-36 and CG-42 have since shipped). **CG-33** was filed
 by Builder from CG-23's pre-merge review, **CG-35** by Builder from CG-19,
 **CG-36** by Builder from CG-32's docs pass, **CG-37** by Builder from
 CG-21's inventory, and **CG-42** by Builder from CG-31's UAT; all five were
-appended last, unprioritized — the user sets priority. **CG-36 has since shipped**;
-the other four remain queued. CG-14 is **✖ closed as obsolete**
+appended last, unprioritized — the user sets priority. **CG-36 and CG-42 have
+since shipped**; CG-33, CG-35 and CG-37 remain queued. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-35 carries a **merge gate** — pause and report rather than
 auto-merging; CG-17 and CG-18 stay deferred and must not be executed.
@@ -610,7 +638,7 @@ none. The guard is the control that matters, and it runs on what lands.
 
 ---
 
-### CG-42 · `0s / 5s / 15s` is stated as a timetable in two docs; a slow attempt stretches it  🔨 in flight
+### CG-42 · `0s / 5s / 15s` is stated as a timetable in two docs; a slow attempt stretches it  ✅ shipped 2026-07-30 · [PR #37](https://github.com/mmackelprang/chat-gateway/pull/37)
 
 | | |
 |---|---|
@@ -618,6 +646,54 @@ none. The guard is the control that matters, and it runs on what lands.
 | **Depends on** | nothing (CG-31 shipped the `src/` half and already carries the caveat) |
 | **Touches** | `docs/consumers/jobhunt-handoff.md` §7, `docs/consumers/jobhunt.md` R7 |
 | **Priority** | **appended last, unprioritized.** The user sets order. |
+
+**Shipped as a four-row measured table replacing one worked example.** Every row
+was re-measured first-hand in this PR through the real `CallbackForwarder` over
+real `httpx` — including the two CG-31 had already taken, because a number two
+documents got wrong is worth a second independent measurement rather than a
+citation. The bottom two ran on a real `SubscriberLoop` thread at its real 5.0s
+`interval_seconds`:
+
+| How the callback fails | attempts land at |
+|---|---|
+| fails faster than the next gap, `process_due()` called freely | 0.3 / 3.3 / 10.4 → **0s / 3s / 10s**, the contract |
+| duration cannot count — exact 5s ticks of a fake clock | **0s / 5s / 15s** — where the old figure came from |
+| refuses fast — `ConnectError` to a closed port (~2s here) | **0.0 / 7.1 / 14.1**, notice at 16.2s — CG-31's figure, reproduced |
+| hangs to the forwarder's production 10s client timeout | **0.0 / 15.0 / 30.1**, notice at **40.1s** |
+
+**The bottom row is the one the row was filed for, and it was a prediction until
+now.** CG-42's body said a hang "would push it far further"; measured, it is
+**40 seconds** of silence for the person who tapped, against a documented 15.
+That is why the correction is stated as *`0s / 5s / 15s` is systematically
+optimistic in the exhaustion case* rather than as a numeric fix — exhaustion is
+the only route to the in-thread notice, and an unreachable host times out rather
+than refusing, so every attempt in the one scenario these sections describe is
+slow by definition.
+
+**The rule was already right and is kept verbatim** — *"an attempt fires on the
+first poll tick at or after its due time, never earlier"* predicts all four rows.
+What changed is the illustration beneath it. `jobhunt.md` R7 links to §7 rather
+than restating it, and §4's existing 10s-client-timeout warning now points there
+too. `BACKOFF_S`, the retry logic and the poll interval are untouched; suite
+unchanged at **190**; no ⚠ flag cleared, added or reworded, and `CLAUDE.md`'s
+verification ledger is linked-not-restated (nothing here was measured against
+Google — it is loop arithmetic against a local port, and the docs say so).
+
+**Two findings, neither fixed here — both outside this row's file boundary while
+three Builders ran concurrently:**
+- `docs/integration-guide.md`, the interaction rules-of-the-road paragraph —
+  *"if your callback is down, retries span ~10s"* is the same defect one audience
+  up: `~10s` is the contract, not what a user waits. **CG-36's file**, and a
+  different paragraph from the `/v1/notify` one CG-36 shipped; reported, not
+  touched. (Line number deliberately omitted — it moved from 109 to 114 under
+  CG-36's merge while this PR was open.)
+- `docs/consumers/jobhunt.md`'s registry snippet carries a real email address as
+  an example value (`allowed_users`). In this row's own file, but **CG-26's docs
+  scrub** — left alone rather than conflict with it.
+- Checked and **correct, no row needed**: `docs/consumers/aitrader.md` §6 reads
+  the *dispatcher's* `BACKOFF_S = (0, 30, 120, 600, 3600)` as gaps and sums them
+  to ~1h13m. Same constant name, different constant, and it does not repeat this
+  mistake — the 1.0s dispatcher wake makes the rounding negligible at that scale.
 
 Both docs say the three callback attempts land at **0s / 5s / 15s** in the
 running gateway. CG-31 reproduced that — but only with a **fake clock**, calling
