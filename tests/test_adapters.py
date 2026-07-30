@@ -122,6 +122,154 @@ def test_send_text_wraps_transport_failure_as_chat_api_error():
     assert isinstance(exc.value.__cause__, httpx.ConnectError)
 
 
+# --- CG-23: no response body in an adapter error, ever ----------------------
+#
+# NOTE: these drive MockTransport, not Google. They clear nothing — the non-200
+# branches of both adapters remain ⚠ LIVE-UNVERIFIED (no Google error response
+# has ever been observed). What they pin is what the branch SAYS, which is a
+# property of our code and testable offline.
+
+
+def test_webhook_error_names_the_identity_and_never_the_url(monkeypatch):
+    """Hard rule #2, and the highest-severity instance of it in the repo.
+
+    A webhook URL embeds `key` AND `token`: it IS a bearer credential for
+    posting as that identity, and there is no rotate-in-place — recovery is
+    delete-and-recreate the webhook by hand.
+
+    The handler below returns an error body that QUOTES THE REQUEST URL, which
+    is exactly the case rule #2 is written for. Whether Google does this today
+    is beside the point; the gateway does not control the body, so the rule is
+    written so the answer never has to be known. Before CG-23 this branch
+    interpolated `resp.text[:200]` and both halves of the credential landed in
+    the exception string.
+    """
+    monkeypatch.setenv(
+        "HOOK",
+        "https://chat.googleapis.com/v1/spaces/A/messages"
+        "?key=SECRETKEYVALUE&token=SECRETTOKENVALUE",
+    )
+    ident = Identity(name="pm", display="PM", webhook_url_env="HOOK")
+
+    def echoes_the_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text=f"PERMISSION_DENIED on {request.url}")
+
+    with pytest.raises(WebhookDeliveryError) as exc:
+        WebhookAdapter(mock_client(echoes_the_request)).send(ident, MSG)
+
+    msg = str(exc.value)
+    # The credential first, deliberately: these are the assertions whose failure
+    # message must name the leak. Ordered ahead of the formatting checks so a
+    # future regression reports "the token is in the string", not "the phrase
+    # is missing" — the pre-CG-23 code failed BOTH, and only one of them matters.
+    assert "SECRETKEYVALUE" not in msg
+    assert "SECRETTOKENVALUE" not in msg
+    # and no URL at all — not merely "no secrets". A future webhook URL shape
+    # could carry the credential in a segment this test does not know to name.
+    assert "chat.googleapis.com" not in msg
+    assert "https://" not in msg
+    # no body, in any quantity
+    assert "PERMISSION_DENIED" not in msg
+    # Exact equality rather than a length bound: it pins the whole message, so
+    # ANY appended body fails it, including one this test does not know to name.
+    assert msg == "webhook POST failed for pm: HTTP 403 Forbidden"
+
+
+def test_chat_api_send_error_carries_status_not_response_body():
+    """Same class, lower severity: this URL embeds a space id, not a credential.
+
+    Fixed here anyway because the argument for dropping the body does not
+    depend on the URL being secret — we do not control the body either way —
+    and because `send_text` in the same file already did it right, so the file
+    contradicted itself with the lax half on the sending path.
+    """
+    ident = Identity(name="pm", display="PM", mode="app", space="spaces/AAA")
+
+    def echoes_the_request(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text=f"PERMISSION_DENIED on {request.url}")
+
+    adapter = ChatApiAdapter(lambda: "tok-123", mock_client(echoes_the_request))
+    with pytest.raises(ChatApiError) as exc:
+        adapter.send(ident, MSG)
+
+    msg = str(exc.value)
+    assert "PERMISSION_DENIED" not in msg
+    assert "spaces/AAA" not in msg
+    assert "chat.googleapis.com" not in msg
+    assert msg == "Chat API send failed for pm: HTTP 403 Forbidden"
+
+
+def test_reason_phrase_is_looked_up_locally_not_read_off_the_wire(monkeypatch):
+    """`resp.reason_phrase` is NOT a fixed string — httpx returns the WIRE value.
+
+    `httpx.Response.reason_phrase` prefers `extensions["reason_phrase"]`, which
+    httpcore populates from the HTTP/1.1 status line, and falls back to the
+    local table only when the server sent none. So interpolating it would have
+    re-admitted server-controlled bytes into the error message — in the very
+    item whose point is that we do not trust the response.
+
+    Both adapters therefore call `httpx.codes.get_reason_phrase(status)`, a
+    pure local enum lookup. This test proves the difference is real by handing
+    back a response whose wire phrase is hostile.
+    """
+    smuggled = "Forbidden key=SECRETKEYVALUE"
+
+    def hostile_status_line(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403, text="denied",
+            extensions={"reason_phrase": smuggled.encode()},
+        )
+
+    # the property this code deliberately does NOT use would have leaked it
+    assert httpx.Response(
+        403, extensions={"reason_phrase": smuggled.encode()}
+    ).reason_phrase == smuggled
+
+    monkeypatch.setenv("HOOK", "https://chat.googleapis.com/v1/spaces/A/messages?key=SECRETKEYVALUE")
+    ident = Identity(name="pm", display="PM", webhook_url_env="HOOK")
+    with pytest.raises(WebhookDeliveryError) as exc:
+        WebhookAdapter(mock_client(hostile_status_line)).send(ident, MSG)
+    assert "SECRETKEYVALUE" not in str(exc.value)
+    assert str(exc.value).endswith("HTTP 403 Forbidden")
+
+    app_ident = Identity(name="pm", display="PM", mode="app", space="spaces/AAA")
+    with pytest.raises(ChatApiError) as exc:
+        ChatApiAdapter(lambda: "t", mock_client(hostile_status_line)).send(app_ident, MSG)
+    assert "SECRETKEYVALUE" not in str(exc.value)
+    assert str(exc.value).endswith("HTTP 403 Forbidden")
+
+
+def test_send_text_failure_strings_are_unchanged_by_cg_23():
+    """CG-23 did NOT touch `send_text` — this is the test that says so.
+
+    CG-25 made this method's two branches deliberately byte-symmetric, and
+    those exact strings are load-bearing for jobhunt's R7 delivery log (the
+    composed line reads `in-thread notice also failed: in-thread reply
+    failed: ConnectError`). CG-23 changed `send()` and `webhook.send` to append
+    a reason phrase; this method deliberately did NOT get one, so it still says
+    "HTTP 403", not "HTTP 403 Forbidden".
+
+    That residual asymmetry inside one file is a wart, and pinning it is how it
+    stays a deliberate one rather than drifting silently. The non-200 branch had
+    no format coverage at all before this.
+    """
+    def denied(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text=f"PERMISSION_DENIED on {request.url}")
+
+    adapter = ChatApiAdapter(lambda: "tok", mock_client(denied))
+    with pytest.raises(ChatApiError) as exc:
+        adapter.send_text("spaces/AAA", "spaces/AAA/threads/T", "refused")
+    assert str(exc.value) == "in-thread reply failed: HTTP 403"
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    with pytest.raises(ChatApiError) as exc:
+        ChatApiAdapter(lambda: "tok", mock_client(unreachable)).send_text(
+            "spaces/AAA", "spaces/AAA/threads/T", "refused")
+    assert str(exc.value) == "in-thread reply failed: ConnectError"
+
+
 CHAT_EVENT = {
     "type": "MESSAGE",
     "space": {"name": "spaces/AAA"},
