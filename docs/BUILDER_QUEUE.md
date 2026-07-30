@@ -22,7 +22,10 @@ crowded out.** That document still described **`chat-gateway-prod`** — deleted
 present-tense provisioning box, the console's topic path and the key filename to
 hand back. A reader following it would have created a second project named after
 a deleted one and wired credentials by a dead key. Rewritten as dated history,
-per project, with the live project named.
+per project, with the live project named. **CG-31 filed** from this item's
+pre-merge review — `forwarder.py`'s docstring still names the retry *gaps* as if
+they were attempt times, which this docs-only PR corrected everywhere except
+`src/`.
 
 Previously: **CG-27 and CG-28 shipped in parallel**,
 one Builder each, in separate worktrees.
@@ -163,8 +166,9 @@ outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24,
 CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28 and CG-11+CG-20 have since
-shipped). **CG-29** was filed by Builder from CG-25's UAT and
-**CG-30** by Builder from CG-27's verification pass; both are
+shipped). **CG-29** was filed by Builder from CG-25's UAT,
+**CG-30** by Builder from CG-27's verification pass, and **CG-31** by Builder
+from CG-11+CG-20's pre-merge review; all three are
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
@@ -260,7 +264,7 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 </details>
 
 > **Markdown fix, 2026-07-30.** The `</details>` above used to sit ~350 lines
-> lower, after CG-23 — so **six live queued rows** (CG-12, CG-11, CG-20, CG-21,
+> lower, after CG-23 — so **seven live queued rows** (CG-12, CG-11, CG-20, CG-21,
 > CG-22+CG-9, CG-19, CG-23) rendered *collapsed inside CG-14's "kept for the
 > record" fold*, under a summary describing a closed item. On GitHub the queue
 > appeared to contain nothing but a closed row, CG-25 and CG-26, which
@@ -642,6 +646,41 @@ which is the plausible long-body case.
 
 ---
 
+### CG-31 · `forwarder.py`'s docstring names the retry **gaps** as if they were attempt times  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by Builder 2026-07-30 from **CG-11+CG-20's** pre-merge review — **measured, not reasoned** |
+| **Depends on** | nothing |
+| **Touches** | `src/chat_gateway/forwarder.py` — one docstring line |
+| **Priority** | **appended last, unprioritized.** The user sets order. |
+
+`src/chat_gateway/forwarder.py:9` says retries are *"short and latency-shaped
+(0s/3s/7s — a human just tapped a button)"*. `BACKOFF_S = (0, 3, 7)`
+(`forwarder.py:28`) is a sequence of **gaps**, not attempt times, so the three
+attempts actually land at **0s / 3s / 10s** — and at **0s / 5s / 15s** in the
+running gateway, because `process_due()` only runs when a poll comes round and
+`SubscriberLoop`'s default `interval_seconds` is `5.0`
+(`adapters/pubsub.py:695`).
+
+**The wrong reading is the natural one.** *"latency-shaped"* invites the docstring
+to be read as a schedule of *when* attempts land — which is precisely the thing
+it does not say. The intent (retries are cheap and fast because a human is
+waiting) is right and should survive the fix; only the numbers' meaning needs to
+be unambiguous.
+
+**Measured, not derived from the constant.** The 0/5/15 figure came from driving
+the real `CallbackForwarder` with a fake clock against a genuinely closed port —
+not from reading `BACKOFF_S` and adding it up.
+
+The identical text in `docs/consumers/jobhunt.md` R7 and
+`docs/consumers/jobhunt-handoff.md` **was already corrected** by CG-11+CG-20,
+which was a docs-only PR and could not touch `src/`. This row is the remaining
+half: the docstring is now the only place in the repo that still states it the
+misleading way.
+
+---
+
 ## Experiments
 
 CG-15 and CG-16 **ran on 2026-07-29** and are recorded below with their results.
@@ -740,6 +779,8 @@ separately, §7 with a banner recording why it generalised from add-ons evidence
 `docs/consumers/jobhunt-handoff.md`'s per-location table was updated to record
 the fixes rather than contradict them. Also carried forward: jobhunt R7's
 `0s/3s/7s` retry text, which named the **gaps** as if they were attempt times.
+The same sentence lives in `src/chat_gateway/forwarder.py:9`'s docstring, which
+a docs-only PR cannot touch — **filed as CG-31** rather than left implied.
 
 **The `google-cloud-setup.md` half was the more urgent one and did not get
 crowded out.** That document named `chat-gateway-prod` — deleted 2026-07-30 — in
@@ -754,9 +795,13 @@ silently becomes a claim about whatever project the reader is holding.
 
 **E1/E2 recorded where they are load-bearing.** The add-on toggle is
 **create-time only** (E2), which is why D7's parallel-project path was the *only*
-available one rather than merely the prudent one — written up beside the
-Marketplace-SDK correction, because together the two traps are the whole story of
-how this project ended up on the wrong runtime. ADR §10 gained a six-row
+available one rather than merely the prudent one — written up as the explicit
+**twin** of the Marketplace-SDK correction, each pointing at the other by section
+name, because together the two traps are the whole story of how this project
+ended up on the wrong runtime and what leaving it cost. (They sit in different
+sections of `google-cloud-setup.md` and always did; the first draft *asserted*
+adjacency instead of building the cross-reference, which the review caught.)
+ADR §10 gained a six-row
 add-ons-vs-classic capability comparison, kept because every project that
 produced the add-ons evidence is deleted and this table plus the fixtures are the
 only surviving record. **Two of its six rows are explicitly not first-hand**
@@ -769,10 +814,13 @@ questions are marked answered; §12's heading is kept for referential stability.
 registry state. The step-6 note that the classic **"Agent Comms"** app is in the
 **JobHunt space only** is labelled a **console observation dated 2026-07-30**
 that this repository cannot prove — no source file, registry entry or test
-records which spaces an app has been added to.
+records which spaces an app has been added to. The note names the near-miss
+explicitly: the registry's per-identity `space` is a **posting target**, not an
+installation record, so a reader who greps for `space` does not conclude the
+sentence is wrong.
 
 **Flags: none cleared, none added, none reworded**, and `CLAUDE.md`'s
-verification ledger is untouched and linked, never restated. **Filed for CG-19:**
+verification ledger is untouched and not restated. **Filed for CG-19:**
 a fourth copy of the dead key filename lives at `docker-compose.yml:23`, outside
 `iac/` — see that row.
 

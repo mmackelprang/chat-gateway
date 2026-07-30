@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 2026-07-29 |
-| **Status** | **Superseded by its own outcome** — see the banner below. All five §12 questions are answered (2026-07-30); none is open. |
+| **Status** | **Superseded by its own outcome** — see the banner below. All five §12 questions are answered (recorded 2026-07-30); none is open. |
 | **Decides** | N1 … N4 from [the live-verification spec](../../superpowers/specs/2026-07-29-live-verification-followups-design.md) §2 |
 | **Unblocks** | `CG-10` (empty `action.id`) — **shipped 2026-07-29**; `CG-11` (selection-widget wording) — **shipped 2026-07-30**, and it corrected §7 rather than adopting it |
 | **Hard rules engaged** | #1 (transport, never schemas), #2 (secrets), #3 (adapters + flag discipline), #5 (honest `/healthz`), #6 (inbound opt-in) |
@@ -343,7 +343,7 @@ installability comes from the **Chat API Visibility setting**, and on an
 | ✅ | **Google's own current Pub/Sub quickstart makes clearing the add-on box step one** (*"Clear Build this Chat app as a Google Workspace add-on… click Disable"*, <https://developers.google.com/workspace/chat/quickstart/pub-sub>, updated 2026-05-06). The officially documented way to build exactly what we are building is classic, not add-ons. |
 | ✅ | **Classic is not deprecated.** A full grep of the Chat release notes for `deprecat\|sunset\|turndown\|no longer` finds exactly one deprecation in the product's history — Cards v1, 2022. Two independent passes, same result. Google still presents both frameworks as a live choice. |
 | ✅ | Pub/Sub remains a documented classic connection setting (<https://developers.google.com/workspace/chat/receive-respond-interactions>, 2026-04-20). |
-| ✅ | Action identity becomes native — `action.function` is a function *name* again, unconsumed — and `onChangeAction` plausibly returns, removing §7's two-tap UX cost. |
+| ✅ | Action identity becomes native — `action.function` is a function *name* again, unconsumed — and `onChangeAction` **does return**: first-hand on classic (E1, 2026-07-29, and again in a live capture 2026-07-30 — §10.0), including on a card carrying **no button at all**. §7's two-tap UX cost is removed, not merely likely to be. This row read *"plausibly returns"* until the experiments ran. |
 | ✅ | **Q2 is SETTLED — experiment E1, 2026-07-29.** Classic Pub/Sub apps **do** receive `CARD_CLICKED`: it arrived natively in a throwaway project, with `action.id` populated (`'approve'`) and `onChangeAction` firing. This row previously read *"Q2 is still unverified… the load-bearing assumption of the whole option"*, and it was — that classic Pub/Sub apps receive card clicks was an inference both research passes reached and neither could cite. The indirect evidence read correctly: the classic quickstart's own limitations (*"Can't use dialogs"*, *"Can't update individual cards with a synchronous response. Instead, update the entire message by calling the `patch` method"*) only make sense if clicks arrive. |
 | ❌ | **Reversibility is SETTLED — experiment E2, 2026-07-29 — and the answer is NO.** The *"Build this Chat app as a Google Workspace add-on"* toggle is **create-time only**: it cannot be cleared on an existing app. This row previously called reversibility *"contradictory"* — Google's explicit clear-and-confirm flow in two live quickstarts versus a third-party vendor doc warning *"This setting cannot be disabled once saved… you must create a new Google Cloud Project"* (CloudM, 2026-03-16). The quickstarts describe a **never-saved** state on a fresh app; CloudM described ours, and CloudM was right. Consequence: escaping add-ons needs a **new Chat app**, and Chat app config is per-project, so it needs a **new GCP project**. D7's parallel-project path was the **only** available one, not merely the prudent one. |
 | ⚠ | **Visibility scale limit:** *"Up to five individuals, or one or more Google Groups"*, and dynamic groups are unsupported. Ample for a single-operator homelab; a constraint to remember if the gateway ever fronts a wider audience. |
@@ -872,7 +872,7 @@ Revisit this ADR when **any** of these fires:
 
 > ### ⚠ ALL FIVE ARE ANSWERED — none of this is outstanding (updated 2026-07-30)
 >
-> This section's title is kept for referential stability (D2, §14 and the queue
+> This section's title is kept for referential stability (D2, D6 and the queue
 > all cite "§12"), but nothing below awaits a user. The decisions are recorded in
 > `docs/BUILDER_QUEUE.md`'s decisions table, which is authoritative if these ever
 > disagree.
@@ -914,22 +914,46 @@ Revisit this ADR when **any** of these fires:
 
 Recorded plainly, because an unrecorded gap becomes a silent assumption:
 
+> **Two of these gaps have since been CLOSED by experiment — E1 and E2, both
+> 2026-07-29 — and are rewritten below rather than deleted.** They stayed in
+> their original wording until 2026-07-30, which meant the one section a reader
+> consults for *what is still open* was handing back the pre-experiment answer
+> while §5, §10.0, §12 and the status banner all said otherwise. The rest of
+> this list still stands.
+
 - **Topic-as-function is undocumented.** Not contradicted — *absent*. Two
   research passes across ~50 pages, both changelogs, two sample repos and
   multiple search engines found nothing. That is strong but not proof of absence;
   the sitemap crawl was not exhaustive.
-- **Classic Pub/Sub CARD_CLICKED delivery is inferred, never cited** (E1). The
-  indirect evidence is good and two passes reached it independently; that neither
-  could cite it is itself informative — probably real, genuinely undocumented.
+- **Classic Pub/Sub CARD_CLICKED delivery — SETTLED, first-hand, 2026-07-29**
+  (E1). This bullet previously read *"inferred, never cited… the indirect
+  evidence is good and two passes reached it independently; that neither could
+  cite it is itself informative — probably real, genuinely undocumented."* It is
+  now observed, not inferred: a real card click arrived natively in a throwaway
+  classic project with `action.id: 'approve'`, and it has since been re-observed
+  on the live `chat-gateway-gw` (§5 option D, §10.0). **The bullet's own
+  observation held up** — "probably real, genuinely undocumented" was the right
+  read of the silence. Neither research pass could cite it because Google does
+  not document it, not because the inference was weak; the behaviour and its
+  absence from the documentation are independent facts, which is the same pairing
+  §2.3 found from the other direction.
 - **Slash commands over Pub/Sub are unobserved here** (E3). Delivery is
   documented in prose but contradicted by the commands page, and the two are
   unreconciled anywhere. The command-id field is verified in the field
   reference; the argument-text field is expected, not confirmed. No expanded
   `appCommandPayload` example exists in Google's docs at all.
-- **Add-on toggle reversibility is contradictory** (E2) — Google's quickstarts
-  versus one third-party vendor doc, with no Google statement covering the
-  post-deployment case that is actually ours. D7 routes around it rather than
-  resolving it.
+- **Add-on toggle reversibility — SETTLED, and the answer is NO** (E2,
+  2026-07-29). This bullet previously read *"contradictory — Google's
+  quickstarts versus one third-party vendor doc, with no Google statement
+  covering the post-deployment case that is actually ours. D7 routes around it
+  rather than resolving it."* D7 did route around it, and that was the right
+  call; the contradiction is now resolved rather than merely avoided. The toggle
+  is **create-time only** — it cannot be cleared once the app has been saved. Of
+  the two contradicting sources it was the **third-party vendor doc (CloudM) that
+  was right**: Google's quickstarts describe a never-saved state on a fresh app,
+  which is a different case from ours. Escaping add-ons therefore needs a new
+  Chat app and, because Chat app config is per-project, a new GCP project — see
+  §5 option D.
 - **The StackOverflow corroborations in §2.7 were not read directly** — the
   research fetch was blocked. Leads, not citations.
 - **Research coverage was ~50 pages plus multi-engine search across two passes,
@@ -951,22 +975,36 @@ Recorded plainly, because an unrecorded gap becomes a silent assumption:
   §4.5 — the `__action_method_name__` prediction this ADR **supersedes**, and
   DEC-3, whose reasoning D2 follows deliberately.
 - `docs/consumers/jobhunt.md` — R3 (`action.id` semantics), R6 (structured
-  reasons); both need the §7 restatement.
-- `docs/integration-guide.md` — the inbound example at line 87 shows
-  `"action":{"id":"verdict",…}`, which is unreachable under the current runtime
-  without D2. Needs correcting alongside the card convention (D3).
-- `docs/google-cloud-setup.md` — **contains a factual error this ADR corrects.**
-  The note under step 7 (*"The app will not appear under ⚙ → Apps &
-  integrations → Add apps until the Google Workspace Marketplace SDK … is enabled
-  and the app is published"*) is contradicted by Google's own documentation:
-  installability comes from Chat API **Visibility**, and the Marketplace SDK's
-  settings are explicitly *ignored* for Chat (§5, option D). That error is why we
-  are on the add-ons runtime at all. It needs correcting whether or not the
-  migration happens, so a future reader does not repeat the choice.
-  Step 5 would additionally change under option D.
+  reasons). **Both restated — CG-11, 2026-07-30.** R6 carried §7's original,
+  unscoped *"a selection widget is not an interaction trigger"*; §7 itself was
+  corrected in the same item, so what R6 now restates is the runtime-scoped
+  version rather than the add-ons-derived one.
+- `docs/integration-guide.md` — the inbound example at line 87 showed
+  `"action":{"id":"verdict",…}`, unreachable under the add-ons runtime without
+  D2. **Corrected — CG-13, 2026-07-29**, alongside the card convention (D3),
+  which shipped in the same item.
+- `docs/google-cloud-setup.md` — **contained a factual error this ADR corrects;
+  both halves are now fixed.** The note under step 7 (*"The app will not appear
+  under ⚙ → Apps & integrations → Add apps until the Google Workspace
+  Marketplace SDK … is enabled and the app is published"*) is contradicted by
+  Google's own documentation: installability comes from Chat API **Visibility**,
+  and the Marketplace SDK's settings are explicitly *ignored* for Chat (§5,
+  option D). That error is why we were on the add-ons runtime at all — so it
+  needed correcting whether or not the migration happened, and it was:
+  **CG-6, 2026-07-29**, kept in place as a `⚠ CORRECTED` block rather than
+  quietly deleted. Step 5 changed under option D as predicted here —
+  **CG-20, 2026-07-30** — which also added the create-time-only toggle trap
+  beside it (E2).
 
-**Queue impact (Planner's call, not written here):** CG-10 is unblocked by D2 +
-D4; CG-11 is unblocked by §7's wording. Newly implied and unqueued: D3
+**Queue impact — all of it is now resolved; this paragraph is kept as the record
+of what was implied at the time.** It read *"Planner's call, not written
+here"* and listed the following as open. CG-10 (unblocked by D2 + D4) **shipped
+2026-07-29**; CG-11 (unblocked by §7's wording) **shipped 2026-07-30**, and it
+corrected §7 rather than adopting it. Of the four then-unqueued implications: D3
 (`interaction_routing_target` on `/v1/identities` + the card convention in the
-integration guide), §8's interaction dead-man, the E1–E4 experiment items, and
-the `google-cloud-setup.md` correction above.
+integration guide) **shipped as CG-13**; §8's interaction dead-man was queued as
+CG-14 and **closed as obsolete without being built** (E1 removed its premise);
+E1 and E2 **ran** as CG-15 / CG-16 while E3 and E4 are **deferred, do-not-run**
+as CG-17 / CG-18; and the `google-cloud-setup.md` correction shipped in two
+parts, **CG-6** (the Marketplace error) and **CG-20** (step 5, the deleted
+project, and the toggle trap).

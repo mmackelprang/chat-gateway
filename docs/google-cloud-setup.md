@@ -45,8 +45,8 @@ gcloud config set project chat-gateway-gw
 Chat API and Pub/Sub at this volume sit in the free tier. Billing turned out
 **not** to be required: `chat.googleapis.com` and `pubsub.googleapis.com` both
 enabled with `billingEnabled: false` — observed 2026-07-28 on
-`chat-gateway-prod`, and again on `chat-gateway-gw` when the setup script ran
-clean there on 2026-07-29. That is the result for those two projects, not a
+`chat-gateway-prod` (**deleted 2026-07-30**), and again on `chat-gateway-gw`
+when the setup script ran clean there on 2026-07-29. That is the result for those two projects, not a
 guarantee — if an `enable` call is rejected for billing, link a billing account
 and retry.
 
@@ -174,9 +174,11 @@ gcloud pubsub topics add-iam-policy-binding <TOPIC> \
 
 ### 5. Chat app configuration — console only
 Console → **APIs & Services → Google Chat API → Configuration**:
-- **FIRST, and it cannot be undone — clear *"Build this Chat app as a Google
-  Workspace add-on"*** → confirm **Disable**. Read the callout below **before**
-  you save anything on this page.
+- **FIRST — clear *"Build this Chat app as a Google Workspace add-on"*** →
+  confirm **Disable**. Do this **before** the first Save: clearing it is fine and
+  reversible right up until you save, but **the choice you save is permanent**
+  — a saved add-on app can never be turned back into a classic one. Read the
+  callout below **before** you save anything on this page.
 - **App name:** `Agent Comms` (or your pick — this is the tier-2 sender
   identity users see), avatar URL, description.
 - **Interactive features:** enable; check *Receive 1:1 messages* and *Join
@@ -191,12 +193,17 @@ Console → **APIs & Services → Google Chat API → Configuration**:
 > ### ⚠ The add-on toggle is CREATE-TIME ONLY — the second trap this project paid for
 >
 > **Answered by experiment E2, 2026-07-29, first-hand.** *"Build this Chat app as
-> a Google Workspace add-on"* **cannot be cleared once the app exists.**
-> Add-on → classic is not a toggle you can flip back.
+> a Google Workspace add-on"* **cannot be cleared once the app has been saved.**
+> Before the first Save it is an ordinary checkbox; after it, add-on → classic is
+> not a toggle you can flip back.
 >
-> The consequence is expensive, which is why this note sits beside the
-> Marketplace-SDK correction below rather than in an appendix: escaping the
-> add-ons runtime requires a **new Chat app**, and Chat app configuration is
+> **This is the twin of the Marketplace-SDK correction under *"Also easy to miss
+> in steps 5–7"* further down** — that one explains why this project chose the
+> add-ons runtime, this one explains why the choice could not be undone. Read
+> both or neither; separately they each look like a footnote.
+>
+> The consequence is expensive: escaping the add-ons runtime requires a **new
+> Chat app**, and Chat app configuration is
 > **per-project**, so it requires a **new GCP project**. ADR-0001 D7's
 > parallel-project-and-cut-over path was therefore the *only* available path, not
 > merely the prudent one — and that is exactly what happened here:
@@ -224,7 +231,10 @@ For each project/app that gets a space: create the space in Chat, then
 > named **"Agent Comms"** on `chat-gateway-gw`, and it has been added to the
 > **JobHunt space only**. That is a fact about the Google Chat console and is
 > readable nowhere in this repo: no source file, no registry entry and no test
-> records which spaces an app has been added to. Treat it as a snapshot that goes
+> records which spaces an app has been added to. (The registry does carry a
+> `space` per identity — but that is a *posting target*, where the gateway sends;
+> it is not a record of which spaces the Chat app has been **added to**, and the
+> two can disagree in either direction.) Treat it as a snapshot that goes
 > stale the moment somebody adds the app to a second space — re-check the
 > console, not this line.
 
@@ -270,11 +280,21 @@ avatar URL → copy the webhook URL.
   > — <https://developers.google.com/workspace/chat/test-interactive-features>
 
   This matters beyond a doc nit: the false prerequisite is **why this project
-  is on the Workspace Add-ons runtime at all**, and that runtime is the reason
-  card clicks need the undocumented topic-as-function routing pattern. See
+  ended up on the Workspace Add-ons runtime at all**, and that runtime is the
+  reason card clicks needed the undocumented topic-as-function routing pattern.
+  (Past tense deliberately: production has been **classic** since 2026-07-29 —
+  see the envelope bullet below.) See
   [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) §5
   option D and §14. Do not reinstate the claim; if you are choosing a runtime
   for a new project, read that ADR first.
+
+  **This is the first of two traps, and the second is up in step 5.** This one
+  put the project on the add-ons runtime; the **create-time-only add-on toggle**
+  (E2 — *"⚠ The add-on toggle is CREATE-TIME ONLY"*, in step 5 above) is why it
+  could not simply be switched back, and why the escape cost a whole new GCP
+  project (`chat-gateway-prod` → `chat-gateway-gw`). Together they are the entire
+  story of how this project ended up on the wrong runtime and what it cost to
+  leave — which is why each one points at the other rather than standing alone.
 
   **Visibility has a scale limit** worth knowing before you rely on it: *"up to
   five individuals, or one or more Google Groups"*, and dynamic groups are not
