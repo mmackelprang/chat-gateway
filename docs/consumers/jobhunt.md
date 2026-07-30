@@ -64,9 +64,19 @@ its review UI) if the gateway is down or never ships (R9).
 > **zero card changes**. Hardcode the topic path and you have signed up to
 > re-render every card the day it moves.
 >
-> R3/R4 remain **live-unverified end to end**: the mapping is now correct on
-> real captured bytes, but no interaction has ever traversed `PubSubPuller` and
-> reached a jobhunt callback against Google.
+> R3/R4 remain **live-unverified end to end** — but the gap is now narrower and
+> worth stating precisely, because "unverified" was covering two very different
+> things:
+>
+> | Link in the chain | Status |
+> |---|---|
+> | the interaction parse | ⚠ SHAPE-VERIFIED on real captured bytes |
+> | **the reply transport** (`ChatApiAdapter.send_text`) | ✅ **verified live 2026-07-30, both branches** — in-thread and top-level. This is R4's authorization refusal and R7's failure notice: the gateway can now demonstrably tell a user their tap was refused or did not land (CG-5). |
+> | the inbound pull | see CG-24 |
+> | **an interaction reaching a jobhunt callback** | ❌ still never happened. No `callback_url` is configured for `job-hunter`, so nothing has traversed the full chain. |
+>
+> So the *last* link is the outstanding one, and it is outstanding for a
+> configuration reason rather than a code one.
 
 > **⚠ R3 deviation — one field is no longer forwarded whole (2026-07-29).**
 > R3 says events forward *whole*. As of this date exactly one field is blanked

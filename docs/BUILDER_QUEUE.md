@@ -95,8 +95,8 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-5 → CG-24 → CG-8 → CG-12 → CG-11 → CG-20 →
-CG-22 → CG-19 → CG-21 → CG-23** (CG-7 and CG-4 have since shipped). CG-14 is now
+Remaining order: **CG-24 → CG-8 → CG-12 → CG-11 → CG-20 →
+CG-22 → CG-19 → CG-21 → CG-23** (CG-7, CG-4 and CG-5 have since shipped). CG-14 is now
 `⏸ blocked` (E1 removed its rationale, so it needs a decision, not code);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
 auto-merging; CG-9 stays blocked on a human; CG-17 and CG-18 stay deferred and
@@ -141,29 +141,6 @@ and much more precisely.
 
 **Planner/user call.** Either re-justify it as a general inbound-quietness
 detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
-
----
-
-### CG-5 · Split `chat_api.py`'s flag: `send()` clears, `send_text()` does not  📋 queued
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-5)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-3 |
-| **Plan** | [Part C](superpowers/plans/2026-07-29-live-verification-followups.md) |
-| **Depends on** | CG-4 (touches the same `CLAUDE.md` lines — sequence to avoid a conflict) |
-| **Touches** | docstrings only; the suite must stay at 70 |
-
-`ChatApiAdapter.send()` verified live through the real class and the real
-`GoogleServiceAccountTokens` provider: text and a Cards v2 card posted as the
-app, response carried `sender: {displayName: "Agent Comms", type: BOT}`. That
-clears the provider too.
-
-**`send_text()` keeps its flag.** Different request shape (`thread.name`, not
-`thread.threadKey`), never driven — and it is the method that tells a user their
-tap did not land (jobhunt R7) and the method that refuses an unauthorized user
-(R4). The flag moves from module scope to method scope; be precise about the
-split. `send()`'s own threading branch was not exercised either (the live posts
-were unthreaded).
 
 ---
 
@@ -511,6 +488,63 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-5 · Split `chat_api.py`'s flag — and BOTH halves cleared, not one  ✅ shipped 2026-07-30 · PR-PENDING
+
+**The plan for this item is superseded by evidence, and that is recorded rather
+than quietly acted on.** Part C said `send()` clears and `send_text()` **keeps**
+its flag, with the instruction *"be precise about the split."* That was written
+before the 2026-07-30 live session, which cleared `send_text()` too. Builder did
+not decide this — the evidence did, and the user named it explicitly.
+
+| Seam | Status |
+|---|---|
+| `GoogleServiceAccountTokens` | ✅ cleared — minted the token `send()` used; re-exercised 2026-07-30 with the live key |
+| `send()` | ✅ cleared 2026-07-29 — text + Cards v2 posted as the app, response carried `sender: {displayName: "Agent Comms", type: BOT}` |
+| `send_text()` | ✅ cleared 2026-07-30 — **both branches** |
+
+**Why `send_text()`'s two branches were driven separately, and why that matters
+more than the count of flags cleared.** They fail separately and each carries a
+different guarantee:
+
+- `thread_name` set → posted into `spaces/AAQAgjGR7J4/threads/_CWBxuQ8MlU`. This
+  is jobhunt **R7**'s in-thread failure notice *and* **R4**'s authorization
+  refusal — the paths that tell a user their tap did not land, or that they were
+  not allowed to make it. A silent failure here is a silent failure of exactly
+  those guarantees, which is why the plan singled this method out as the one not
+  to clear cheaply.
+- `thread_name=None` → posted at top level. The no-thread fallback, where a naive
+  implementation sends `{"thread": {"name": null}}` and is rejected.
+
+**What did NOT clear, stated because a per-method flag invites exactly this
+mistake:** `send()`'s `thread.threadKey` + `messageReplyOption` branch. The live
+`send()` posts were unthreaded, and `send_text()`'s clear does **not** reach it —
+that method threads by `thread.name`, a different field on a different request
+shape. Both non-200 branches and the `httpx.HTTPError` branch also stay
+unexercised. The module docstring now carries a three-line status table so the
+next reader cannot generalize from one method to the other.
+
+Noted while in the file, and it is the contrast that makes **CG-23** concrete:
+`send_text()`'s error path already raises with the HTTP **status only**, while
+`send()` twelve lines above still interpolates `resp.text[:200]`. One file,
+two standards, and the lax one is on the method that handles arbitrary content.
+
+**Also corrected here, because it is actively dangerous rather than merely
+stale:** `CLAUDE.md` described the Cloud resources of `chat-gateway-prod` and
+pointed at `iac/chat-gateway-sa.json` as the SA key. That project is **deleted**
+and that key is **dead**. A reader following it would try to authenticate with a
+credential for a project that no longer exists. Replaced with `chat-gateway-gw`
+(`#860649224827`) and `chat-gateway-sa-gw.json`, with the dead path named as dead
+so its presence on disk is not mistaken for configuration.
+
+`docs/consumers/jobhunt.md`'s R3/R4 status was split into a per-link table for the
+same reason: "live-unverified end to end" was covering a verified parse, a
+now-verified reply transport, and one link that genuinely has never happened —
+an interaction reaching a jobhunt callback, which is outstanding for a
+**configuration** reason (`job-hunter` has no `callback_url` set) rather than a
+code one.
+
+Docstrings and docs only. Suite unchanged at **98**.
 
 ### CG-4 · Clear `webhook.py`'s flag, drop the redundant threadKey mechanism  ✅ shipped 2026-07-30 · PR-PENDING
 
