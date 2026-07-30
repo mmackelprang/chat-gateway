@@ -1,7 +1,7 @@
 # Builder queue — chat-gateway
 
 **Last updated:** 2026-07-30 (Builder — **CG-34 shipped**
-([PR #TBD](https://github.com/mmackelprang/chat-gateway/pull/TBD)): `httpx` logged
+([PR #33](https://github.com/mmackelprang/chat-gateway/pull/33)): `httpx` logged
 the whole request URL — `key` **and** `token` — on **every** request, success
 included. Fixed by **redacting, not silencing**: a `logging.Filter` on the `httpx`
 logger blanks every query and fragment VALUE and any userinfo password, so an
@@ -772,7 +772,7 @@ CG-32 through CG-34 were taken by the other two while it was in flight.)_
 
 ## Recently shipped
 
-### CG-34 · `httpx` logs the whole webhook URL — key and token — at INFO  ✅ shipped 2026-07-30 · [PR #TBD](https://github.com/mmackelprang/chat-gateway/pull/TBD)
+### CG-34 · `httpx` logs the whole webhook URL — key and token — at INFO  ✅ shipped 2026-07-30 · [PR #33](https://github.com/mmackelprang/chat-gateway/pull/33)
 
 `httpx` logs one line per request through its own module-level logger, carrying
 the full request URL. For a tier-1 send that URL embeds `key` **and** `token` —
