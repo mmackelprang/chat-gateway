@@ -95,8 +95,8 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-4 → CG-5 → CG-24 → CG-8 → CG-12 → CG-11 → CG-20 →
-CG-22 → CG-19 → CG-21 → CG-23** (CG-7 has since shipped). CG-14 is now
+Remaining order: **CG-5 → CG-24 → CG-8 → CG-12 → CG-11 → CG-20 →
+CG-22 → CG-19 → CG-21 → CG-23** (CG-7 and CG-4 have since shipped). CG-14 is now
 `⏸ blocked` (E1 removed its rationale, so it needs a decision, not code);
 CG-19, CG-21 and CG-23 carry **merge gates** — pause and report rather than
 auto-merging; CG-9 stays blocked on a human; CG-17 and CG-18 stay deferred and
@@ -141,39 +141,6 @@ and much more precisely.
 
 **Planner/user call.** Either re-justify it as a general inbound-quietness
 detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
-
----
-
-### CG-4 · Clear `webhook.py`'s flag, drop the redundant threadKey mechanism  📋 queued
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-4)](superpowers/specs/2026-07-29-live-verification-followups-design.md), DEC-1, DEC-2 |
-| **Plan** | [Part B](superpowers/plans/2026-07-29-live-verification-followups.md) |
-| **Depends on** | nothing |
-
-Verified live through the **real** `WebhookAdapter`: plain text → `delivered`;
-Cards v2 passed through → `delivered` and rendering confirmed by the user. The
-threading experiment (two messages per variant, distinct thread keys,
-`thread.name` from Google's response as the objective signal) found both
-mechanisms sufficient — query param only → THREADED, body only → THREADED, both
-→ THREADED.
-
-**DEC-1 is answered: keep the body `thread.threadKey`, drop the query
-parameter** (Planner's recommendation, user-approved 2026-07-29). Reasons:
-`chat_api.py` already threads via the body, so both adapters end up expressing
-threading identically; the body form is the `spaces.messages.create` shape
-rather than a webhook-only affordance; and, weakly, it splices one less
-parameter into a URL that embeds `key`+`token`.
-
-⚠ **The caveat is mandatory in the code comment.** All three variants also sent
-`messageReplyOption` in the query. The proven statement is exactly *"given
-`messageReplyOption` is present, either `threadKey` location suffices."* Whether
-`messageReplyOption` is required at all was **not** isolated. The docstring must
-not imply otherwise.
-
-Flag clears for the success path only; the non-200 and transport-error branches
-were never exercised and the docstring says so in prose (not a third flag word).
 
 ---
 
@@ -544,6 +511,45 @@ _(nothing)_
 ---
 
 ## Recently shipped
+
+### CG-4 · Clear `webhook.py`'s flag, drop the redundant threadKey mechanism  ✅ shipped 2026-07-30 · PR-PENDING
+
+**The first ⚠ LIVE-UNVERIFIED flag this project has ever removed.** Verified
+through the **real** `WebhookAdapter`, not a reimplementation: plain text →
+`delivered`; Cards v2 passed through → `delivered`, rendering confirmed in the
+space by the user.
+
+**DEC-1 answered — the body `thread.threadKey` stays, the query parameter is
+dropped.** The threading experiment (two messages per variant, distinct thread
+keys, `thread.name` from Google's response as the objective signal) found all
+three variants THREADED, so the two mechanisms are redundant. The body form wins
+because `chat_api.py` already threads that way — one threading idiom across both
+adapters means a future threading bug is one thing to reason about, not two — and
+because it splices one less parameter into a URL that embeds `key`+`token`.
+
+⚠ **The caveat is in the docstring, mandatorily.** All three variants also
+carried `messageReplyOption` in the query, so the proven statement is exactly
+*"given `messageReplyOption` is present, either `threadKey` location suffices."*
+The fourth variant was never run; the docstring says so and says not to read the
+result as license to drop `messageReplyOption`.
+
+**Newly recorded, and it is the more valuable half: tier 1 is
+project-independent, empirically.** On 2026-07-30, **immediately after the
+`chat-gateway-prod` Cloud project was deleted**, all four webhook identities were
+re-run through the real `WebhookAdapter` and all four returned `delivered`.
+`docs/google-cloud-setup.md` asserted this; it is now observed. It is
+load-bearing rather than trivia — a webhook URL is issued by the **space**, not by
+a Cloud project, so no tier-2 change (migration, project deletion, credential
+rotation, subscription breakage) can take the notification path down. That is what
+makes tier 1 the floor under `aitrader`'s alerting, and `aitrader` is the tenant
+with no inbound path at all.
+
+Scope of the clear, stated rather than glossed: **the success path only.** The
+non-200 branch and the `httpx.HTTPError` branch have never been exercised against
+Google, and the docstring says so in prose — not a third flag word (ADR-0001 D6,
+hard rule #3's cap).
+
+Suite unchanged at **98**: docstrings, one function, two test edits.
 
 ### CG-7 · `/healthz`: subscriber liveness + quota exhaustion must affect `status`  ✅ shipped 2026-07-29 · PR-PENDING
 

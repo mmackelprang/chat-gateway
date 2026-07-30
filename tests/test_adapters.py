@@ -34,13 +34,19 @@ def mock_client(handler) -> httpx.Client:
 
 
 def test_webhook_payload_and_params():
+    """One threading mechanism, not two (proven redundant live 2026-07-29).
+
+    The body carries thread affinity; the query carries only
+    messageReplyOption, whose necessity was never isolated and which therefore
+    stays. See the module docstring for exactly what the experiment proved.
+    """
     payload = build_payload(MSG)
     assert payload["text"] == "Review needed"
     assert payload["cardsV2"][0]["cardId"] == "c1"
     assert payload["thread"] == {"threadKey": "review-PC-12"}
     params = build_params(MSG)
-    assert params["threadKey"] == "review-PC-12"
-    assert params["messageReplyOption"] == "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+    assert params == {"messageReplyOption": "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"}
+    assert "threadKey" not in params          # dropped: redundant with the body
     bare = OutboundMessage(identity="x", text="hi")
     assert "thread" not in build_payload(bare) and build_params(bare) == {}
 
@@ -57,7 +63,10 @@ def test_webhook_send_success_and_error(monkeypatch):
 
     result = WebhookAdapter(mock_client(ok)).send(ident, MSG)
     assert result.status == "delivered" and result.mode == "webhook"
-    assert "key=SECRET" in seen["url"] and "threadKey=review-PC-12" in seen["url"]
+    assert "key=SECRET" in seen["url"]                    # existing query survives
+    assert "threadKey=" not in seen["url"]                # dropped 2026-07-29
+    assert "messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD" in seen["url"]
+    assert seen["body"]["thread"] == {"threadKey": "review-PC-12"}   # the sole mechanism
     assert seen["body"]["text"] == "Review needed"
 
     def fail(request: httpx.Request) -> httpx.Response:
