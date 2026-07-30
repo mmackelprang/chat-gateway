@@ -187,10 +187,12 @@ Two rules, and the reasons matter:
 **Why fetch instead of hardcode.** Because identity always rides in
 `__cg_action__` and the function slot always holds a gateway-published
 constant, the *same card* works under every deployment model this gateway could
-move to — add-ons + Pub/Sub today, a classic Chat app, or an HTTP endpoint.
+move to — a classic Chat app (production since 2026-07-29), add-ons + Pub/Sub,
+or an HTTP endpoint.
 Migrating costs **zero producer card changes**: one value moves, on the gateway
 side. Hardcode the topic path and you have signed up to re-render every card
-the day it moves — **and it is moving**: see the runtime note below. See
+the day it moves — **and it has already moved once**, at no cost to any
+producer: see the runtime note below. See
 [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) D3.
 
 #### Runtime note: `__cg_action__` is an add-ons compatibility fallback (updated 2026-07-29)
