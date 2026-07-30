@@ -22,12 +22,18 @@
   project is a no-op.
 
 .EXAMPLE
-  .\gcloud-setup.ps1 -ProjectId chat-gateway-prod
+  .\gcloud-setup.ps1 -ProjectId your-project-id
 
 .NOTES
   Prereq: gcloud auth login; the project already exists (or uncomment the
   create line in step 1). Never prints key material or webhook URLs — error
   and progress paths name identities and paths only.
+
+  This script is project-agnostic and names no project on purpose — the id of
+  the project this repo actually runs on is deliberately not repeated here; see
+  docs/google-cloud-setup.md. The example above used to read
+  `chat-gateway-prod`, which was DELETED on 2026-07-30, so copy-pasting it
+  aimed every gcloud call below at a project that no longer exists.
 
   ENCODING: keep this file UTF-8 **with BOM**. Windows PowerShell 5.1 reads a
   BOM-less file as ANSI/cp1252, which turns the non-ASCII characters below
@@ -46,6 +52,21 @@ param(
 
     # Relative values resolve against this script's directory (iac/), so the
     # key lands in the same place regardless of the caller's working dir.
+    #
+    # ⚠ Pass a per-project -KeyFile — e.g. chat-gateway-sa-<project>.json. The
+    # "already exists — not minting another" branch near the bottom matches on
+    # FILENAME ONLY; it cannot tell which project a key belongs to, so a key
+    # left over from a different project satisfies it. That is not
+    # hypothetical: the deleted `chat-gateway-prod` minted its key under this
+    # exact default, so any working tree that provisioned it still holds an
+    # iac\chat-gateway-sa.json that authenticates to nothing. Re-run here for a
+    # fresh project and the script prints "not minting another", then emits a
+    # .env block pointing GOOGLE_APPLICATION_CREDENTIALS at that dead
+    # credential.
+    #
+    # The default is left unchanged ON PURPOSE (CG-19): renaming it would make
+    # this script mint a SECOND service-account key on every host that already
+    # has one, and a comment fix must not create credentials as a side effect.
     [string] $KeyFile = 'chat-gateway-sa.json'
 )
 
@@ -160,9 +181,37 @@ Write-Host "== project: $ProjectId"
 # Invoke-Gcloud @('projects','create',$ProjectId,'--name=chat-gateway')   # if not created yet
 Invoke-Gcloud @('config', 'set', 'project', $ProjectId) -Quiet
 
-# appsmarket-component = the Google Workspace Marketplace SDK. Without it the
-# app never appears under Apps & integrations -> Add apps (step 6), so the API
-# is enabled here; *publishing* the app remains console-only.
+# appsmarket-component = the Google Workspace Marketplace SDK.
+#
+# ⚠ CORRECTED 2026-07-30 (CG-19) — DO NOT REINSTATE THE OLD CLAIM. This comment
+# used to read "Without it the app never appears under Apps & integrations ->
+# Add apps". That is FALSE, and it is the exact sentence that put this project
+# on the Workspace Add-ons runtime — which is why the correction is left here as
+# a warning rather than quietly deleted. If you are choosing a runtime for a NEW
+# project, read the ADR cited below BEFORE you run this script.
+#
+# Installability comes from Chat API -> Configuration -> Visibility: list your
+# own address (or a Google Group) there and you can add the app to a space
+# immediately, before any Marketplace publish. Two sources say so and their
+# SCOPES DIFFER — do not merge them into one universal sentence, which is the
+# exact mistake this comment exists to undo:
+#   * classic, which is what this script provisions — "the Chat API lets you
+#     share your Chat app with specific people in your Google Workspace
+#     organization. The people that you specify can add the Chat app to a space
+#     and test its features before you publish it to the Marketplace"
+#     https://developers.google.com/workspace/chat/test-interactive-features
+#   * add-ons specifically — "To deploy and test an add-on in Chat, you must use
+#     the Chat API's Visibility setting. Any visibility or testing settings that
+#     you've configured in the Google Workspace Marketplace SDK are ignored"
+#     https://developers.google.com/workspace/add-ons/chat
+# Marketplace publishing is needed only to reach people BEYOND that Visibility
+# list, and it is console-only either way.
+#
+# The API stays enabled: it is harmless, it costs nothing, and it shortens a
+# later publish. It is simply not a prerequisite for anything provisioned here.
+# Full account: CG-6, which corrected the same claim in
+# docs/google-cloud-setup.md, and ADR-0001 §5 option D / §14 —
+# docs/architecture/decisions/2026-07-29-tier2-interaction-model.md.
 Write-Host '== enabling APIs (chat, pubsub, workspace add-ons, marketplace SDK)'
 Invoke-Gcloud @('services', 'enable', 'chat.googleapis.com', 'pubsub.googleapis.com',
     'gsuiteaddons.googleapis.com', 'appsmarket-component.googleapis.com')
@@ -243,6 +292,8 @@ Invoke-Gcloud @(
     "--member=serviceAccount:$SaEmail", '--role=roles/pubsub.subscriber'
 ) -Quiet
 
+# ⚠ Filename-only check — it does not know which project the existing key
+# belongs to. See the -KeyFile note in the param block at the top.
 if (Test-Path -LiteralPath $KeyPath) {
     Write-Host "== key file $KeyPath already exists — not minting another"
 }
