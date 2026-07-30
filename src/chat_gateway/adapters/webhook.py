@@ -59,12 +59,20 @@ from __future__ import annotations
 import httpx
 
 from ..envelope import DeliveryResult, OutboundMessage
+from ..errors import GatewayAuthoredError
 from ..log_redaction import install_url_redaction
 from ..registry import Identity
 
 
-class WebhookDeliveryError(RuntimeError):
+class WebhookDeliveryError(GatewayAuthoredError, RuntimeError):
     """A webhook POST failed: the identity, the HTTP status, and nothing else.
+
+    `GatewayAuthoredError` marks the message as safe to render in full — see
+    that class and `describe_exception` (CG-29). This class earns it the hard
+    way: CG-23 measured a real 403 putting this webhook's `key` AND `token`
+    into three artifacts through the `resp.text[:200]` echo that used to be
+    here, so what the mixin claims about this message is a claim that was
+    tested against real TCP rather than reasoned about.
 
     The response body is never interpolated. A webhook URL embeds `key` AND
     `token` — it IS a bearer credential for posting as that identity — and a

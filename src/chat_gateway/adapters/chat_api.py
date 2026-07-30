@@ -35,6 +35,7 @@ from typing import Callable, Protocol
 import httpx
 
 from ..envelope import DeliveryResult, OutboundMessage
+from ..errors import GatewayAuthoredError
 from ..registry import Identity
 
 CHAT_API = "https://chat.googleapis.com/v1"
@@ -43,8 +44,16 @@ CHAT_SCOPE = "https://www.googleapis.com/auth/chat.bot"
 TokenProvider = Callable[[], str]
 
 
-class ChatApiError(RuntimeError):
+class ChatApiError(GatewayAuthoredError, RuntimeError):
     """A Chat API call failed: the verb/identity, the HTTP status, and no body.
+
+    `GatewayAuthoredError` is the load-bearing base, not decoration: it is what
+    lets `SubscriberLoop.poll_once` print this message in FULL instead of the
+    bare type name, which is the whole of CG-29 — CG-25 put the distinguishing
+    detail (transport failure versus non-200) in here and the console threw it
+    away. The mixin asserts the property every raise site below already has:
+    names and statuses, never a response body. `RuntimeError` stays second so
+    `except RuntimeError` still catches this.
 
     Same rule-#2 discipline as `WebhookDeliveryError` — read that docstring for
     the full argument, which applies with MORE force there: a webhook URL is
