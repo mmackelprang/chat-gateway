@@ -113,26 +113,253 @@ def test_healthz_honest(env, monkeypatch):
     assert body["status"] == "degraded"
 
 
-def test_healthz_reports_real_subscriber_counters(env, tmp_path):
+def test_healthz_reports_real_subscriber_counters(env, tmp_path, monkeypatch):
     """Hard rule #5: the subscriber block must read the loop's REAL counters.
     A defaulted getattr() would report a hardcoded 0 forever after a rename —
-    exactly the silent-health failure this rule exists to prevent."""
+    exactly the silent-health failure this rule exists to prevent.
+
+    The exact-dict assertion is deliberate: a subset check would let a silent
+    rename ship."""
     from chat_gateway.adapters.pubsub import FakePuller, SubscriberLoop
+
+    monkeypatch.setenv("GATEWAY_GCP_BILLING", "disabled")
+    _, inbox, adapter = env
+    p = tmp_path / "r.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+    registry = load_registry(p)
+    loop = SubscriberLoop(FakePuller(), registry, inbox, interval_seconds=5.0)
+    loop.events_seen, loop.unparseable_seen, loop.dispatch_errors = 9, 2, 3
+    loop.interactions_without_action_id = 5
+    # A FIXED past instant, so `seconds_since_last_poll` is computed from the
+    # real clock and cannot be a hardcoded 0 — the same reasoning as the
+    # counters. Asserted as a range, because it is genuinely time-dependent.
+    loop.last_poll_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=42)
+
+    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+    sub = client.get("/healthz").json()["subscriber"]
+    since = sub.pop("seconds_since_last_poll")
+    assert 42.0 <= since < 60.0, f"staleness is not being measured: {since}"
+    assert sub == {
+        "enabled": True, "last_poll_at": loop.last_poll_at.isoformat(),
+        "events_seen": 9, "unparseable_seen": 2, "dispatch_errors": 3,
+        "interactions_without_action_id": 5,
+        "poll_failures": 0, "consecutive_poll_failures": 0, "last_poll_error": None,
+        # Never started, so not alive — and /healthz must not call that a death.
+        "thread_alive": False, "thread_started": False,
+        "poll_interval_seconds": 5.0, "stale_after_seconds": 300.0,
+        "billing_declared": "disabled",
+        "quota_note": ("free-tier exhaustion fails CLOSED — inbound stops with no "
+                       "other symptom; consecutive_poll_failures is the signal"),
+    }
+
+
+# --- honest liveness: status is computed FROM reasons (CG-7) ------------------
+
+
+def _loop_with(tmp_path, inbox, **attrs):
+    from chat_gateway.adapters.pubsub import FakePuller, SubscriberLoop
+
+    p = tmp_path / "r.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+    registry = load_registry(p)
+    loop = SubscriberLoop(FakePuller(), registry, inbox)
+    for k, v in attrs.items():
+        setattr(loop, k, v)
+    return registry, loop
+
+
+def test_healthz_degrades_when_subscriber_has_never_polled(env, tmp_path):
+    """The claude-mem failure shape, exactly: green health over a dead input.
+
+    An enabled subscriber with last_poll_at=None has never successfully reached
+    Pub/Sub on this process. Before this, healthz reported "ok" indefinitely.
+    """
+    _, inbox, adapter = env
+    registry, loop = _loop_with(tmp_path, inbox)          # last_poll_at stays None
+    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("never completed a poll" in r for r in body["reasons"])
+
+
+def test_healthz_degrades_on_consecutive_poll_failures_and_recovers(
+        env, tmp_path, monkeypatch):
+    """Quota exhaustion, a revoked key and a deleted subscription are
+    indistinguishable from in-process and all fail CLOSED — so the signal is the
+    failure run, not the cause. And it must clear on recovery, not stick."""
+    from chat_gateway.service import POLL_FAILURE_THRESHOLD, ROUTING_TARGET_ENV
+
+    # A configured deployment, so the poll-failure run is the ONLY reason and
+    # the recovery assertion below is about it and nothing else.
+    monkeypatch.setenv(ROUTING_TARGET_ENV, "projects/p/topics/t")
+    _, inbox, adapter = env
+    registry, loop = _loop_with(
+        tmp_path, inbox,
+        last_poll_at=dt.datetime(2026, 7, 29, 12, 0, tzinfo=dt.timezone.utc),
+        poll_failures=7,
+        consecutive_poll_failures=POLL_FAILURE_THRESHOLD,
+        last_poll_error="PubSubError HTTP 429",
+    )
+    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("HTTP 429" in r and "inbound is DOWN" in r for r in body["reasons"])
+
+    loop.consecutive_poll_failures = 0
+    loop.last_poll_error = None
+    body = client.get("/healthz").json()
+    assert body["status"] == "ok" and body["reasons"] == []
+    assert body["subscriber"]["poll_failures"] == 7      # history is not erased
+
+
+def test_healthz_degrades_when_tier2_is_on_but_no_routing_target(
+        env, tmp_path, monkeypatch):
+    """CG-13's leftover. Tier 2 enabled with no routing target is not an
+    unconfigured extra: card interactions are IMPOSSIBLE, /v1/identities already
+    tells every producer so, and nothing else on this endpoint would show it."""
+    from chat_gateway.service import ROUTING_TARGET_ENV
+
+    monkeypatch.delenv(ROUTING_TARGET_ENV, raising=False)
+    _, inbox, adapter = env
+    registry, loop = _loop_with(
+        tmp_path, inbox,
+        last_poll_at=dt.datetime(2026, 7, 29, 12, 0, tzinfo=dt.timezone.utc),
+    )
+    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    reason = next(r for r in body["reasons"] if ROUTING_TARGET_ENV in r)
+    assert "topics/<TOPIC>" in reason          # says what to set, not just that it is unset
+
+    # ...and it is not raised when tier 2 is off: with no subscriber there is no
+    # inbound path for a routing target to be missing from.
+    off = TestClient(create_app(registry, inbox, {"webhook": adapter})).get("/healthz").json()
+    assert off["status"] == "ok" and off["reasons"] == []
+
+
+def test_healthz_degrades_when_the_polling_thread_died(env, tmp_path, monkeypatch):
+    """THE HOLE THE COUNTERS CANNOT SEE — rule #5's founding shape, one layer in.
+
+    A loop that has stopped RAISING as well as stopped working increments
+    nothing. `consecutive_poll_failures` sits at 0, `last_poll_error` stays
+    None, `last_poll_at` holds a real recent timestamp — every counter reads
+    healthy — and inbound is dead forever. CG-7's original two reasons ("never
+    polled" / "N consecutive failures") are both blind to it, so before this
+    check `/healthz` reported "ok" indefinitely, exactly as it did before CG-7.
+
+    `_run` catches `Exception`, so reaching this needs a `BaseException` (e.g.
+    MemoryError) or an interpreter-shutdown race — unlikely, but the failure is
+    unbounded and silent, which is the combination rule #5 refuses to accept.
+    """
+    from chat_gateway.service import ROUTING_TARGET_ENV
+
+    monkeypatch.setenv(ROUTING_TARGET_ENV, "projects/p/topics/t")
+    _, inbox, adapter = env
+    registry, loop = _loop_with(
+        tmp_path, inbox,
+        # Fresh: no failures, and a poll that succeeded one second ago.
+        last_poll_at=dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=1),
+    )
+    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+
+    # Not started yet: not alive, but that is NOT a death — nothing to report.
+    body = client.get("/healthz").json()
+    assert body["subscriber"]["thread_alive"] is False
+    assert body["subscriber"]["thread_started"] is False
+    assert body["status"] == "ok", "an unstarted loop must not be called a corpse"
+
+    # Now start it for real, then kill the thread the way a BaseException would.
+    loop.start()
+    assert loop.is_alive() and loop.started
+    assert client.get("/healthz").json()["status"] == "ok"
+    loop.stop()                                   # thread exits; `started` stays True
+    assert not loop.is_alive()
+
+    body = client.get("/healthz").json()
+    assert body["subscriber"]["thread_started"] is True
+    assert body["subscriber"]["thread_alive"] is False
+    # The counters still look perfect — that is the whole point.
+    assert body["subscriber"]["consecutive_poll_failures"] == 0
+    assert body["subscriber"]["last_poll_error"] is None
+    assert body["status"] == "degraded", "a dead polling thread reported healthy"
+    assert any("NOT RUNNING" in r for r in body["reasons"]), body["reasons"]
+
+
+def test_healthz_degrades_when_polls_go_silent_without_failing(
+        env, tmp_path, monkeypatch):
+    """A thread that is alive but wedged: no failures, no progress.
+
+    Distinct from the dead-thread case above and from the failure-run case —
+    here `is_alive()` is True and every counter is clean, so the ONLY available
+    signal is wall-clock distance from `last_poll_at`. Before this, that
+    timestamp was reported but never compared to the clock, so a three-week-old
+    value read exactly like a three-second-old one on an endpoint whose
+    docstring claims "real liveness".
+    """
+    from chat_gateway.service import (POLL_STALE_AFTER_SECONDS, ROUTING_TARGET_ENV)
+
+    monkeypatch.setenv(ROUTING_TARGET_ENV, "projects/p/topics/t")
+    _, inbox, adapter = env
+    registry, loop = _loop_with(tmp_path, inbox)
+    loop.start()
+    try:
+        client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
+        loop.last_poll_at = dt.datetime.now(dt.timezone.utc)
+        assert client.get("/healthz").json()["status"] == "ok"
+
+        # Just inside the budget: still healthy, so this is a real boundary and
+        # not a check that fires on any nonzero staleness.
+        loop.last_poll_at = (dt.datetime.now(dt.timezone.utc)
+                             - dt.timedelta(seconds=POLL_STALE_AFTER_SECONDS - 30))
+        body = client.get("/healthz").json()
+        assert body["status"] == "ok", body["reasons"]
+
+        # Just outside it.
+        loop.last_poll_at = (dt.datetime.now(dt.timezone.utc)
+                             - dt.timedelta(seconds=POLL_STALE_AFTER_SECONDS + 30))
+        body = client.get("/healthz").json()
+        sub = body["subscriber"]
+        assert loop.is_alive() and sub["thread_alive"] is True
+        assert sub["consecutive_poll_failures"] == 0 and sub["last_poll_error"] is None
+        assert sub["seconds_since_last_poll"] > sub["stale_after_seconds"]
+        assert body["status"] == "degraded", "a wedged subscriber reported healthy"
+        assert any("wedged rather than erroring" in r for r in body["reasons"])
+    finally:
+        loop.stop()
+
+
+def test_healthz_staleness_budget_scales_with_a_slow_interval(env, tmp_path):
+    """A deployment that deliberately polls slowly must not alarm forever.
+
+    The budget is max(floor, multiple x interval), so a 10-minute interval gets
+    a proportionate budget rather than the 300s floor.
+    """
+    from chat_gateway.adapters.pubsub import FakePuller, SubscriberLoop
+    from chat_gateway.service import (POLL_STALE_AFTER_SECONDS,
+                                      POLL_STALE_INTERVAL_MULTIPLE)
 
     _, inbox, adapter = env
     p = tmp_path / "r.yaml"
     p.write_text(REGISTRY_YAML, encoding="utf-8")
     registry = load_registry(p)
-    loop = SubscriberLoop(FakePuller(), registry, inbox)
-    loop.events_seen, loop.unparseable_seen, loop.dispatch_errors = 9, 2, 3
-    loop.interactions_without_action_id = 5
-    loop.last_poll_at = dt.datetime(2026, 7, 29, 12, 0, tzinfo=dt.timezone.utc)
+    slow = SubscriberLoop(FakePuller(), registry, inbox, interval_seconds=600.0)
+    slow.last_poll_at = dt.datetime.now(dt.timezone.utc)
 
-    client = TestClient(create_app(registry, inbox, {"webhook": adapter}, loop))
-    sub = client.get("/healthz").json()["subscriber"]
-    assert sub == {"enabled": True, "last_poll_at": "2026-07-29T12:00:00+00:00",
-                   "events_seen": 9, "unparseable_seen": 2, "dispatch_errors": 3,
-                   "interactions_without_action_id": 5}
+    sub = TestClient(create_app(registry, inbox, {"webhook": adapter}, slow)) \
+        .get("/healthz").json()["subscriber"]
+    assert sub["poll_interval_seconds"] == 600.0
+    assert sub["stale_after_seconds"] == 600.0 * POLL_STALE_INTERVAL_MULTIPLE
+    assert sub["stale_after_seconds"] > POLL_STALE_AFTER_SECONDS
+
+
+def test_healthz_reasons_explain_a_degraded_registry(env, monkeypatch):
+    """`degraded` with no explanation makes an operator diff the body against a
+    known-good copy. Say why."""
+    client, _, _ = env
+    monkeypatch.delenv("SVC_HOOK_FW")
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("does not resolve" in r for r in body["reasons"])
 
 
 # --- the portable card convention (CG-13 / ADR-0001 D3) ----------------------

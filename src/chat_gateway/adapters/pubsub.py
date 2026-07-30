@@ -126,6 +126,26 @@ REDACTED = "<redacted-by-gateway>"
 CAPABILITY_FIELDS = ("configCompleteRedirectUri", "configCompleteRedirectUrl")
 
 
+class PubSubError(RuntimeError):
+    """A Pub/Sub REST call failed, carrying the HTTP status.
+
+    Typed rather than a bare RuntimeError so SubscriberLoop can classify a
+    failure without regexing an error message. It also stops echoing
+    `resp.text[:200]`: a Google error body can quote the request, and the
+    request path names the subscription — hard rule #2 says names, not values.
+    The reason phrase is a fixed HTTP string and carries nothing.
+
+    The cost is honest: we lose Google's error prose. Status + phrase is what
+    the loop can act on.
+    """
+
+    def __init__(self, verb: str, status_code: int, reason: str = ""):
+        super().__init__(f"pubsub {verb} failed: HTTP {status_code} {reason}".rstrip())
+        self.verb = verb
+        self.status_code = status_code
+        self.reason = reason
+
+
 class UnrecognizedEventError(ValueError):
     """The pulled bytes are not any Chat event envelope this gateway knows.
 
@@ -177,7 +197,7 @@ class PubSubPuller:
             headers={"Authorization": f"Bearer {self._tokens()}"},
         )
         if resp.status_code != 200:
-            raise RuntimeError(f"pubsub {verb} HTTP {resp.status_code}: {resp.text[:200]}")
+            raise PubSubError(verb, resp.status_code, resp.reason_phrase)
         return resp.json() if resp.text else {}
 
     def pull(self, max_messages: int = 10) -> list[tuple[str, dict]]:
@@ -554,7 +574,12 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
 
 class SubscriberLoop:
     """Background pull loop. `last_poll_at` feeds healthz — honest liveness,
-    not a hardcoded OK (the claude-mem pilot lesson, aiteam plan F18 gate 2)."""
+    not a hardcoded OK (the claude-mem pilot lesson, aiteam plan F18 gate 2).
+
+    As of CG-7 the failure counters below feed it too: they are what /healthz
+    computes `status` FROM, so a loop whose every poll has failed can no longer
+    be reported green. Reporting a counter nobody reads is how the endpoint
+    stayed dishonest while looking honest."""
 
     def __init__(self, puller: Puller, registry: Registry, inbox: Inbox,
                  interval_seconds: float = 5.0, forwarder=None, reply_fn=None):
@@ -579,6 +604,59 @@ class SubscriberLoop:
         # failed). A non-zero value means some producer's cards are missing
         # `__cg_action__` — or that Google changed the runtime underneath us.
         self.interactions_without_action_id = 0
+        # Poll-level failure tracking. poll_once() raising means the
+        # SUBSCRIPTION is unreachable — a revoked key, a deleted subscription, a
+        # wrong CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, or free-tier quota exhaustion.
+        # All four look identical from in here and all four fail CLOSED: inbound
+        # simply stops. Before this existed, healthz reported "ok" throughout
+        # (hard rule #5, the failure it was written after).
+        self.poll_failures = 0
+        self.consecutive_poll_failures = 0
+        # "<ExceptionType> HTTP <status>" — a TYPE and a STATUS, never a message
+        # body (rule #2). Cleared on the first success so recovery is visible.
+        self.last_poll_error: str | None = None
+        # Was start() ever called? Distinct from "is the thread alive", and the
+        # distinction is what makes the two health reasons unambiguous: a loop
+        # that was never started has never polled either (already a reason),
+        # whereas a loop that WAS started and is now dead is a different and
+        # much more alarming fact. Without this flag /healthz could not tell
+        # them apart, and every offline test — none of which starts a thread —
+        # would look like a corpse.
+        self._started = False
+
+    @property
+    def interval_seconds(self) -> float:
+        """The configured poll interval, readable by /healthz.
+
+        Public because staleness is only judgeable relative to how often this
+        loop is *supposed* to poll; `service.py` must not guess it or hardcode
+        a copy that drifts.
+        """
+        return self._interval
+
+    @property
+    def started(self) -> bool:
+        """Was `start()` ever called? NOT cleared by `stop()` — see below."""
+        return self._started
+
+    def is_alive(self) -> bool:
+        """Is the polling thread actually running right now?
+
+        The DIRECT liveness signal, and the one hard rule #5 names explicitly
+        ("monitor/subscriber liveness"). Every other subscriber field is
+        inferential: counters tell you what happened when a poll last ran, not
+        whether any poll will ever run again. A daemon thread that has died —
+        `_run` catches `Exception`, so a `BaseException` such as `MemoryError`
+        escaping, or an interpreter-shutdown race, kills it silently — leaves
+        every counter frozen at a plausible value and `last_poll_at` fixed at a
+        real timestamp. That reads as perfect health forever, which is the exact
+        11-day-silent-failure shape rule #5 was written after.
+
+        Read TOGETHER with `started`, never alone: alone it cannot tell a loop
+        that was never started from one that was started and died, and those are
+        very different facts. `/healthz` only complains about the second.
+        """
+        return self._thread is not None and self._thread.is_alive()
 
     def _count_unparseable(self, exc: Exception) -> None:
         self.unparseable_seen += 1
@@ -622,17 +700,36 @@ class SubscriberLoop:
         while not self._stop.is_set():
             try:
                 self.poll_once()
+                self.consecutive_poll_failures = 0
+                self.last_poll_error = None
                 if self.forwarder is not None:
                     self.forwarder.process_due()
             except Exception as exc:  # noqa: BLE001 — the loop must survive
-                print(f"subscriber: poll error (will retry): {exc}", flush=True)
+                self.poll_failures += 1
+                self.consecutive_poll_failures += 1
+                self.last_poll_error = (
+                    f"{type(exc).__name__} HTTP {exc.status_code}"
+                    if isinstance(exc, PubSubError) else type(exc).__name__
+                )
+                # Type + status only. The previous version printed the exception
+                # message, which for a Pub/Sub failure embedded resp.text[:200].
+                print(f"subscriber: poll error (will retry): {self.last_poll_error}",
+                      flush=True)
             self._stop.wait(self._interval)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="pubsub-subscriber", daemon=True)
+        self._started = True
         self._thread.start()
 
     def stop(self) -> None:
+        # `_started` is deliberately NOT cleared here. It would be tempting —
+        # "an intentional stop is not a failure" — but it would make /healthz lie
+        # in the one case that matters: a subscriber that is still enabled in
+        # configuration and is no longer polling. Whether that happened by
+        # accident or on purpose does not change the fact that inbound is dead,
+        # and during a real shutdown nobody is reading /healthz anyway. Reporting
+        # it is the honest choice (hard rule #5).
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=5)
