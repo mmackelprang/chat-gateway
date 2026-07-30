@@ -1,6 +1,30 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-27 and CG-28 shipped in parallel**,
+**Last updated:** 2026-07-30 (Builder — **CG-11 + CG-20 shipped as ONE PR**
+(PR #TBD), per the user's combine decision: CG-11's job was to adopt ADR-0001
+§7, and §7 carried the very error CG-11 existed to fix, so the ADR had to be
+corrected before it could be adopted — and the ADR is CG-20's file.
+
+**The correction.** *"A selection widget is not an interaction trigger"* was
+add-ons-scoped evidence written up as a universal claim. On **classic** — the
+runtime this project now runs — a widget's `onChangeAction` **is** an
+interaction trigger and fires on a card with no button at all. The old sentence
+also blamed **Pub/Sub transport** for what is a property of the **runtime**, and
+welded that to the untested modal-dialog inference with one confident dash. The
+two claims are now stated separately, at their two different confidence levels,
+in ADR-0001 §7, `CLAUDE.md` and `docs/consumers/jobhunt.md` R6.
+`docs/integration-guide.md`'s section was **already correct** and exactly one
+stale parenthetical changed there.
+
+**The `docs/google-cloud-setup.md` half was the urgent one and did not get
+crowded out.** That document still described **`chat-gateway-prod`** — deleted
+2026-07-30 — as the live project, in a `gcloud projects create` command, a ✅
+present-tense provisioning box, the console's topic path and the key filename to
+hand back. A reader following it would have created a second project named after
+a deleted one and wired credentials by a dead key. Rewritten as dated history,
+per project, with the live project named.
+
+Previously: **CG-27 and CG-28 shipped in parallel**,
 one Builder each, in separate worktrees.
 
 **CG-27**: the aitrader consumer handoff doc, and with it the removal of a
@@ -137,9 +161,9 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-Remaining order: **CG-11+CG-20 (ONE PR — user decision 2026-07-30) →
-CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24, CG-8, CG-22+CG-9,
-CG-25, CG-12, CG-27 and CG-28 have since shipped). **CG-29** was filed by Builder from CG-25's UAT and
+Remaining order: **CG-19 → CG-21 → CG-23 → CG-26** (CG-7, CG-4, CG-5, CG-24,
+CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28 and CG-11+CG-20 have since
+shipped). **CG-29** was filed by Builder from CG-25's UAT and
 **CG-30** by Builder from CG-27's verification pass; both are
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
@@ -162,11 +186,11 @@ existing queue item owns** — CG-4 is `webhook.py` and CG-5 is `chat_api.py`, s
 `adapters/pubsub.py`'s module flag had no home. Neither is a re-plan: CG-23 is
 one file's error text, CG-24 is a docstring whose evidence already exists.
 
-**CG-11 is still open, and was omitted from the user's 2026-07-30 priority
-list** — recorded here rather than silently skipped or silently built. The wrong
-claim it exists to fix is live in `CLAUDE.md` and in `docs/consumers/jobhunt.md`
-R6 as of that date, so Builder is treating it as genuinely queued. If it was
-meant to be closed, say so and it comes straight back out.
+**CG-11 was omitted from the user's 2026-07-30 priority list** — recorded here
+rather than silently skipped or silently built. Builder treated it as genuinely
+queued, because the wrong claim it existed to fix was live in `CLAUDE.md` and in
+`docs/consumers/jobhunt.md` R6 on that date. It shipped 2026-07-30, combined
+with CG-20.
 
 ---
 
@@ -245,149 +269,6 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 
 ---
 
-### CG-11 + CG-20 · Correct the selection-widget claim, and document E1/E2  🔨 in flight · **ONE PR**
-
-> **SHIPS AS A SINGLE PR WITH CG-20 BELOW — user decision 2026-07-30.** Claim
-> both rows together. CG-11 adopts ADR-0001 §7; §7 is itself wrong; correcting
-> the ADR is CG-20's file. Sequential PRs would have the second contradict the
-> first. Read both bodies in full before starting — they are kept separate below
-> rather than spliced, so neither is lost to an editing accident.
->
-> ⚠ **CG-11's "locations to fix" list (in its amendment block) is WRONG. Re-derive
-> it from the files.** CG-28's Builder copied that list on trust, and nearly
-> shipped a paragraph telling consumers to distrust a section of the integration
-> guide that is already correct. Caught in review. Verified actual state,
-> 2026-07-30:
->
-> | Location | Actual state |
-> |---|---|
-> | **ADR-0001 §7 body** (~`:598-599`, `:606-607`) | **The real target.** Carries *"A selection widget is not an interaction trigger"* unqualified — while §7's own status banner (~`:30`) already records E1's opposite result. The file contradicts itself. |
-> | `docs/integration-guide.md` (~`:231-262`) | **Already correct.** Runtime-scoped (*"Under the add-ons runtime (deployed today)"*) and already records at `:244-246` that `onChangeAction` fires on classic, live-verified. Its **only** staleness is the parenthetical *"(deployed today)"*, now that classic is the deployed runtime. **Do not rewrite this section.** |
-> | `CLAUDE.md` (~`:268-270`) and `docs/consumers/jobhunt.md` R6 | A **different** defect — the modal-dialog inference stated as settled fact. Related, not the same error. Fix on its own terms. |
-> | `docs/consumers/jobhunt-handoff.md` (CG-28) | Already correct and already carries a per-location table. **Do not contradict it.** |
->
-> Also carry forward: **`BACKOFF_S = (0, 3, 7)` is a sequence of GAPS, not attempt
-> times.** Attempts land at absolute 0s/3s/10s in isolation, and at 0s/**5s**/**15s**
-> in the running gateway because `process_due()` only executes after a poll and
-> `SubscriberLoop`'s default `interval_seconds` is `5.0`. Any doc stating
-> "0s/3s/7s" as attempt times is wrong (`forwarder.py:28`, `pubsub.py:695`).
-
-
-| | |
-|---|---|
-| **Spec** | [design §3 (CG-11)](superpowers/specs/2026-07-29-live-verification-followups-design.md) |
-| **Plan** | [Part G](superpowers/plans/2026-07-29-live-verification-followups.md) |
-| **Unblocked by** | ADR-0001 merged to `main` as `22a8119`; adopt its §7 wording verbatim |
-
-`CLAUDE.md` says *"modal dialogs are impossible over Pub/Sub transport —
-selection widgets are the supported path."* **Proven wrong as written.** A
-selection widget's `onChangeAction` fails exactly like a button's
-(`gsuiteaddons.googleapis.com/errors` code 13, `deploymentFunction:
-cgSelectProbe`) — a widget is not an interaction trigger.
-
-What *is* true, and is now better evidenced than the claim it replaces: a
-widget's **value** arrives in `commonEventObject.formInputs`, harvested at
-button-submit time; on real captured data the normalizer merged
-`"decision": "approve"` into `action.params`. So the pattern is *widgets for
-input, one button to submit.* The modal-dialog half was never tested and stays
-labelled as doc-derived inference — the old sentence's real sin was conflating
-the two under one confident dash.
-
-The facts are settled and independent of the ADR; only the **wording** needed
-coordinating, because the ADR owns jobhunt's interaction model and `CLAUDE.md` is
-the constitution. ADR-0001 §7 supplies the replacement wording and agrees with
-this finding on all three labels (proven false / capture-verified / doc-derived
-inference), so Part G adopts §7 rather than paraphrasing it.
-
-> **⚠ AMENDED 2026-07-30 — Part G can no longer be a verbatim adoption of ADR
-> §7, and this row's own body is now half wrong.**
->
-> A real capture from `chat-gateway-gw` shows a `CARD_CLICKED` produced by
-> changing a dropdown on a card with **no button on it at all**:
-> `action.actionMethodName == "onVerdictChanged"` — the widget's own
-> `onChangeAction.function` — with the changed value harvested into params.
-> Landing as `tests/fixtures/classic-cardclicked-onchange-event.json` in the
-> CG-22+CG-9 PR; pinned by
-> `test_normalize_real_classic_onchange_with_no_button_at_all`.
->
-> **On the classic runtime a selection widget IS an interaction trigger.** So
-> two sentences below are correct only for the add-ons runtime and must be
-> re-scoped rather than adopted:
->
-> - *"a widget is not an interaction trigger"* — true under add-ons (code 13),
->   **false** under classic.
-> - *"the pattern is widgets for input, one button to submit"* — the supported
->   pattern under add-ons and the **portable** one on both, but not the only one
->   on classic, where a card with an `onChangeAction` fires on change *and*
->   again on submit.
->
-> ADR-0001 §7 was written from add-ons evidence and carries the same gap, so
-> §7 needs correcting *first* and then adopting. That may pull in CG-20 (which
-> owns ADR §5/§10/§12).
->
-> Locations to fix when this ships: `CLAUDE.md`'s selection-widget sentence;
-> `docs/consumers/jobhunt.md` R6; the integration guide's producer convention
-> (CG-13); ADR-0001 §7; **and this row's own body**. The one location already
-> handled is `tests/test_adapters.py`'s *"one event per decision, not two"*
-> comment, removed by the CG-22+CG-9 PR because that PR rewrites the test it
-> sits in — see that plan §6 for why the rest was routed here rather than
-> absorbed.
-
----
-
-### CG-20 · Document E1 + E2: the create-time-only toggle and the two capability tables  🔨 in flight · **ships with CG-11 above, as ONE PR**
-
-> **Not an independent item any more — user decision 2026-07-30.** See the banner
-> on CG-11 for why. This row's own scope is unchanged and its widened half (the
-> `chat-gateway-prod`-is-deleted corrections to `docs/google-cloud-setup.md`) is
-> still the **more urgent** of the two, so do not let the ADR work crowd it out.
-
-
-| | |
-|---|---|
-| **Origin** | E1/E2 results, 2026-07-29 — newly implied, filed by CG-13 |
-| **Depends on** | nothing |
-| **Touches** | `docs/google-cloud-setup.md`, `docs/architecture/decisions/2026-07-29-tier2-interaction-model.md` — docs only |
-
-> **⚠ SCOPE WIDENED 2026-07-30, and this half is now the more urgent one.**
-> CG-5's review caught that this item's original scope — record the E1/E2
-> findings — did **not** cover the fact that `chat-gateway-prod` is **deleted**,
-> even though `docs/google-cloud-setup.md` is the file that asserts it exists.
-> CG-5 corrected `CLAUDE.md`; deferring the rest here was only legitimate if
-> this row actually owned it, and it did not. It does now:
->
-> | Location | Currently says | Reality |
-> |---|---|---|
-> | step 1 (~L34) | `gcloud projects create chat-gateway-prod` | the live project is `chat-gateway-gw` (`#860649224827`) |
-> | steps 2–4 (~L45) | ✅ **Provisioned for `chat-gateway-prod`** | that project no longer exists — the ✅ is **false** |
-> | step 5 (~L143) | point the console at `projects/chat-gateway-prod/topics/…` | wrong project |
-> | step 8 (~L235, ~L315) | hand back / rotate `chat-gateway-sa.json` | the live key is `chat-gateway-sa-gw.json`; `iac/chat-gateway-sa.json` is **dead** |
->
-> A reader following this doc today would create a second project named after a
-> deleted one and wire credentials by a dead filename. Also record that the app
-> is the classic **"Agent Comms"** in the **JobHunt space only**, and that tier 1
-> is project-independent (four identities delivered immediately after the project
-> deletion) — the doc asserts that already; it is now observed.
->
-> Do **not** silently reuse the ✅ box. A provisioning claim for a deleted project
-> should be rewritten as history, dated, not left looking current.
-
-Two traps cost real time on this project and together they are the whole story
-of how it ended up on the wrong runtime. CG-6 corrected the first (the
-Marketplace SDK does **not** gate installability). This records the second,
-**right next to it**: the *"Build this Chat app as a Google Workspace add-on"*
-toggle is **create-time only** — it cannot be cleared on an existing app, so
-escaping the add-ons runtime requires a new Chat app and therefore a new GCP
-project.
-
-Also record the two **live-verified** capability tables (add-ons vs classic:
-card clicks, `onChangeAction`, action identity, envelope format, slash-command
-shape) so nobody rediscovers any of it, and update ADR-0001 §5 option D — which
-currently calls reversibility "contradictory" — plus §10/§12, whose open
-questions E1/E2 have now answered.
-
----
-
 ### CG-21 · Migrate to the classic deployment (`chat-gateway-gw`)  ⚠ DONE LIVE · needs reconciliation, not execution
 
 > **Status correction, 2026-07-30.** This row still reads as unstarted work
@@ -403,7 +284,7 @@ questions E1/E2 have now answered.
 | | |
 |---|---|
 | **Policy** | [ADR-0001](architecture/decisions/2026-07-29-tier2-interaction-model.md) **D7** — parallel project, then cut over; never toggle production |
-| **Depends on** | CG-20 (write the findings down before acting on them) |
+| **Depends on** | CG-20 (write the findings down before acting on them) — **met: CG-20 shipped 2026-07-30** |
 | **Merge gate** | **touches the IaC / deploy / secret-handling path — Builder must pause and report before merging** |
 
 E1 passed and E2 proved the toggle is one-way, so D7's parallel-project path is
@@ -418,7 +299,12 @@ Console-only work (re-adding the app to each space, a new tier-2 sender
 identity) is the user's. Rollback is switching the env values back. Tier-1
 webhook identities are per-space and unaffected throughout.
 
-Do not start this until CG-20 lands and the user says go.
+**CG-20 shipped 2026-07-30, so this row's one dependency is met** — the findings
+are written down, and `docs/google-cloud-setup.md` now names `chat-gateway-gw`
+as the live project rather than the deleted `chat-gateway-prod`. That does not
+make this startable. It still needs the user's **explicit go**, and it still
+carries its **merge gate**: what remains is reconciliation on the deploy and
+secret-handling path, which is exactly the class of change that pauses.
 
 ---
 
@@ -451,6 +337,23 @@ claims — which is why this is LOW and not the same finding as CG-20's false �
 box — but an operator copy-pasting them would reuse a project name this repo has
 just declared deleted and a key filename it has declared dead. Still
 comments/defaults only; no resource changes.
+
+> **⚠ Builder-filed 2026-07-30, from CG-20 — there is a FOURTH location, and it
+> is not under `iac/`.** `docker-compose.yml:23` carries a commented-out mount
+> `- /srv/chat-gateway/chat-gateway-sa.json:/secrets/sa.json:ro`, so the dead key
+> filename survives in a file the scope line above does not name.
+>
+> **Left unfixed deliberately**, on three grounds: it is outside CG-20's declared
+> scope, it is a deploy-path artifact rather than an IaC one, and this row already
+> owns the illustrative-filename sweep — so folding it in here keeps one item
+> responsible for the whole filename rather than splitting it across two PRs.
+>
+> **LOW, and the reason is specific:** it is a **host-side example path**, not a
+> repo file. It is commented out, and `/srv/chat-gateway/` is the appserver
+> deploy target where the operator puts whatever key they actually minted. It
+> misleads a reader about the *filename*; it cannot cause the compose file to
+> mount a dead key, because nothing is mounted until somebody uncomments it and
+> edits the path anyway.
 
 ---
 
@@ -788,18 +691,90 @@ old one.)_
 
 ## In flight
 
-**CG-11 + CG-20** — claimed 2026-07-30 on branch
-`docs/cg11-cg20-widget-claim-and-e1-e2`, single worktree, one Builder. Ships as
-**one PR** per the user decision in the decisions table. Both rows above are
-flipped to `🔨 in flight`.
-
-_(nothing else — CG-27 and CG-28 shipped. **CG-27 was being worked in
-parallel** by a second Builder in its own worktree; per the CG-25 concurrency
-incident, one worktree per Builder and never a shared working directory.)_
+_(nothing — **CG-11 + CG-20 shipped** as one PR on 2026-07-30, and CG-27 and
+CG-28 before them. **CG-27 was worked in parallel** by a second Builder in its
+own worktree; per the CG-25 concurrency incident, one worktree per Builder and
+never a shared working directory.)_
 
 ---
 
 ## Recently shipped
+
+### CG-11 + CG-20 · The selection-widget claim, E1/E2, and a deleted project  ✅ shipped 2026-07-30 · PR #TBD
+
+One PR, per the user's combine decision: CG-11's job was to adopt ADR-0001 §7,
+and §7 carried the very error CG-11 existed to fix, so §7 had to be corrected
+before it could be adopted — and the ADR is CG-20's file. Two sequential PRs
+would have had the second contradict the first. Docs only; suite unchanged at
+**136**.
+
+**CG-11's own row body was half wrong, and retiring the row is how that text got
+corrected.** It stated *"a widget is not an interaction trigger"* and *"the
+pattern is widgets for input, one button to submit"* as universal claims. Both
+were **add-ons-scoped**. On classic — the runtime this project runs — a widget's
+`onChangeAction` fires on a card with **no button at all**
+(`tests/fixtures/classic-cardclicked-onchange-event.json`), and the one-button
+pattern is the *portable*, *lower-event-volume* choice rather than the only one.
+The row's own amendment block had already flagged this against itself, so the
+row was carrying a claim its own amendment contradicted; deleting it is the fix,
+and this entry is where that text now lives.
+
+**The row's "locations to fix" list was wrong too**, and the corrected
+per-location table was re-verified against the files in this PR rather than
+copied forward a third time. `docs/integration-guide.md`'s *"Collecting
+structured input"* section is **already correct** — runtime-scoped, and already
+recording that `onChangeAction` fires on classic. Exactly one thing changed
+there: the parenthetical `(deployed today)`, which named add-ons as the current
+runtime. CG-28's Builder copied the bad list on trust and nearly shipped a
+paragraph telling consumers to distrust that correct section; this PR did not
+repeat it.
+
+**What the correction says**, in the locations that were genuinely wrong: a
+widget-as-trigger is capture-verified **false under add-ons and true under
+classic** — a property of the **runtime**, never of Pub/Sub transport, and that
+substitution is precisely what made the original sentence wrong — while modal
+dialogs being impossible remains **doc-derived inference, never tested on either
+runtime**. The old sentence welded the two together with one confident dash.
+`CLAUDE.md`, `docs/consumers/jobhunt.md` R6 and ADR-0001 §7 now state them
+separately, §7 with a banner recording why it generalised from add-ons evidence;
+`docs/consumers/jobhunt-handoff.md`'s per-location table was updated to record
+the fixes rather than contradict them. Also carried forward: jobhunt R7's
+`0s/3s/7s` retry text, which named the **gaps** as if they were attempt times.
+
+**The `google-cloud-setup.md` half was the more urgent one and did not get
+crowded out.** That document named `chat-gateway-prod` — deleted 2026-07-30 — in
+a `gcloud projects create` command, a ✅ present-tense provisioning box, the
+console's Pub/Sub topic path and the key filename to hand back. A reader
+following it would have created a second project named after a deleted one and
+wired credentials by a dead key. The ✅ box is now a dated three-row history
+(`chat-gateway-prod`, E1's throwaway `chat-gw-e1-20260729`, and the live
+`chat-gateway-gw`) rather than a green check for something that no longer
+exists — because a provisioning record without a date *and* a project id
+silently becomes a claim about whatever project the reader is holding.
+
+**E1/E2 recorded where they are load-bearing.** The add-on toggle is
+**create-time only** (E2), which is why D7's parallel-project path was the *only*
+available one rather than merely the prudent one — written up beside the
+Marketplace-SDK correction, because together the two traps are the whole story of
+how this project ended up on the wrong runtime. ADR §10 gained a six-row
+add-ons-vs-classic capability comparison, kept because every project that
+produced the add-ons evidence is deleted and this table plus the fixtures are the
+only surviving record. **Two of its six rows are explicitly not first-hand**
+(slash-command shape, modal dialogs) and carry their evidence in-table, so the
+row's own phrase *"the two live-verified capability tables"* is not reintroduced
+by a later summary. ADR §5 option D's two unsettled rows and §12's five open
+questions are marked answered; §12's heading is kept for referential stability.
+
+**One thing deliberately not claimed:** nothing here asserts anything about
+registry state. The step-6 note that the classic **"Agent Comms"** app is in the
+**JobHunt space only** is labelled a **console observation dated 2026-07-30**
+that this repository cannot prove — no source file, registry entry or test
+records which spaces an app has been added to.
+
+**Flags: none cleared, none added, none reworded**, and `CLAUDE.md`'s
+verification ledger is untouched and linked, never restated. **Filed for CG-19:**
+a fourth copy of the dead key filename lives at `docker-compose.yml:23`, outside
+`iac/` — see that row.
 
 ### CG-28 · Consumer handoff doc — **jobhunt**  ✅ shipped 2026-07-30 · [PR #24](https://github.com/mmackelprang/chat-gateway/pull/24)
 
