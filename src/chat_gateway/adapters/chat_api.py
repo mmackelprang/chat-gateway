@@ -44,7 +44,19 @@ TokenProvider = Callable[[], str]
 
 
 class ChatApiError(RuntimeError):
-    pass
+    """A Chat API call failed: the verb/identity, the HTTP status, and no body.
+
+    Same rule-#2 discipline as `WebhookDeliveryError` — read that docstring for
+    the full argument, which applies with MORE force there: a webhook URL is
+    itself a bearer credential, where this adapter's URL embeds only a space id
+    (non-secret, per `docs/google-cloud-setup.md` step 8). Lower severity, same
+    class of defect, so the same treatment: the response body is never
+    interpolated on either method, because a Google error body can quote the
+    request and the gateway does not control what comes back.
+
+    The cost, stated as CG-7 stated it for `PubSubError`: Google's error prose
+    is lost. Status plus reason phrase is what a caller can act on.
+    """
 
 
 class GoogleServiceAccountTokens:
@@ -115,8 +127,15 @@ class ChatApiAdapter:
         except httpx.HTTPError as exc:
             raise ChatApiError(f"Chat API send failed for {identity.name}: {type(exc).__name__}") from exc
         if resp.status_code != 200:
+            # No body, and the phrase is looked up locally rather than taken
+            # from `resp.reason_phrase` (which httpx reads off the wire) — see
+            # webhook.py's raise site for the full note. Deliberately
+            # byte-symmetric with the transport branch above and with
+            # send_text()'s pair below: one failure shape across this file.
+            reason = httpx.codes.get_reason_phrase(resp.status_code)
             raise ChatApiError(
-                f"Chat API returned HTTP {resp.status_code} for {identity.name}: {resp.text[:200]}"
+                f"Chat API send failed for {identity.name}: "
+                f"HTTP {resp.status_code} {reason}".rstrip()
             )
         return DeliveryResult(
             status="delivered", channel=identity.channel, identity=identity.name,
@@ -147,10 +166,17 @@ class ChatApiAdapter:
                                  implementation would send `{"thread": {"name":
                                  null}}` and be rejected.
 
-        NOT covered: the non-200 branch below. Note it already raises with the
-        status ONLY — deliberately unlike `send()` above, which still
-        interpolates `resp.text[:200]`. That inconsistency inside one file is
-        queue item CG-23; this method is the half that was already right.
+        NOT covered: the non-200 branch below. It raises with the status ONLY,
+        which used to be deliberately unlike `send()` above — that method
+        interpolated `resp.text[:200]`, and the contradiction inside one file
+        was queue item CG-23. CG-23 closed it by making `send()` match THIS
+        method rather than the reverse; the body is now gone from both.
+        One residual asymmetry, left deliberately: `send()` and `webhook.send`
+        append a locally-derived reason phrase ("HTTP 403 Forbidden") and this
+        branch still does not ("HTTP 403"). CG-23 scoped itself to removing the
+        body and would not touch a method that landed the same day — CG-25's
+        byte-symmetry between this branch and the transport branch above is
+        load-bearing for the R7 delivery-log strings.
         Also NOT covered: the `httpx.HTTPError` branch added by CG-25 — a
         transport failure has never been exercised against Google here either.
         """

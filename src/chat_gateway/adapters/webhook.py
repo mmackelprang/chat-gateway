@@ -57,7 +57,25 @@ from ..registry import Identity
 
 
 class WebhookDeliveryError(RuntimeError):
-    pass
+    """A webhook POST failed: the identity, the HTTP status, and nothing else.
+
+    The response body is never interpolated. A webhook URL embeds `key` AND
+    `token` — it IS a bearer credential for posting as that identity — and a
+    Google error body is free to quote the request that produced it. Hard rule
+    #2 says error paths name the identity, not the URL, and it is written so
+    that whether Google echoes the request TODAY never has to be known.
+    `docs/google-cloud-setup.md` §8a exists because a webhook URL leaked once
+    already, and there is no rotate-in-place: recovery is delete-and-recreate
+    the webhook by hand, in the Chat UI.
+
+    The cost is real, and stated rather than glossed (CG-7 set this precedent
+    for `PubSubError`): Google's error prose is LOST. A 403 no longer says
+    which of "webhook deleted", "space archived" or "sender blocked" it was;
+    that now has to come from the space itself or from Google's own logs.
+    Status plus reason phrase is what a caller can actually act on — retry,
+    alert, or give up — and the prose was only ever useful to a human reading
+    a log. It is not worth a credential.
+    """
 
 
 def build_payload(message: OutboundMessage) -> dict:
@@ -99,9 +117,21 @@ class WebhookAdapter:
         except httpx.HTTPError as exc:
             raise WebhookDeliveryError(f"webhook POST failed for {identity.name}: {type(exc).__name__}") from exc
         if resp.status_code != 200:
-            # never echo the URL (it embeds credentials) — name the identity instead
+            # Never echo the URL (it embeds key+token) OR the body — name the
+            # identity instead. See WebhookDeliveryError's docstring for why the
+            # body goes too: we do not control what Google puts in it, and here
+            # the request it may quote IS the credential.
+            #
+            # The phrase is looked up LOCALLY from the status code, not read off
+            # `resp.reason_phrase` — httpx returns the wire value from
+            # `extensions["reason_phrase"]` when the server sends one, so that
+            # property is server-controlled bytes. This lookup is a fixed table
+            # and carries nothing. Same rule, applied to the last field that
+            # could still have smuggled a response in.
+            reason = httpx.codes.get_reason_phrase(resp.status_code)
             raise WebhookDeliveryError(
-                f"webhook for {identity.name} returned HTTP {resp.status_code}: {resp.text[:200]}"
+                f"webhook POST failed for {identity.name}: "
+                f"HTTP {resp.status_code} {reason}".rstrip()
             )
         return DeliveryResult(
             status="delivered", channel=identity.channel, identity=identity.name,
