@@ -591,7 +591,7 @@ the full `{exc}`, so it gained detail where `poll_once` lost it.
 
 ---
 
-### CG-31 · `forwarder.py`'s docstring names the retry **gaps** as if they were attempt times  📋 queued
+### CG-31 · `forwarder.py`'s docstring names the retry **gaps** as if they were attempt times  🚀 in flight
 
 | | |
 |---|---|
