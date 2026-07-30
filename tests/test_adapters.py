@@ -10,9 +10,9 @@ import pytest
 
 from chat_gateway.adapters.chat_api import ChatApiAdapter, ChatApiError
 from chat_gateway.adapters.pubsub import (
-    UNPARSEABLE, UNROUTED, FakePuller, SubscriberLoop, UnrecognizedEventError,
-    _action_params, detect_envelope, dispatch, normalize_event,
-    redact_capability_urls,
+    SUPPRESSION_REASONS, UNPARSEABLE, UNROUTED, FakePuller, SubscriberLoop,
+    UnrecognizedEventError, _action_params, detect_envelope, dispatch,
+    normalize_event, redact_capability_urls,
 )
 from chat_gateway.adapters.webhook import (
     WebhookAdapter, WebhookDeliveryError, build_params, build_payload,
@@ -488,6 +488,11 @@ def test_poll_once_acks_unparseable_events(registry):
     assert puller.acked == ["ack-0", "ack-1", "ack-2"]   # ALL acked
     assert loop.unparseable_seen == 1
     assert len(inbox.poll("aiteam-harness")) == 2        # good ones delivered
+    # CG-12: the unparseable early-return happens BEFORE any candidate exists,
+    # so it must move neither suppression counter — an unroutable event is not
+    # a declined one, and conflating them would send an operator to the
+    # registry to debug a parser.
+    assert loop.suppressed_opt_out == 0 and loop.suppressed_not_authorized == 0
 
 
 GUARDED_REGISTRY_YAML = """
@@ -878,7 +883,9 @@ def test_resolved_action_id_does_not_touch_the_counter(registry):
 
 # Two apps, each owning its own identity homed in the SAME space, both opted
 # out. `registry.apps_for_space` returns owners in sorted app-id order, so this
-# space genuinely has two candidates for one event.
+# space genuinely has two candidates for one event. Distinct `key_env` per app
+# because hard rule #4 forbids shared keys — the vars are unset here either
+# way, but a fixture is an example and this one would be a forbidden shape.
 TWO_OWNERS_REGISTRY_YAML = """
 identities:
   owner-a-identity:
@@ -893,14 +900,26 @@ identities:
     space: "spaces/AAA"
 apps:
   owner-a:
-    key_env: K
+    key_env: K_OWNER_A
     identities: [owner-a-identity]
     allow_inbound: false
   owner-b:
-    key_env: K
+    key_env: K_OWNER_B
     identities: [owner-b-identity]
     allow_inbound: false
 """
+
+# The same space, MIXED ownership: exactly one owner flipped, so the delta
+# between the two fixtures is the one fact under test.
+MIXED_OWNERS_REGISTRY_YAML = TWO_OWNERS_REGISTRY_YAML.replace(
+    "identities: [owner-b-identity]\n    allow_inbound: false",
+    "identities: [owner-b-identity]\n    allow_inbound: true")
+
+
+def _registry_from(tmp_path, yaml_text, name):
+    p = tmp_path / name
+    p.write_text(yaml_text, encoding="utf-8")
+    return load_registry(p)
 
 
 def test_suppression_counts_per_app_not_per_event(tmp_path):
@@ -912,9 +931,7 @@ def test_suppression_counts_per_app_not_per_event(tmp_path):
     integer as an event count — `events_seen` is the event count, and here the
     two numbers disagree on purpose.
     """
-    p = tmp_path / "two-owners.yaml"
-    p.write_text(TWO_OWNERS_REGISTRY_YAML, encoding="utf-8")
-    reg = load_registry(p)
+    reg = _registry_from(tmp_path, TWO_OWNERS_REGISTRY_YAML, "two-owners.yaml")
     assert reg.apps_for_space("spaces/AAA") == ["owner-a", "owner-b"]
 
     inbox = Inbox()
@@ -925,6 +942,66 @@ def test_suppression_counts_per_app_not_per_event(tmp_path):
     assert loop.suppressed_opt_out == 2, "but two apps each declined it"
     assert loop.suppressed_not_authorized == 0
     assert inbox.pending_counts() == {}
+
+
+def test_a_co_owner_still_receives_an_event_that_another_owner_declined(tmp_path):
+    """THE COUNTER'S PER-APP MEANING, and the reason it is not "reached nobody".
+
+    `continue` skips the CURRENT candidate only. One event into a space with an
+    opted-out owner AND an active one increments `suppressed_opt_out` and is
+    DELIVERED — so the counter is non-zero for an event that arrived safely.
+    Read as "events that reached nobody" it sends an operator hunting a loss
+    that never happened, which is why every copy of this prose says candidate
+    apps and not events.
+    """
+    reg = _registry_from(tmp_path, MIXED_OWNERS_REGISTRY_YAML, "mixed-owners.yaml")
+    assert reg.apps_for_space("spaces/AAA") == ["owner-a", "owner-b"]
+
+    inbox = Inbox()
+    loop = SubscriberLoop(FakePuller([CHAT_EVENT]), reg, inbox)
+    assert loop.poll_once() == 1
+
+    assert loop.events_seen == 1
+    assert loop.suppressed_opt_out == 1, "owner-a declined it"
+    assert loop.suppressed_not_authorized == 0
+    assert inbox.pending_counts() == {"owner-b": 1}, "...and owner-b got it anyway"
+    # ...and dispatch reports only the owner that actually received it.
+    assert dispatch(CHAT_EVENT, reg, Inbox()) == ["owner-b"]
+
+
+def test_on_suppressed_is_called_with_the_declining_app_id_and_its_reason(tmp_path):
+    """The callback's CONTRACT, first argument included.
+
+    Every other test here reads the counters, which collapse `app_id` to
+    nothing — so a `dispatch` passing the space, a constant, or the reason
+    twice would sail through all of them. One call per candidate, in
+    `apps_for_space`'s sorted order.
+    """
+    reg = _registry_from(tmp_path, TWO_OWNERS_REGISTRY_YAML, "two-owners-args.yaml")
+    seen = []
+    delivered = dispatch(CHAT_EVENT, reg, Inbox(),
+                         on_suppressed=lambda app, reason: seen.append((app, reason)))
+    assert delivered == []
+    assert seen == [("owner-a", "opt_out"), ("owner-b", "opt_out")]
+
+
+def test_every_suppression_reason_reaches_a_counter(registry):
+    """No reason may be counted NOWHERE — the rule-#5 silent-discard shape,
+    relocated from the event path to the signal path.
+
+    `_count_suppressed` has no `else`, deliberately: raising would abort
+    dispatch's candidate loop mid-way on a code-defect path, and a default
+    bucket would corrupt the distinction the two counters exist to preserve. So
+    the runtime drop stays silent and THIS is what makes it loud — adding a
+    member to SUPPRESSION_REASONS without adding a counter fails here, at the
+    moment it is written.
+    """
+    loop = SubscriberLoop(FakePuller(), registry, Inbox())
+    for reason in SUPPRESSION_REASONS:
+        loop._count_suppressed("some-app", reason)
+    total = loop.suppressed_opt_out + loop.suppressed_not_authorized
+    assert total == len(SUPPRESSION_REASONS), \
+        "a reason in SUPPRESSION_REASONS incremented no counter"
 
 
 def test_card_parameters_are_an_array_in_the_real_captured_card():

@@ -233,6 +233,29 @@ def test_refused_user_is_counted_separately_from_an_opted_out_tenant(registry):
     assert inbox.pending_counts() == {}
 
 
+def test_a_raising_reply_fn_counts_a_dispatch_error_and_not_a_suppression(registry):
+    """CALLBACK ORDER is load-bearing: `on_suppressed` fires AFTER `reply_fn`.
+
+    Moving it two lines up — an obvious-looking "group the suppression handling
+    together" cleanup — is invisible to every other test in this change, and it
+    would count one fault for this app twice. The refusal never reached the
+    thread, so a `suppressed_not_authorized` here would assert a human was told
+    something they were not; `dispatch_errors` is the honest reading.
+    """
+    def boom(space, thread, text):
+        raise RuntimeError("chat api unreachable")
+
+    inbox = Inbox()
+    event = {**CARD_CLICK, "user": {"displayName": "Eve", "email": "eve@example.com"}}
+    loop = SubscriberLoop(FakePuller([event]), registry, inbox, reply_fn=boom)
+
+    assert loop.poll_once() == 1
+    assert loop.dispatch_errors == 1
+    assert loop.suppressed_not_authorized == 0, "one fault, one counter for this app"
+    assert loop.suppressed_opt_out == 0
+    assert inbox.pending_counts() == {}
+
+
 def test_an_authorized_delivery_touches_neither_suppression_counter(registry):
     """A counter must mean what it says or it is worse than nothing — the same
     argument as `test_resolved_action_id_does_not_touch_the_counter`. If the
