@@ -269,3 +269,45 @@ def test_registry_ids_must_be_clean_strings(tmp_path):
     with pytest.raises(RegistryError) as exc:
         load_registry(p)
     assert "identity id" in str(exc.value) and "must be a string" in str(exc.value)
+
+
+HEAD_YAML = "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+
+# Every way a registry file can be malformed that used to escape as something
+# other than RegistryError. Two distinct causes: the coerced/odd keys reached
+# CG-8's new prefix guard and died in `.startswith`, and the YAML-level failures
+# escaped because only OSError was caught around `yaml.safe_load`.
+MALFORMED_REGISTRIES = [
+    pytest.param("apps:\n  ? [a, b]\n  : key_env: KEY\n", id="unhashable-seq-key"),
+    pytest.param("apps:\n  ? {a: 1}\n  : key_env: KEY\n", id="unhashable-map-key"),
+    pytest.param("apps:\n  2026-07-30:\n    key_env: KEY\n", id="yaml-date-key"),
+    pytest.param('apps:\n  "":\n    key_env: KEY\n', id="empty-id"),
+    pytest.param("apps:\n  1:\n    key_env: KEY\n", id="int-key"),
+    pytest.param("apps:\n  true:\n    key_env: KEY\n", id="bool-key"),
+    pytest.param("apps:\n  null:\n    key_env: KEY\n", id="null-key"),
+    pytest.param('apps:\n  "\tx":\n    key_env: KEY\n', id="tab-padded-key"),
+    pytest.param("apps:\n  x:\n   - [unclosed\n", id="unparseable-yaml"),
+]
+
+
+@pytest.mark.parametrize("body", MALFORMED_REGISTRIES)
+def test_every_malformed_registry_arrives_as_RegistryError(tmp_path, body):
+    """No config mistake may reach the operator as a raw traceback.
+
+    Hard rule #5's spirit applied to startup: a gateway that dies with a yaml
+    ScannerError, a ConstructorError or an AttributeError has told the operator
+    almost nothing about which file is wrong or why. Parameterized so a future
+    edge case gets ADDED to this list rather than handled somewhere new.
+    """
+    p = tmp_path / "r.yaml"
+    p.write_text(HEAD_YAML + body, encoding="utf-8")
+    with pytest.raises(RegistryError):
+        load_registry(p)
+
+
+def test_a_valid_registry_still_loads(tmp_path):
+    """The control for the test above — it must discriminate, not just reject."""
+    p = tmp_path / "r.yaml"
+    p.write_text(HEAD_YAML + "apps:\n  aiteam_harness:\n    key_env: KEY\n"
+                 "    identities: [pm]\n", encoding="utf-8")
+    assert "aiteam_harness" in load_registry(p).apps

@@ -558,9 +558,31 @@ is the shape hard rule #4 exists to prevent. Whitespace is *not* a route to the
 `_unrouted` bucket (`" _unrouted"` is simply a different key), so this is
 correctness rather than a second security hole.
 
+**Then the same question asked once more turned up a pre-existing sibling.** If a
+coerced key should arrive as a `RegistryError` rather than an `AttributeError`,
+so should malformed YAML — and it did not: `load_registry` caught only `OSError`
+around `yaml.safe_load`, so a `ScannerError` or `ConstructorError` killed the
+gateway at startup with a parser traceback naming no file. Fixed in both the
+single-file and the directory branch (the directory branch had no `try` at all),
+plus empty-string ids rejected. Pre-existing, in scope because it is
+indistinguishable in kind from the defect this item introduced and fixed one
+function below.
+
+Now exhaustive and parameterized: **nine** malformed shapes — unhashable
+sequence and mapping keys, a YAML date, an empty id, int / bool / null,
+tab-padding, and unparseable YAML — every one asserted to arrive as
+`RegistryError`, with a valid-config control so the suite proves discrimination
+rather than blanket rejection. Rule #5's spirit applied to startup: a gateway
+that dies with a parser traceback has told the operator almost nothing.
+
+**All four guards mutation-tested.** Removing the reserved-id `raise` and
+widening the prefix each fail `test_reserved_app_ids_are_rejected` *and* the
+hole-demonstration test; dropping `_require_id_str` fails 7 cases; reverting the
+`yaml.YAMLError` catch fails 3. Nothing passes with a guard deleted.
+
 Hard rule #6 in `CLAUDE.md` gained a sentence, since this closes a hole in it.
 
-98 → **103** tests.
+98 → **113** tests.
 
 ### CG-24 · Clear `PubSubPuller`'s flag — `pull()` **and** `acknowledge()`  ✅ shipped 2026-07-30 · PR-PENDING
 

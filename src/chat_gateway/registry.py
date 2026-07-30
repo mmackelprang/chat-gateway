@@ -56,6 +56,12 @@ def _require_id_str(kind: str, value) -> None:
       the id the consuming app sends, and a per-app allowlist that quietly
       matches nothing is precisely the shape hard rule #4 exists to prevent.
     """
+    if isinstance(value, str) and not value:
+        raise RegistryError(
+            f"{kind} id is the empty string. Every id is a name something else "
+            "refers to — an API key's owner, an app's identity allowlist — and "
+            "nothing can refer to an unnamed entry."
+        )
     if not isinstance(value, str):
         raise RegistryError(
             f"{kind} id {value!r} must be a string, not {type(value).__name__} — "
@@ -189,7 +195,10 @@ def load_registry(path: str | Path) -> Registry:
     if p.is_dir():
         data: dict = {"identities": {}, "apps": {}}
         for f in sorted(p.glob("*.yaml")):
-            part = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            try:
+                part = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except (OSError, yaml.YAMLError) as exc:
+                raise RegistryError(f"cannot parse {f.name}: {exc}") from exc
             for section in ("identities", "apps"):
                 for name, spec in (part.get(section) or {}).items():
                     if name in data[section]:
@@ -198,7 +207,12 @@ def load_registry(path: str | Path) -> Registry:
     else:
         try:
             data = yaml.safe_load(p.read_text(encoding="utf-8"))
-        except OSError as exc:
+        # yaml.YAMLError is caught alongside OSError deliberately: malformed YAML
+        # is a CONFIG error, and letting a ScannerError or ConstructorError escape
+        # raw means the gateway dies at startup with a parser traceback instead of
+        # a message naming the file. Same reasoning as _require_id_str above —
+        # every way a registry can be wrong should arrive as RegistryError.
+        except (OSError, yaml.YAMLError) as exc:
             raise RegistryError(f"cannot read registry: {exc}") from exc
     if not isinstance(data, dict) or "identities" not in data or "apps" not in data:
         raise RegistryError(f"{path}: registry needs top-level 'identities' and 'apps' maps")
