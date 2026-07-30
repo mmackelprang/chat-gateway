@@ -3,6 +3,7 @@ severity routing/rendering, dedupe collapse, dead-man weekday logic with no
 weekend false alarms, and full delivery-log accounting."""
 
 import datetime as dt
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -76,9 +77,9 @@ def registry(tmp_path, monkeypatch):
     return load_registry(p)
 
 
-def make_client(registry, clock, tmp_path, adapter=None):
+def make_client(registry, clock, tmp_path, adapter=None, log=None):
     adapter = adapter or FakeAdapter()
-    log = DeliveryLog()
+    log = log or DeliveryLog()
     dispatcher = Dispatcher({"webhook": adapter}, log, now_fn=clock)
     app = create_app(
         registry, Inbox(), {"webhook": adapter},
@@ -343,6 +344,55 @@ def test_the_accepted_bound_did_not_move(registry, tmp_path):
                        json=_info_payload(limit)).status_code == 202     # still accepted
     assert client.post("/v1/notify", headers=AUTH,
                        json=_info_payload(limit + 1)).status_code == 422  # CG-30 intact
+
+
+def test_a_dropped_counter_is_still_recoverable_from_the_delivery_log(
+        registry, tmp_path):
+    """The claim option 1 rests on: dropping the counter loses the DECORATION,
+    not the COUNT. Pinned here rather than left in a review note, because it is
+    the whole reason degrading is acceptable instead of merely convenient.
+
+    Two stores with different retention, and the test exercises both:
+    `GET /v1/deliveries` reads an in-memory ring buffer that evicts (`keep` is
+    200 per source in production; shrunk here so eviction is actually reached),
+    while the JSONL mirror `__main__` configures is append-only and complete.
+    Eviction is the benign direction — the ordinal a dropped counter would have
+    shown is the highest one, so it is the newest entry, the last a ring buffer
+    discards."""
+    keep = 10
+    suppressed = keep * 2 + 5           # deep enough that the ring buffer evicts
+    audit_dir = tmp_path / "deliveries"
+    log = DeliveryLog(audit_dir=audit_dir, keep=keep)
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path, log=log)
+
+    payload = _deduped_info_payload(info_max_combined_length())
+    assert client.post("/v1/notify", headers=AUTH, json=payload).status_code == 202
+    for _ in range(suppressed):
+        assert client.post("/v1/notify", headers=AUTH, json=payload).status_code == 202
+    clock.now += dt.timedelta(seconds=3601)
+    r = client.post("/v1/notify", headers=AUTH, json=payload)
+    assert r.status_code == 202 and r.json()["occurrences"] == suppressed + 1
+
+    # the message itself carries no counter — there was no room for one
+    app.state.dispatcher.process_due()
+    _, msg = adapter.sent[-1]
+    assert "(×" not in msg.text and len(msg.text) == TEXT_MAX
+
+    # ... but the count is right there in the log the docstring points at
+    api = client.get("/v1/deliveries?limit=200", headers=AUTH).json()["deliveries"]
+    assert len(api) == keep                                  # it really did evict
+    visible = [e["detail"] for e in api if e["status"] == "deduped"]
+    assert visible[-1] == f"occurrence {suppressed} within window"   # newest survives
+    assert "occurrence 1 within window" not in visible               # oldest did not
+
+    lines = [ln for f in sorted(audit_dir.glob("*.jsonl"))
+             for ln in f.read_text(encoding="utf-8").splitlines()]
+    ordinals = [json.loads(ln)["detail"] for ln in lines
+                if json.loads(ln)["status"] == "deduped"]
+    assert len(ordinals) == suppressed                       # every one, durably
+    assert ordinals[0] == "occurrence 1 within window"
+    assert ordinals[-1] == f"occurrence {suppressed} within window"
 
 
 def test_card_severities_keep_the_full_counter():

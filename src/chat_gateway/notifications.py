@@ -156,11 +156,22 @@ def dedupe_counter(occurrences: int, room: int | None = None) -> str:
     ours, not theirs: the app's body is never truncated to make room for our
     parenthetical.
 
-    Degrading loses no count. Every suppressed occurrence is already recorded
-    in the delivery log as status `deduped`, detail `occurrence N within
-    window` (`service.emit_notification`), readable at `GET /v1/deliveries`;
-    the suppressed request's own 202 carries `occurrences` as well. The
-    counter is a convenience in the message, not the record of it.
+    Degrading loses no count, which is what makes dropping it acceptable at
+    all. Every suppressed occurrence is recorded as it happens — status
+    `deduped`, detail `occurrence N within window` (`service.emit_notification`)
+    — and the suppressed request's own 202 hands `occurrences` back to the
+    caller besides. The counter is a convenience in the message, never the
+    record of it.
+
+    Where that number still lives, stated precisely because "the delivery log"
+    is two stores with different retention (measured 250 suppressions deep, not
+    reasoned): `GET /v1/deliveries` serves the **in-memory ring buffer** — last
+    200 per source, `limit` defaulting to 50 — so the oldest ordinals do evict.
+    The **complete** record is the append-only JSONL under
+    `<CHAT_GATEWAY_STATE_DIR>/deliveries/` that `__main__` configures. Eviction
+    is the benign direction here: the ordinal a dropped counter would have shown
+    is the *highest* one, hence the most recent entry, which is the last thing a
+    ring buffer discards.
 
     N's width is measured, never allowed for at a fixed size: `×3` and
     `×10000` are different lengths, so a hardcoded reservation would be wrong
