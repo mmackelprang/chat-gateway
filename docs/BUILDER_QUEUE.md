@@ -1,6 +1,19 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-21 shipped: reconciliation, not
+**Last updated:** 2026-07-30 (Builder — **CG-34 shipped**
+([PR #33](https://github.com/mmackelprang/chat-gateway/pull/33)): `httpx` logged
+the whole request URL — `key` **and** `token` — on **every** request, success
+included. Fixed by **redacting, not silencing**: a `logging.Filter` on the `httpx`
+logger blanks every query and fragment VALUE and any userinfo password, so an
+operator who deliberately set DEBUG keeps method, host, path, status and the
+parameter NAMES and loses only the secret. Measured against the real gateway under
+`logging.basicConfig(level=DEBUG)` — the credential was in the console **twice**
+per run before, in **no** artifact after; both requests returned 200/202, because
+this fires on the **happy path**. Pre-merge review caught the first draft leaving
+`#token=SECRET` intact after the `#`; that shape is in the tests now. Suite
+**151 → 178**. **Merge gate: user-imposed, this is the secret-handling path.**
+
+Previously: **CG-21 shipped: reconciliation, not
 execution.** The add-ons → classic migration was executed and live-verified
 **2026-07-29**, outside any PR — the row never had code in it. Four documents
 still described it as pending, or named add-ons as production: `CLAUDE.md`
@@ -243,15 +256,22 @@ outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
 Remaining order: **CG-26** (CG-7, CG-4, CG-5, CG-24,
 CG-8, CG-22+CG-9, CG-25, CG-12, CG-27, CG-28, CG-11+CG-20, CG-30, CG-23, CG-19,
-CG-32 and CG-21 have since shipped). **CG-29** was filed by Builder from CG-25's UAT,
-**CG-31** by Builder from CG-11+CG-20's pre-merge review, **CG-33 + CG-34** by
-Builder from CG-23's pre-merge review and UAT, **CG-35** by Builder from CG-19,
+CG-32, CG-21 and CG-34 have since shipped). **CG-29** was filed by Builder from
+CG-25's UAT, **CG-31** by Builder from CG-11+CG-20's pre-merge review, **CG-33**
+by Builder from CG-23's pre-merge review, **CG-35** by Builder from CG-19,
 **CG-36** by Builder from CG-32's docs pass, and **CG-37** by Builder from
-CG-21's inventory; all seven are
+CG-21's inventory; all six are
 appended last, unprioritized — the user sets priority. CG-14 is **✖ closed as obsolete**
 (user decision 2026-07-30 — the migration removed its premise; never built);
 CG-35 carries a **merge gate** — pause and report rather than
 auto-merging; CG-17 and CG-18 stay deferred and must not be executed.
+
+> **CG-34 carried a merge gate its row did not declare.** The Coordinator imposed
+> one at dispatch, on the ground that it is the **secret-handling path** — the same
+> rule and the same credential that gated CG-23. Recorded because the gates in this
+> queue are otherwise per-row, and a reader comparing the row to the history would
+> otherwise find an unexplained pause. **A row without a declared gate is not a
+> guarantee that none applies**; hard rule #2 territory pauses regardless.
 
 **CG-21 shipped 2026-07-30 as documentation reconciliation only.** The migration
 it names was executed and live-verified **2026-07-29**, outside any PR; the row
@@ -401,47 +421,6 @@ pinned by `test_reason_phrase_is_looked_up_locally_not_read_off_the_wire`) and
 deliberately did **not** touch `pubsub.py` — a concurrent Builder owned that file.
 Either make the docstring true by switching to the local lookup, or make it
 accurate by saying the phrase comes off the wire. Not both, and not neither.
-
----
-
-### CG-34 · `httpx` logs the whole webhook URL — key and token — at INFO  📋 queued
-
-| | |
-|---|---|
-| **Rule** | **hard rule #2** — never log a webhook URL; it embeds `key`+`token` |
-| **Origin** | filed by Builder 2026-07-30 from **CG-23's UAT** — **observed, not predicted** |
-| **Depends on** | nothing |
-| **Touches** | wherever logging is configured (`__main__.py`, the deploy unit) — plus possibly a `WebhookAdapter` client default |
-| **Priority** | **appended last, unprioritized.** The user sets order. |
-
-The `httpx` logger emits one line **per request, success or failure**:
-
-```
-HTTP Request: POST http://…/v1/spaces/AAA/messages?key=REDACTED&token=REDACTED "HTTP/1.0 403 Forbidden"
-```
-
-Observed during CG-23's UAT, against the real `WebhookAdapter`. This is
-**independent of CG-23** — it is identical before and after that change, because
-it is httpx logging its own request, not the gateway echoing a response.
-
-**Not a leak in the default deployment, and the reason is specific:** the root
-logger defaults to `WARNING`, and uvicorn's `LOGGING_CONFIG` configures only
-`uvicorn`, `uvicorn.error` and `uvicorn.access` — it never touches root
-(verified). So the line is dropped today.
-
-**It becomes a leak the moment anyone calls `logging.basicConfig(level=INFO)`**,
-which is the single most common thing a Python service does when someone wants
-request logs. At `DEBUG` it is worse: httpcore adds `connect_tcp.started
-host=… ` and full header traces. The exposure is therefore **one config line
-away**, in a repo whose §8a exists because a webhook URL leaked once already —
-and unlike an error body, this fires on the **happy path**, so it would leak on
-every notification the gateway ever sends rather than only on failures.
-
-Options, none obviously right: pin `logging.getLogger("httpx").setLevel(WARNING)`
-at startup (cheap, but silently fights an operator who deliberately asked for
-DEBUG); build the adapter's `httpx.Client` with logging suppressed; or document
-it as an operator constraint in the deploy doc. The last is weakest — a rule that
-depends on nobody ever adding `basicConfig` is not enforced.
 
 ---
 
@@ -847,6 +826,105 @@ every item's content and re-applying only the resolver's own row.)_
 ---
 
 ## Recently shipped
+
+### CG-34 · `httpx` logs the whole webhook URL — key and token — at INFO  ✅ shipped 2026-07-30 · [PR #33](https://github.com/mmackelprang/chat-gateway/pull/33)
+
+`httpx` logs one line per request through its own module-level logger, carrying
+the full request URL. For a tier-1 send that URL embeds `key` **and** `token` —
+it IS a bearer credential for posting as that identity, with no rotate-in-place.
+Nothing in this repo put it there and no gateway code had to be wrong for it to
+happen.
+
+**The mechanism: redact, do not silence.** A `logging.Filter` on the `httpx`
+logger (`src/chat_gateway/log_redaction.py`) rewrites every URL in the record so
+query values, fragment values and any userinfo password become `REDACTED`, and
+leaves method, scheme, host, path, status and the parameter NAMES alone:
+
+```
+HTTP Request: POST http://127.0.0.1:62996/v1/spaces/AAA/messages
+              ?key=REDACTED&token=REDACTED&messageReplyOption=REDACTED "HTTP/1.0 200 OK"
+```
+
+**Why the row's three options all lost, stated because the row asked.**
+`setLevel(WARNING)` is cheaper and works, but it silently fights an operator who
+deliberately asked for DEBUG — they get no httpx logs and no explanation — and it
+costs more than the problem requires, because only the **webhook** URL carries a
+credential; a `chat_api` URL carries a space id and a `pubsub` URL a subscription
+name, both non-secret and both useful. A per-client suppression was checked in
+the installed source rather than assumed, and **is not available**: the log call
+lives in `httpx._client._send_single_request` against a module-level
+`logging.getLogger("httpx")` (`_client.py:117,1025`), so a `Client` instance has
+no logger of its own to configure — reaching it would mean overriding a private
+method. Documenting it as an operator
+constraint fails on the row's own argument — a rule that depends on nobody ever
+adding `basicConfig` is not enforced. A note in the deploy doc is still worth
+having *alongside* the code, and is left to CG-21, which owns that file.
+
+**Values, not named parameters.** Redacting `key` and `token` by name would be a
+denylist of secrets, and the parameter nobody has thought of yet is the one that
+leaks. The measured cost of taking every value is nil — the only query parameter
+the gateway itself sends is `messageReplyOption`, our own constant — and the
+generality is load-bearing rather than tidy, because the same logger carries
+`forwarder.py`'s POSTs to tenant `callback_url`s, whose shape the gateway does
+not control. The filter never needs to know what the secret IS: it holds no env
+var, reads no registry, compares against nothing, and redacts by POSITION.
+
+**Measured against the real gateway, under the dangerous config**
+(`logging.basicConfig(level=DEBUG)` in a wrapper around the real entrypoint, real
+uvicorn, real TCP to a stand-in Google, one `/v1/messages` and one `/v1/notify`):
+
+| Artifact | before | after |
+|---|---|---|
+| gateway console | `key`+`token`, **twice per run** | clean |
+| `GET /v1/deliveries` | clean | clean |
+| the JSONL audit file on disk | clean | clean |
+| `/healthz` | clean | clean |
+
+Both requests returned **200 / 202**. That is the point of the item: unlike
+CG-23's error-body leak this fires on the **happy path**, so it would have
+published the credential on every notification the gateway ever sent. The run
+also settles two things that were otherwise assumptions — uvicorn's own
+`dictConfig`, applied at `run()` *after* the guard is armed, does not remove it
+(`dictConfig` clears a logger's handlers, never its filters), and the async
+dispatcher's background thread is covered too, which is where the second line
+came from.
+
+**Scope, measured rather than assumed.** 13 records were emitted at DEBUG and
+exactly **one** carried the credential — the `httpx` INFO line. httpcore's traces
+do not: a request appears as `<Request [b'POST']>`, `connect_tcp.started` carries
+host and port, and the header trace is of the RESPONSE headers. So the filter is
+installed on the `httpx` logger and nowhere else. Because that is an observation
+about httpcore 1.0.9 and not a law, the tests assert over records from **every**
+logger, so a future httpcore that starts emitting the target fails them.
+
+**The pre-merge review found a real hole and it is the instructive part.** The
+first draft returned `?key=REDACTED#token=SECRET` — the denylist argument had
+been applied to parameter NAMES and then not to parameter LOCATION. Not
+hypothetical: an OAuth implicit-flow callback puts its token after the `#`,
+`str(request.url)` keeps the fragment and httpx logs it, and a tenant
+`callback_url` is an unvalidated string. Reparsed with `urlsplit`, which also
+fixed `https://host?key=K` (a query with no path, previously untouched because
+the authority was taken as everything up to the first `/`) and IPv6 authorities.
+A second finding corrected a docstring that credited `client.py` — which is
+`urllib`-based and never touches the `httpx` logger at all.
+
+**The residue, named rather than implied to be handled:** a credential in a URL
+**path** is not redacted. Redacting paths would destroy the diagnostic the
+redaction exists to preserve, and no URL the gateway constructs is shaped that
+way — a tenant `callback_url` could be. Pinned by a test so it stays a decision.
+
+**Flags: none cleared, added or reworded.** This is local logging behaviour and
+touches no Google seam's verification status; `CLAUDE.md`'s verification ledger
+is untouched and not restated. Suite **151 → 178**; mutation-tested at the source
+(removing the install fails exactly the two load-bearing tests, with the
+credential visible in the failure output), and the mutation is kept **in** the
+suite as `test_the_test_above_can_actually_detect_the_leak` so it can never pass
+vacuously.
+
+**One thing this PR could not do:** `CLAUDE.md`'s test-count line is stale again,
+and a note in `docs/google-cloud-setup.md` §8a — the section that exists because a
+webhook URL leaked once already — would be worth having. Both files are CG-21's
+this session and were left alone.
 
 ### CG-32 · The dedupe counter overflowed an `info` payload the gateway had just accepted  ✅ shipped 2026-07-30 · [PR #32](https://github.com/mmackelprang/chat-gateway/pull/32)
 
