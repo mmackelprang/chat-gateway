@@ -5,8 +5,9 @@ Three things are pinned here, and they are three different kinds of claim:
 1. **the membership of the marked set** — which exception classes claim
    `GatewayAuthoredError`, repo-wide, and that `PubSubError` is not one of them;
 2. **the messages those classes are built from** — a structural guard over
-   every raise site, because the whole design rests on those constructors
-   STAYING names-and-statuses-only and a docstring saying so would rot;
+   every construction site, because the whole design rests on those
+   constructors STAYING names-and-statuses-only, and a docstring saying so
+   would rot;
 3. **what `poll_once` actually prints** — the defect CG-29 was filed for, on
    the real R4 path, for a marked exception and for a foreign one.
 
@@ -17,13 +18,11 @@ of response bytes. CG-23 already drives `webhook.send`, `chat_api.send` and
 `test_reason_phrase_is_looked_up_locally_not_read_off_the_wire`,
 `test_send_text_failure_strings_are_unchanged_by_cg_23` in `test_adapters.py`).
 Those are the behavioural half; this file is the structural half, and its job is
-the raise site those tests do not reach — including the one nobody has written
-yet.
+the construction site those tests do not reach — including the one nobody has
+written yet.
 """
 
 import ast
-import datetime as dt
-import re
 from pathlib import Path
 
 import httpx
@@ -64,15 +63,33 @@ MARKED = {
 
 
 def _declared_marked_classes() -> dict[str, str]:
-    found = {}
+    """Every class the marker reaches, TRANSITIVELY.
+
+    Direct bases are not enough: `describe_exception` asks `isinstance`, which
+    is MRO-aware, so `class ChatApiTimeoutError(ChatApiError)` is marked as
+    surely as its parent — and a guard that only looked for a literal
+    `GatewayAuthoredError` base would print that subclass's messages while
+    reporting the set unchanged. Fixed point over the package's own
+    inheritance graph.
+    """
+    classes = []
     for py in _modules():
         tree = ast.parse(py.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef) and any(
-                isinstance(b, ast.Name) and b.id == "GatewayAuthoredError"
-                for b in node.bases
-            ):
-                found[node.name] = _rel(py)
+            if isinstance(node, ast.ClassDef):
+                bases = {b.id for b in node.bases if isinstance(b, ast.Name)}
+                classes.append((node.name, _rel(py), bases))
+
+    found: dict[str, str] = {}
+    reached = {"GatewayAuthoredError"}
+    changed = True
+    while changed:
+        changed = False
+        for name, module, bases in classes:
+            if name not in found and bases & reached:
+                found[name] = module
+                reached.add(name)
+                changed = True
     return found
 
 
@@ -157,9 +174,10 @@ def test_describe_exception_fails_closed_on_a_class_it_has_never_seen():
 # `{resp.text}` or `{event['message']}` turns the suite red the moment it is
 # written rather than the first time it is printed.
 #
-# Compared after `_norm` strips whitespace and parentheses, which makes the
-# comparison independent of `ast.unparse`'s formatting across Python versions
-# while keeping `resp.status_code` and `resp.text` distinct.
+# Compared by parsed AST (`_key`), not by source text. Both sides are parsed on
+# the SAME interpreter, so `ast`'s cross-version formatting differences cancel —
+# which matters at `requires-python = ">=3.10"` — and unlike normalizing the
+# text there is no way for two different expressions to collide into one key.
 APPROVED_INTERPOLATIONS = {
     "identity.name",                    # non-secret; registry.health() publishes it
     "resp.status_code",                 # an int
@@ -170,17 +188,19 @@ APPROVED_INTERPOLATIONS = {
     "sorted(k for k in event if not k.startswith('_'))[:10]",
 }
 
-# `f"...".rstrip()` is the only wrapper any raise site uses. Listed rather than
-# assumed so that `.format(resp.text)` — which would smuggle a value past a
-# guard that only inspects f-string slots — is rejected as an unknown shape.
+# `f"...".rstrip()` is the only wrapper any construction site uses. Listed
+# rather than assumed so that `.format(resp.text)` — which would smuggle a
+# value past a guard that only inspects f-string slots — is rejected as an
+# unknown shape.
 APPROVED_WRAPPERS = {"rstrip", "strip", "lstrip"}
 
 
-def _norm(text: str) -> str:
-    return re.sub(r"[\s()]", "", text)
+def _key(node: ast.AST) -> str:
+    """A structural identity for an expression. No formatting, no collisions."""
+    return ast.dump(node)
 
 
-APPROVED = {_norm(t) for t in APPROVED_INTERPOLATIONS}
+APPROVED = {_key(ast.parse(t, mode="eval").body) for t in APPROVED_INTERPOLATIONS}
 
 
 def _unwrap(node: ast.AST) -> ast.AST | None:
@@ -205,24 +225,45 @@ def _enclosing_scope(node: ast.AST) -> ast.AST:
     return cur
 
 
-def _single_assignments(scope: ast.AST) -> dict[str, str]:
-    """`name -> source` for names bound exactly once in this scope.
+_NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
+                  ast.ClassDef, ast.GeneratorExp, ast.ListComp, ast.SetComp,
+                  ast.DictComp)
 
-    Two raise sites read a local `reason`; without this the guard could not
-    tell `httpx.codes.get_reason_phrase(...)` (a local table) from
+
+def _single_assignments(scope: ast.AST) -> dict[str, ast.AST]:
+    """`name -> value node` for names bound exactly once in THIS lexical block.
+
+    Two construction sites read a local `reason`; without this the guard could
+    not tell `httpx.codes.get_reason_phrase(...)` (a local table) from
     `resp.reason_phrase` (the wire). Bound more than once → not resolvable →
     rejected, which is the safe direction.
+
+    Nested functions, lambdas and comprehensions are NOT descended into: a name
+    bound in an inner scope is a different binding, and resolving through one
+    could attribute the wrong expression to the message in either direction.
     """
-    seen: dict[str, list[str]] = {}
-    for node in ast.walk(scope):
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and \
-                isinstance(node.targets[0], ast.Name):
-            seen.setdefault(node.targets[0].id, []).append(ast.unparse(node.value))
+    seen: dict[str, list[ast.AST]] = {}
+
+    def walk(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.Assign) and len(child.targets) == 1 and \
+                    isinstance(child.targets[0], ast.Name):
+                seen.setdefault(child.targets[0].id, []).append(child.value)
+            if not isinstance(child, _NESTED_SCOPES):
+                walk(child)
+
+    walk(scope)
     return {k: v[0] for k, v in seen.items() if len(v) == 1}
 
 
-def _raise_sites():
-    """Every `raise <marked class>(...)` in the package, with its message AST.
+def _construction_sites():
+    """Every `<marked class>(...)` CALL in the package, wherever it appears.
+
+    Construction sites, not `raise` statements: `err = ChatApiError(f"...")`
+    followed by `raise err` builds exactly the same message and `poll_once`
+    prints exactly the same string, but the `raise` node's `.exc` is a bare
+    Name and a raise-shaped guard would never look at it. The message is made
+    at construction, so that is what gets read.
 
     Matched by class NAME. An import alias would slip past — noted rather than
     defended against, because nothing in this repo aliases an exception import
@@ -234,22 +275,22 @@ def _raise_sites():
             for child in ast.iter_child_nodes(node):
                 child.parent = node
         for node in ast.walk(tree):
-            if (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
-                    and isinstance(node.exc.func, ast.Name)
-                    and node.exc.func.id in MARKED):
-                yield _rel(py), node.lineno, node.exc
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in MARKED):
+                yield _rel(py), node.lineno, node
 
 
-def test_every_marked_raise_site_interpolates_only_names_and_statuses():
+def test_every_marked_message_interpolates_only_names_and_statuses():
     """The test the design asks for instead of a comment.
 
     `poll_once` prints these messages in full. That is only safe while every
     one of them is assembled from literals plus the expressions in
-    APPROVED_INTERPOLATIONS — a property of the raise sites, not of the classes,
-    and therefore one that a future edit can quietly remove. This reads them.
+    APPROVED_INTERPOLATIONS — a property of the construction sites, not of the
+    classes, and therefore one that a future edit can quietly remove. This
+    reads them.
     """
     complaints = []
-    for module, lineno, call in _raise_sites():
+    for module, lineno, call in _construction_sites():
         where = f"{module}:{lineno} {call.func.id}"
         if len(call.args) != 1 or call.keywords:
             complaints.append(f"{where}: expected exactly one message argument")
@@ -265,11 +306,11 @@ def test_every_marked_raise_site_interpolates_only_names_and_statuses():
         for slot in ast.walk(msg):
             if not isinstance(slot, ast.FormattedValue):
                 continue
-            expr = ast.unparse(slot.value)
-            if isinstance(slot.value, ast.Name) and expr in resolvable:
-                expr = resolvable[expr]        # `reason` -> what it was set to
-            if _norm(expr) not in APPROVED:
-                complaints.append(f"{where}: interpolates {expr!r}")
+            value = slot.value
+            if isinstance(value, ast.Name) and value.id in resolvable:
+                value = resolvable[value.id]   # `reason` -> what it was set to
+            if _key(value) not in APPROVED:
+                complaints.append(f"{where}: interpolates {ast.unparse(value)!r}")
 
     assert not complaints, (
         "A gateway-authored exception message changed shape.\n\n"
@@ -278,18 +319,17 @@ def test_every_marked_raise_site_interpolates_only_names_and_statuses():
           "the new expression carries a NAME or an HTTP STATUS and never a "
           "response body, a request URL or an inbound payload value (hard rule "
           "#2), then add it to APPROVED_INTERPOLATIONS. If it carries a value, "
-          "the fix is the raise site, not this list.")
+          "the fix is the construction site, not this list.")
 
 
-def test_the_guard_above_actually_finds_the_raise_sites():
+def test_the_guard_above_actually_finds_the_construction_sites():
     """A guard that inspects nothing passes everything.
 
-    Pins the count so a refactor that moves these out of `raise X(...)` form —
-    into a factory, say — cannot silently empty the guard while leaving it green.
+    Pins the count so a refactor that moves these behind a factory cannot
+    silently empty the guard while leaving it green.
     """
-    sites = list(_raise_sites())
-    per_class = {}
-    for _, _, call in sites:
+    per_class: dict[str, int] = {}
+    for _, _, call in _construction_sites():
         per_class[call.func.id] = per_class.get(call.func.id, 0) + 1
     assert per_class == {
         "ChatApiError": 5, "UnrecognizedEventError": 4, "WebhookDeliveryError": 2,
