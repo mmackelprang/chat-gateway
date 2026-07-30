@@ -265,9 +265,32 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   — notify + dead-man, `allow_inbound: false`), `jobhunt`
   (docs/consumers/jobhunt.md — the first two-way tenant: whole-event
   callback forwarding with per-user authorization, structured reasons via
-  selection widgets, fail-loudly-in-thread; note: modal dialogs are
-  impossible over Pub/Sub transport — selection widgets are the supported
-  path).
+  selection widgets, fail-loudly-in-thread).
+- **Selection widgets and modal dialogs — two claims, two different confidence
+  levels** (CG-11, 2026-07-30). The sentence that used to sit in the jobhunt
+  parenthetical above — *"modal dialogs are impossible over Pub/Sub transport —
+  selection widgets are the supported path"* — put a proven claim and an untested
+  one on either side of one confident dash, and got the proven half's **scope**
+  wrong as well. Precisely:
+  - **A selection widget IS an interaction trigger on classic**, the runtime we
+    run. Changing a dropdown on a card with **no button at all** produced a whole
+    `CARD_CLICKED` carrying the widget's own `onChangeAction.function` as the
+    action identity (`tests/fixtures/classic-cardclicked-onchange-event.json`,
+    pinned by `test_normalize_real_classic_onchange_with_no_button_at_all`).
+    Under **add-ons** it is not — `onChangeAction` dies there with `gsuiteaddons`
+    code 13, exactly like a button. This is a property of the **runtime**, not of
+    Pub/Sub transport; conflating the two is precisely what made the old sentence
+    wrong.
+  - ***Widgets for input, one button to submit* stays the recommendation** — now
+    because it is **portable** (the only thing that works on add-ons) and because
+    it yields **one event per user decision** instead of two, not because it is
+    the only option. A card carrying an `onChangeAction` fires on change *and*
+    again on submit.
+  - **Modal dialogs are BELIEVED impossible over Pub/Sub transport** — they need
+    a synchronous HTTP interaction endpoint, and Pub/Sub delivery gives the
+    gateway no response channel. **Doc-derived inference, never tested on either
+    runtime.** Do not restate it as an observation. Full wording, with the
+    add-ons/classic split: ADR-0001 §7.
 - Deploy target: `/srv/chat-gateway/` on the appserver (homelab conventions:
   off-repo `.env` mode 600, SECRETS.md pointers, service doc + DASHBOARDS +
   Homepage registration).

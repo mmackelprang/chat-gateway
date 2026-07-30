@@ -244,14 +244,17 @@ existed. As of this file's date:
 
 | Location | State |
 |---|---|
-| `docs/integration-guide.md`, *"Collecting structured input"* | **already scoped by runtime**, and already records that `onChangeAction` fires on classic. Its one staleness is the parenthetical `(deployed today)` on the add-ons runtime, which production left on 2026-07-29 |
-| ADR-0001 §7 | still carries the unscoped sentence *"A selection widget is not an interaction trigger"* in its body — the one place that flatly contradicts §6. The ADR's own status banner records E1's opposite result |
-| `CLAUDE.md` | *"modal dialogs are impossible over Pub/Sub transport — selection widgets are the supported path"* (verbatim) — states the dialog inference as settled fact and frames widgets as input-only |
-| `jobhunt.md` R6 | the same two claims, differently worded — *"True modal dialogs are NOT possible…; the selection-widget path is the supported one"* |
+| `docs/integration-guide.md`, *"Collecting structured input"* | **already scoped by runtime**, and already records that `onChangeAction` fires on classic. Its one staleness — the parenthetical `(deployed today)` on the add-ons runtime — was corrected by CG-11 on 2026-07-30 |
+| ADR-0001 §7 | **corrected by CG-11, 2026-07-30.** Its body carried the unscoped sentence *"A selection widget is not an interaction trigger"*, which flatly contradicted §6 above *and* the ADR's own status banner. §7 is now scoped per runtime and carries a correction banner recording why the original generalised from add-ons evidence to "over Pub/Sub transport" |
+| `CLAUDE.md` | **corrected by CG-11, 2026-07-30.** It said *"modal dialogs are impossible over Pub/Sub transport — selection widgets are the supported path"* — stating the dialog inference as settled fact and framing widgets as input-only |
+| `jobhunt.md` R6 | **corrected by CG-11, 2026-07-30** — the same two claims, differently worded |
 
-Queue item **CG-11** owns all of it and had not shipped when this file was
-written. Apart from ADR-0001 §7's body sentence, none of those locations
-actually contradicts §6 on whether a widget can *trigger* an interaction.
+Queue item **CG-11 owned all of it and shipped 2026-07-30.** This section
+predates that PR and is deliberately kept rather than deleted: it is the record
+of what those documents said, and §6 above was written from the capture that
+disproved them. Apart from ADR-0001 §7's body sentence, none of those locations
+ever contradicted §6 on whether a widget can *trigger* an interaction — which is
+why "those docs are stale" was too broad to be true even before they were fixed.
 
 **True modal dialogs.** They are believed impossible over Pub/Sub transport,
 because a dialog requires the app to answer the interaction **synchronously**

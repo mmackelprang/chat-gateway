@@ -230,7 +230,7 @@ card built against a guess fails at tap time, in front of a user.
 
 #### Collecting structured input: widgets for input, one button to submit
 
-**Under the add-ons runtime (deployed today)** a `selectionInput` is **not** an
+**Under the add-ons runtime** (which this project left on 2026-07-29) a `selectionInput` is **not** an
 interaction trigger. Its `onChangeAction` fails exactly like a plain button's
 (`gsuiteaddons` code 13). What works is the widget's **value**: Chat harvests
 `commonEventObject.formInputs` when a **button** is tapped, and the gateway
