@@ -111,9 +111,17 @@ Rules of the road: delivery is **at-least-once** (`dedupe_key` = the Pub/Sub
 message id — make your handler idempotent; self-contained button tokens
 help); selection-widget values arrive merged into `action.params`; users not
 on your `allowed_users` list are refused in-thread and never reach you; if
-your callback is down, retries span ~10s and then the gateway posts your
-`unreachable_message` into the thread — the user always sees a tap that
-didn't land. Return any 2xx quickly; do your work async.
+your callback is down, retries span ~10s **by contract** and then the gateway
+posts your `unreachable_message` into the thread — the user always sees a tap
+that didn't land. Return any 2xx quickly; do your work async.
+
+**"By contract" is load-bearing there: `~10s` is the forwarder's retry
+schedule, not what your user waits.** Attempts fire on subscriber poll ticks, so
+a callback that hangs rather than refusing pushes every later attempt out — and
+exhaustion is the only route to the in-thread notice, which makes the slow case
+the one worth sizing a timeout against. The measured figures live in
+[the jobhunt handoff, §7](consumers/jobhunt-handoff.md#7-r7--fail-loudly-in-thread)
+and are deliberately not repeated here.
 
 ### Making a card button actually come back — the card convention
 
