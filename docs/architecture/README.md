@@ -17,6 +17,7 @@ conflicts with one, say so in the new ADR and supersede it deliberately.
 | ADR | Date | Status | Subject |
 |---|---|---|---|
 | [0001 — Tier-2 interaction model](decisions/2026-07-29-tier2-interaction-model.md) | 2026-07-29 | Proposed | Whether to depend on undocumented topic-as-function routing for card interactions; where action identity lives now that `action.id` arrives empty; how breakage is detected |
+| [0002 — Journalled message bodies](decisions/2026-07-31-journalled-message-bodies.md) | 2026-07-31 | **Accepted — `D + A`** | What CG-54's durable queues put on disk, measured; for how long; and whether `aitrader` keeps the promise that no body of its is ever written, or keeps the durability that broke it. **Decided: keep the durability** — compact on drain, and rewrite the promise as a bounded retention. Scope widened the same day to cover `inbox-data/` too. **One question left open (§9 Q6): pruning the audit trail would breach the integration guide's "never pruned"** |
 
 ## Related
 
