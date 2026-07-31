@@ -3,27 +3,66 @@
 | | |
 |---|---|
 | **Date** | 2026-07-31 |
-| **Status** | **PROPOSED — NO OPTION SELECTED.** This ADR measures the exposure and lays out seven options. §10 states the question awaiting the user's sign-off. |
-| **Decides** | nothing. It is written to be decided *from*. |
+| **Status** | **ACCEPTED — `D + A`**, decided by the user 2026-07-31. Compact on drain, and correct the contract as a bounded retention rather than an absolute. §6 records the decision; §§2–5 are the evidence it was made from and are unchanged. |
+| **Decides** | Whether the gateway keeps `aitrader`'s *"no body text of yours is ever written anywhere"* promise or the durability CG-54 paid for. **Answer: the durability**, with the exposure window collapsed from weeks to seconds |
 | **Raised by** | `CG-65` item 3 — *"If you never call `/v1/messages`, no body text of yours is ever written anywhere"* (`docs/consumers/aitrader.md:217`) became false when #45 merged |
-| **Blocks** | `CG-65`'s correction of `aitrader.md` §6 and §8. A Builder must not choose between these options on the user's behalf |
-| **Relates to** | `CG-54` (#45, the change that caused this), `CG-66` (`.gitignore`, and `journal.py`'s citation of an unshipped runbook control), `CG-53`/`CG-55` (the deploy that would ship that control) |
+| **Unblocks** | `CG-65`'s correction of `aitrader.md` §6 and §8 (option A), and a new implementation row for option D. Neither is written here |
+| **Relates to** | `CG-54` (#45, the change that caused this), `CG-67` (#48, which shipped the `.gitignore` half of §2.9 while this ADR was open), `CG-66` (`journal.py`'s citation of an unshipped runbook control), `CG-53`/`CG-55` (the deploy that would ship that control) |
 | **Hard rules engaged** | #1 (transport, never schemas), #2 (secrets are env-only), #4 (per-app auth + allowlists), #5 (honest `/healthz`), #6 (inbound opt-in) |
 
-> ## ⚠ This ADR does not decide.
+> ## ✅ Status: DECIDED — `D + A`, 2026-07-31
 >
-> Every option below is costed honestly and **none is adopted.** §6 marks one
-> recommendation *as a recommendation*, in a section that exists to be
-> overruled. The decision is the user's because it re-prices a **consumer
-> contract's privacy guarantee against the durability guarantee #45 just paid
-> for**, and those two are in genuine tension — not in apparent tension that a
-> careful reading dissolves.
+> **This ADR was written not to decide.** It measured the exposure, costed seven
+> options and marked one recommendation *as a recommendation*, in a section that
+> existed to be overruled. **The user has now decided, the same day, and chose
+> `D + A`** — the recommendation, on the recommendation's own reasoning plus one
+> fact the ADR could not supply.
 >
-> **No ⚠ flag is cleared, added or reworded here.** The verification ledger
-> lives in [`CLAUDE.md`](../../../CLAUDE.md) ("Verification ledger") and is
-> **not** restated in this document — every attempt to restate it in this repo
-> has drifted within two PRs. What changed on 2026-07-31 is what reaches
-> **disk**, which is a different axis from what has met **Google**.
+> | Item | Outcome |
+> |---|---|
+> | **§9 Q1 / Q2 — promise or durability?** | **Durability.** Options **D** (compact on drain) **+ A** (correct the contract) adopted. `aitrader.md:217` is rewritten as a bounded, stated retention, not restored as an absolute |
+> | **§9 Q4 — is the state dataset snapshotted?** | **ANSWERED: no.** Plain ZFS dataset, no snapshots, no replication. **This is the fact that decided it** — see below |
+> | **§9 Q3 — is a per-app `journal_payload` flag rule-#1-clean?** | **NOT REACHED.** Option C was not chosen, so the question does not arise. The argument is **kept on record, not resolved** — it will recur the next time a per-app flag is proposed, and §4.1 finds a place where it plausibly recurs immediately |
+> | **§9 Q5 — the `0644` never-pruned `inbox-data/` files** | **ANSWERED: folded into CG-65's implementation scope**, not deferred to a separate row. **Both** exposures are fixed in one cycle. §4.1 gives the shape; §6 D5 records the decision |
+> | **B and C** | **Rejected, on the record, as a choice about which failure is worse** — not dismissed. §6 D3 |
+>
+> ⚠ **The scope widened after the first decision, and that is recorded rather
+> than smoothed over.** `D + A` was chosen while §9 Q5 was still open, on the
+> understanding that it fixed the **smaller** of the two exposures this ADR
+> measured. The user then read that framing and **widened the row rather than
+> accepting the smaller fix**, so CG-65 now covers `inbox-data/` too. §4.1 is
+> written *after* the option set and deliberately **not** lettered into it —
+> A–G were written about the queue journal and none of them fits an audit trail.
+>
+> ⚠ **And fixing the second half surfaced a second contract question, which this
+> ADR does NOT resolve.** `docs/integration-guide.md:366-367` promises every
+> consumer that the audit trail is *"never pruned"*. Pruning it would breach a
+> published guarantee **the same way #45 breached aitrader's** — in the opposite
+> direction. §4.1 states it; §9 Q6 carries it as open.
+>
+> **The load-bearing consequence of Q4's answer.** §2.9 flagged that if the
+> TrueNAS dataset were snapshotted or replicated, every retention figure in §2.2
+> would be a **floor** rather than a ceiling, compaction would erase nothing that
+> mattered, and the whole option ranking would shift toward E or B/C. It is not.
+> So the measured windows are the **actual exposure**, an erase in the live file
+> is an erase everywhere, and D's value is **confirmed rather than merely
+> unrefuted**.
+>
+> **A decision changes the status, never the evidence.** Every measurement in §2
+> stands byte-for-byte as taken on 2026-07-31 — the 500-notify arithmetic, the
+> `0600`/`0755` modes, the aggregate-clock result, the `/v1/messages` inversion.
+> §6's pre-decision recommendation is kept verbatim beneath the decision rather
+> than rewritten into it.
+>
+> **No ⚠ flag is cleared, added or reworded here** — not by the ADR and not by
+> the decision. The verification ledger lives in
+> [`CLAUDE.md`](../../../CLAUDE.md) ("Verification ledger") and is **not**
+> restated in this document; every attempt to restate it in this repo has drifted
+> within two PRs. What changed on 2026-07-31 is what reaches **disk**, which is a
+> different axis from what has met **Google**.
+>
+> **Nothing is implemented here.** A Builder ships D off §4's code shape and A
+> off §5's list; this ADR touches no source and no consumer contract.
 
 ---
 
@@ -282,18 +321,31 @@ Compaction is `os.replace` of a fresh file over the old inode
 
 - **Freed blocks are not overwritten.** Forensic recovery from free space is out
   of scope for a homelab NAS, and stating it is cheaper than implying otherwise.
-- ⚠ **Filesystem snapshots and backups are not reached, and this is unmeasured.**
-  The deploy target is `/mnt/datapool/apps/chat-gateway/state` on TrueNAS —
-  a **ZFS** pool. If that dataset is snapshotted or replicated, the effective
-  retention of a journalled body is the **snapshot retention policy**, not the
-  compaction interval, and every number in §2.2 is a floor rather than a ceiling.
-  Neither the arc plan nor the spec says one way or the other. **This is an open
-  question only the user can answer** (§9, §10).
-- ⚠ **`.gitignore` does not ignore `state/`**, and `.env.example` defaults
-  `CHAT_GATEWAY_STATE_DIR=state` — the repo root. `inbox-data/` *is* ignored,
-  which shows the rule was understood; `state/` did not need it before #45 and
-  does now. **CG-66 owns this line and a Builder is on it** — it is recorded here
-  as part of the exposure, not as work this ADR claims.
+- **Filesystem snapshots and backups.** ✅ **ANSWERED 2026-07-31 by the user, and
+  the answer is no.** `/mnt/datapool/apps/chat-gateway/state` is a **plain ZFS
+  dataset — no snapshots, no replication.**
+
+  *The original wording is kept, because what it flagged is exactly what the
+  answer resolves:* ⚠ *"If that dataset is snapshotted or replicated, the
+  effective retention of a journalled body is the snapshot retention policy, not
+  the compaction interval, and every number in §2.2 is a floor rather than a
+  ceiling. Neither the arc plan nor the spec says one way or the other."*
+
+  **It is not, so they are not floors — they are the actual windows,** and an
+  erase in the live file is an erase everywhere. This is the fact that confirmed
+  option D rather than merely leaving it unrefuted (§6). ⚠ **It is a property of
+  today's dataset, not a guarantee**: adding a snapshot task to that dataset later
+  would silently restore the floor and re-open this question. §6 D4 makes that a
+  named revisit trigger rather than a footnote.
+- **`.gitignore` did not ignore `state/`** while this ADR was being written —
+  and `.env.example` defaults `CHAT_GATEWAY_STATE_DIR=state`, the repo root, so a
+  local run left tenant bodies stageable by `git add -A`. `inbox-data/` *was*
+  already ignored, which showed the rule was understood; `state/` did not need it
+  before #45 and did after. ✅ **Fixed and merged as `CG-67` (#48, `1bd53a7`)**
+  while this ADR was open — this ADR is based on that commit and `state/` is
+  ignored on it. Recorded rather than deleted, because the *reason* it was
+  missing is the finding: the ignore rule tracked where bodies used to be, and
+  #45 moved them.
 
 ---
 
@@ -443,6 +495,12 @@ Weakest option on its own. Non-trivial *only* if the snapshot/backup answer in
 §2.9 comes back "yes, replicated off-box", which would make the off-box copy the
 real threat model rather than the local file.
 
+> ✅ **That conditional resolved against E, 2026-07-31.** §2.9's question was
+> answered *no* — plain dataset, no snapshots, no replication — so the off-box
+> copy E was written to protect against does not exist, and E's only remaining
+> buyer is a stray `git add -A`, which `CG-67` closed. **E is rejected**, and it
+> is rejected because the fact came back, not because it was weak on paper.
+
 ### Option F — Per-app journal files
 
 `state/queue/delivery-<app>.jsonl`, one per tenant.
@@ -489,7 +547,115 @@ other option changes the sentence instead.
 | **D + G** | Yes, and well: event-driven erase with a time-based backstop for a queue that never drains |
 | **F + D** | Yes. F alone is harmful (§4) |
 | **B/C + D** | Yes but largely redundant — a tenant with no payload journalled has nothing for D to erase |
-| **E + anything** | Orthogonal. It answers a different threat model (the off-box copy), and only earns its cost if §9 question 4 comes back "snapshotted" |
+| **E + anything** | Orthogonal. It answers a different threat model (the off-box copy), and only earns its cost if §9 question 4 comes back "snapshotted" — ✅ **it came back "no"**, so E is rejected |
+
+---
+
+## 4.1 The second exposure — `inbox-data/`, and why no option above covers it
+
+> **Added 2026-07-31, after the `D + A` decision, when the user folded §9 Q5 into
+> CG-65's scope rather than deferring it.** This section is deliberately **not**
+> lettered into §4. Options A–G were each written about the **queue journal**,
+> and forcing an audit trail into one of them would be the kind of tidy-looking
+> mistake this ADR exists to avoid. Said plainly, as asked.
+
+### Why A–G do not apply
+
+`journal.py:9-12` draws the distinction the whole repo rests on: *"NOT THE AUDIT
+TRAIL, and not a replacement for it… they say what ARRIVED, never what LEFT."*
+That is precisely why the option set does not transfer:
+
+| Option | Why it does not fit `inbox-data/` |
+|---|---|
+| **D** (compact on drain) | **There is no drain.** A journal record becomes worthless the moment its job is terminal; an audit record is *born* terminal and is the artifact by design. "Compact when the live set empties" has no meaning where nothing is ever live |
+| **B / C** (reference-only) | An audit trail whose payload is a reference is not an audit trail. Its entire value is the payload |
+| **F** (per-app files) | **Already done** — `<app>-<date>.jsonl` is per-app *and* per-day. F's mechanism is the one thing this artifact already has |
+| **G** (shorter compaction window) | Compaction is a journal concept. There are no superseded records to reclaim |
+| **E** (encrypt) | Rejected for the journal on §2.9's answer; the same answer applies here |
+| **A** (document it) | Necessary and insufficient — the same as for the journal |
+
+**What the second half needs is a *retention policy*, which is a different kind
+of object from anything §4 offers.** Shape only, at §4's altitude:
+
+### Shape — three requirements and one trap
+
+1. **Mode: `0600`, at create, before the first write.** `Inbox._audit`
+   (`inbox.py:184-192`) never chmods; `journal.py` already has the exact
+   primitive (`_chmod_quietly`) and already applies it in the right place —
+   inside the `open()` context, before any payload byte is written (§2.5
+   finding 1). This is the cheap half and it is a straight lift, not a design.
+   The same applies to `DeliveryLog.record`'s `deliveries/*.jsonl` (also `0644`).
+
+2. **Pruning: TIME-bounded, in days — never count-bounded.** ⚠ **This is the one
+   place this ADR must not repeat its own finding as a mistake.** §2.2 measured
+   that the journal's count-bound (`DEFAULT_COMPACT_AFTER`) yields a retention
+   *nobody can convert to a date* — "500 gateway-wide notifies" is not a sentence
+   that can go in a consumer contract, and turning it into one required a
+   parameterised table and a paragraph of arithmetic. A retention policy on human
+   message content has to be expressible as **"N days"** because that is the unit
+   a contract, a privacy posture and a subject-access request are all written in.
+   **The artifact is already sharded by exactly the right dimension** — the
+   filename `<app>-<date>.jsonl` *is* the retention key, so pruning is a directory
+   listing and an `unlink`, with no parsing and no rewrite. That is a genuine
+   piece of luck and it should be spent, not designed around.
+
+3. **A sweeper with no cron.** This deployment has one always-on process and no
+   scheduler. Shape: a boot-time sweep plus a periodic one on an existing tick
+   (`HeartbeatMonitor` or the dispatcher loop already wake up), counted at
+   `/healthz` like every other quiet deletion in this system — hard rule #5 does
+   not distinguish between work dropped and work deleted.
+
+### What inbound human content has to answer that an outbound queue does not
+
+The reason this is not simply "the same fix pointed at another directory":
+
+- **It is a record of a *person*, not of a job.** `InboundReply` carries
+  `sender_email`, `sender_display` and the user's own `text`
+  (`envelope.py:91-106`). The outbound journal holds an application's rendered
+  output. Deletion of the first has a justification and possibly an obligation
+  that deletion of the second does not.
+- ⚠ **It is the designated recovery artifact, by name, in two places.**
+  `inbox.py:110-112` tells an operator that *"the per-app JSONL audit beside this
+  queue is the recovery record"* when a journalled reply no longer parses, and
+  `docs/integration-guide.md:382-383` says that in that case *"the audit file is
+  then the only copy."* **A retention window is therefore also a recovery
+  window**, and the two cannot be chosen independently. Prune to 7 days and the
+  `unrevivable_at_boot` recovery path is 7 days deep.
+- **Whose content is it?** jobhunt may have a legitimate need to reconstruct a
+  user's decision history; aitrader has no stake in this directory at all
+  (§2.7 — it never reaches `inbox.put`). A per-tenant retention window is the
+  obvious answer and it lands **straight back on §9 Q3's hard-rule-#1 question**,
+  which the journal decision left *not reached*. Noted, not answered: if
+  retention becomes per-app registry policy, that question is live again, and it
+  should be argued from §4 Option C's text rather than re-derived.
+- **`_unrouted` has no owner and no consent.** §2.7's unparseable bucket
+  accumulates whole `raw` events that are unattributable by construction. Its
+  retention answers to no tenant, which is an argument for the *shortest* window
+  in the directory, not the default one.
+- **Delete or redact?** Unlinking the day-file loses the arrival record entirely;
+  blanking `text` / `sender_email` in place keeps it. Two different products with
+  two different contract stories, and this ADR does not pick.
+
+### ⚠ The contract question — surfaced, NOT resolved
+
+**`docs/integration-guide.md:366-367` promises every consumer, in the published
+integration guide, that the per-app JSONL audit is written *"one file per app per
+day, written before anything is queued, **never pruned**."***
+
+**Pruning it breaches a published guarantee — the same defect as #45, in the
+opposite direction.** The journal broke a *"never written"* promise by writing;
+pruning breaks a *"never pruned"* promise by deleting. That symmetry is not a
+rhetorical flourish, it is the reason to stop: this ADR exists because a
+durability change silently invalidated a sentence in a consumer contract, and the
+fix for it is now positioned to do the same thing to a different sentence in a
+different document. **A second contract breach discovered while fixing the first
+is worth halting for.**
+
+Recorded as **§9 Q6, open**. It is not this ADR's to resolve and it is explicitly
+**not** covered by the `D + A` decision. Note also that the promise is in the
+*shared* integration guide, so it is owed to **every** consumer, not only
+jobhunt — which makes it a wider question than CG-65's aitrader framing, and the
+reason it is flagged here rather than absorbed.
 
 ---
 
@@ -508,9 +674,11 @@ Independent of the decision, these are already true and a Builder will hit them:
 3. **The `/v1/messages` inversion (§2.8) must be corrected, not deleted.**
 4. **`aitrader.md:418`'s absolute needs the `_unrouted` caveat** (§2.7) or it
    will be false for a second, narrower, pre-existing reason.
-5. **CG-66 items stand on their own** — `.gitignore`, and `journal.py`'s
-   present-tense citation of the unshipped `0750` runbook line. Neither is this
-   ADR's to fix and a Builder owns both.
+5. **CG-66's items stand on their own, and one of them has already shipped.**
+   The `.gitignore` half was split out and merged as **CG-67** (#48) while this
+   ADR was open — `state/` is ignored on this ADR's base commit. What remains in
+   CG-66 is `journal.py:26`/`:290`'s present-tense citation of the unshipped
+   `0750` runbook line. Neither is this ADR's to fix.
 6. **One line-number citation in `aitrader.md` has itself drifted.** `:209`
    points at *"`delivery.py:44-50`"* for `DeliveryLog.record()`; on `e96e08d`
    that function is at **`delivery.py:77-91`**. The claim it supports is still
@@ -519,7 +687,123 @@ Independent of the decision, these are already true and a Builder will hit them:
 
 ---
 
-## 6. Recommendation — **marked as a recommendation, not a decision**
+## 6. Decision — `D + A`, adopted 2026-07-31
+
+| | |
+|---|---|
+| **Decided by** | the user, **2026-07-31**, the same day the ADR was written |
+| **Adopted** | **Option D** (compact on drain) **+ Option A** (correct the contract), **plus D5** below — the `inbox-data/` half, folded in by a second decision later the same day |
+| **Rejected** | **B** and **C** (D3), and **E** (on §2.9's answer) |
+| **Not reached** | **C's hard-rule-#1 question** — kept on record, not resolved (D6) |
+| **Deliberately unchanged** | every measurement in §2 |
+
+### D1 — Compact on drain
+
+Adopt Option D as written in §4: compact whenever the live set drops to empty, with
+`_maybe_compact_locked`'s 1000-append trigger retained as the backstop for a queue
+that never drains. `Inbox.poll` takes the mirror-image call.
+
+**The reasoning, in the user's terms:** a terminal job's payload has **no replay
+value whatsoever**, so retaining it is not a trade between privacy and durability
+— it is a cost with no matching benefit. D collapses a *finished* body's residency
+from the measured weeks (§2.2) to seconds while leaving the payload, the replay
+path, the registry and the mid-flight double-send answer untouched.
+
+**The fact that confirmed it:** §9 Q4 came back **no snapshots, no replication**.
+Had it come back the other way, D would have been shrinking a number that
+snapshots put straight back, and the ranking would have moved toward E or B/C.
+It did not, so **the measured windows are the real exposure and D's erase is a
+real erase.** D was recommended before that answer arrived; it is *adopted*
+because of it.
+
+**The honest cost, restated so it is not lost in the adoption:** a single stuck
+job pins every other tenant's delivered body on disk until it terminates —
+bounded by the ~73-minute ladder, or by the 24h `REPLAY_MAX_AGE_S` ceiling across
+downtime.
+
+### D2 — Correct the contract as a bounded retention, not an absolute
+
+Adopt Option A. `aitrader.md:217`'s *"no body text of yours is ever written
+anywhere"* is **not** restored — it is replaced by a true, longer, less
+comfortable sentence naming what is written, for how long, and at what mode. §5's
+five consequences all land in the same pass, including the `/v1/messages`
+inversion (§2.8) and `:418`'s `_unrouted` caveat (§2.7).
+
+**A is a floor, not a co-equal choice.** Under every option in §4 those sentences
+were still false; adopting D does not make them true, it makes the true
+replacement short.
+
+### D3 — B and C are rejected as a choice about which failure is worse
+
+Recorded as a rejection with a reason, not a dismissal. **B and C were the only
+options that could restore the literal promise**, and they buy it by reversing
+CG-54's *"losing an alert is the worse failure"* for the one tenant with no
+second channel and no inbound path. The user chose **durability over the
+promise**: a duplicate alert to aitrader is preferable to a lost one, and the
+privacy concern is addressed by shrinking the window rather than by refusing to
+write.
+
+**This is the decision.** Everything else in this ADR is implementation or
+evidence.
+
+### D4 — Revisit trigger: the dataset's snapshot posture
+
+D1 rests on a **measured property of today's deployment**, not a guarantee.
+**If a snapshot or replication task is ever added to the ZFS dataset holding
+`/mnt/datapool/apps/chat-gateway/state`, D's erasure stops being an erasure** —
+every §2.2 figure reverts to a floor and this ADR should be revisited, with E
+back on the table. Named here so it is a trigger rather than a footnote, in the
+same spirit as ADR-0001 §11.
+
+### D5 — The `inbox-data/` half is IN SCOPE, by a second decision the same day
+
+⚠ **This was decided after D1–D3, and the sequence matters.** `D + A` was chosen
+while §9 Q5 was open, on the explicit understanding that it fixed the **smaller**
+of the two exposures §2 measured. The user then **widened CG-65's implementation
+scope to cover both** rather than accept the smaller fix. So:
+
+- **`inbox-data/<app>-<date>.jsonl` — `0644`, never pruned, whole inbound events
+  including `raw` — is fixed in the same cycle as the journal**, not deferred.
+- **§4.1 carries the shape** and is deliberately *not* lettered into §4: options
+  A–G were written about a queue journal, and none of them fits an audit trail.
+  Saying so is the point (`journal.py:9-12` draws exactly this distinction).
+- **The mode fix is a straight lift** of `journal.py`'s existing
+  `_chmod_quietly`; the pruning half is a **time-bounded** policy in days, never
+  count-bounded — §4.1 requirement 2 explains why repeating the journal's
+  count-bound here would reproduce this ADR's own §2.2 finding as a defect.
+
+### D6 — C's hard-rule-#1 question is NOT REACHED, and is kept
+
+Option C was not chosen, so *"is a per-app privacy flag app-domain knowledge
+leaking into the gateway, or is it transport policy?"* does not arise and is
+**not resolved**. The argument in §4 Option C stays on the record in full.
+**It will recur** — and §4.1 identifies a place it may recur immediately, since
+a per-tenant *retention* window is per-app registry policy of exactly the same
+shape. When it does, argue it from §4's text rather than re-deriving it.
+
+### D7 — What `D + A + D5` still does not do
+
+Stated so no reader infers more than was decided:
+
+- **It does not make `aitrader.md:217` true.** A body is still written, and is on
+  disk for as long as its job is live. D changes the magnitude by orders of
+  magnitude, not the kind — which is why D2 is not optional.
+- **It does not resolve §9 Q6**, the *"never pruned"* promise at
+  `docs/integration-guide.md:366-367` that D5's pruning would breach. That is
+  open, it is owed to **every** consumer rather than to jobhunt alone, and a
+  Builder must not prune past it without an answer.
+- **It does not touch `state/deliveries/*.jsonl`'s content** — the delivery log
+  remains titles-only and permanent, which §3 confirms is still structurally
+  true. Only its `0644` mode is in D5's scope.
+
+---
+
+### The pre-decision recommendation, kept verbatim
+
+*This section was written before the decision, marked as a recommendation, in a
+section that existed to be overruled. It was not overruled. It is kept unedited
+rather than folded into D1–D3, so that what was recommended — and on what
+reasoning, before §9 Q4's answer arrived — stays legible beside what was chosen.*
 
 > If the user wants a starting position rather than a blank page:
 >
@@ -570,18 +854,33 @@ Independent of the decision, these are already true and a Builder will hit them:
 | **#5 `/healthz` stays honest** | **Constrains B and C.** A tenant whose queue cannot replay must say so — a new terminal status and a `reasons` line, not a silent difference. It also constrains A: if the contract is corrected to name a retention window, `/healthz` should not contradict it. D and G need no new field |
 | **#6 inbound opt-in, opt-out absolute** | **Untouched by #45 and by every option.** `dispatch` hits `continue` at `pubsub.py:709` before `inbox.put` at `:727`, so no opted-out tenant's inbound event is journalled, audited, or forwarded. Nothing here widens any tenant's inbound surface |
 
+**Re-audited for D5 (`inbox-data/`), added 2026-07-31 with the widened scope:**
+
+| Rule | Effect of D5 |
+|---|---|
+| **#1** | The mode fix is clean. **Pruning is clean only while the window is global.** A *per-tenant* retention window would be per-app registry policy of the same shape as Option C, so it re-opens D6's not-reached question — flagged in §4.1, not decided |
+| **#2** | Unaffected. `configCompleteRedirect*` is already blanked before anything is audited (`pubsub.py:150-159`), so no capability URL is in these files to begin with. Deleting them removes no credential because none is there |
+| **#5** | **Constrains D5.** A sweeper that deletes tenant content must be counted at `/healthz`. Rule #5 does not distinguish work *dropped* from work *deleted*, and a silent deletion path on an artifact two documents call "the only copy" is exactly the shape of failure that rule exists for |
+| **#6** | Untouched. `aitrader` never reaches `inbox.put` (§2.7), so nothing in D5 concerns it. `_unrouted` is the gateway's own bucket, not a tenant's |
+
 ---
 
 ## 8. What this ADR could not verify
 
 Recorded plainly, because an unrecorded gap becomes a silent assumption.
 
-- ⚠ **Whether the TrueNAS `datapool` dataset holding
-  `/mnt/datapool/apps/chat-gateway/state` is snapshotted or replicated.** Neither
+- ✅ **RESOLVED 2026-07-31 — the snapshot question.** This entry read: ⚠
+  *"Whether the TrueNAS `datapool` dataset holding
+  `/mnt/datapool/apps/chat-gateway/state` is snapshotted or replicated. Neither
   the arc plan nor the spec says. If it is, every retention number in §2.2 is a
   **floor**, compaction erases nothing that matters, and options D/F/G lose most
-  of their value. **This is the single highest-leverage unknown in the document**
-  and only the user can look.
+  of their value. This is the single highest-leverage unknown in the document and
+  only the user can look."* **The user looked: it is a plain dataset — no
+  snapshots, no replication.** So §2.2's numbers are ceilings, not floors, and
+  this stopped being a gap. Kept in place rather than deleted, because it was the
+  fact that decided §6 D1 and a reader of §6 should be able to find where it came
+  from. ⚠ It is a **property, not a guarantee** — D4 makes a future snapshot task
+  a named revisit trigger.
 - **Real traffic volume.** §2.2's table is parameterised because the actual
   gateway-wide notify rate has never been measured — the gateway has not been
   deployed. `journal.py:16`'s *"tens of messages a day"* is a design assumption,
@@ -601,28 +900,71 @@ Recorded plainly, because an unrecorded gap becomes a silent assumption.
 
 ---
 
-## 9. Open questions — need an explicit user answer
+## 9. Open questions
+
+> **Q1–Q5 are ANSWERED (2026-07-31). Q6 is NEW and OPEN.** The questions are kept
+> in their original wording — a question is an artifact, and rewriting one to
+> match its answer erases what was actually asked.
+
+| # | Answer |
+|---|---|
+| **1** | **`D + A`**, plus D5's widening. §6 |
+| **2** | **Durability.** The promise is rewritten, not restored. §6 D3 |
+| **3** | **NOT REACHED** — C was not chosen. Kept unresolved on purpose. §6 D6 |
+| **4** | **No snapshots, no replication.** §2.9, §8, §6 D1 |
+| **5** | **Folded into CG-65's scope** — both exposures, one cycle. §6 D5, §4.1 |
+| **6** | ⚠ **OPEN** — new, raised by Q5's answer |
 
 1. **Which option, or which combination?** §4 costs seven; §6 recommends D + A
    and marks it as a recommendation.
+   → ✅ **`D + A`.**
 2. **Is the aitrader promise worth the durability?** Only B/C can restore
    `:217`'s property, and only by reversing CG-54's *"losing an alert is the
    worse failure"* for the tenant with no second channel. **This is the decision;
    everything else is implementation.**
+   → ✅ **No — the durability is kept and the promise is rewritten.**
 3. **If C: is a per-app `journal_payload` flag consistent with hard rule #1?**
    §4 argues both sides and does not resolve it. Precedent (`allow_inbound`)
    favours yes; the uniformity cost is real.
+   → ⏸ **NOT REACHED, not resolved.** C was not chosen. Deliberately left open;
+   §4.1 identifies where it may become live again (a per-tenant retention window
+   is the same shape).
 4. ⚠ **Is `/mnt/datapool/apps/chat-gateway/state` on a snapshotted or replicated
    ZFS dataset?** A one-line answer that re-ranks the whole option list (§8).
+   → ✅ **No. Plain dataset.** This is the fact that confirmed D (§6 D1), and its
+   future reversal is a named revisit trigger (§6 D4).
 5. **Should the `0644` never-pruned files be brought into scope?**
    `inbox-data/<app>-<date>.jsonl` holds whole inbound events including `raw`,
    world-readable and unbounded in time — **a larger exposure than the journal,
    predating #45 by months, and outside CG-65's framing.** Fixing only the
    journal fixes the smaller half. Separate queue item, or part of this decision?
+   → ✅ **Part of this decision.** CG-65's implementation scope now covers both.
+   §6 D5; shape in §4.1.
+6. ⚠ **NEW, and OPEN — raised by Q5's answer, not by the original ADR.** **Does
+   pruning `inbox-data/` breach `docs/integration-guide.md:366-367`?** That
+   published sentence tells **every** consumer the per-app audit is *"one file
+   per app per day, written before anything is queued, **never pruned**"*, and
+   `:382-383` says that when a journalled reply no longer parses *"the audit file
+   is then the only copy"*. **Pruning breaks a promise by deleting, exactly as
+   #45 broke one by writing.** This ADR surfaces it and does not resolve it. It
+   needs its own answer before D5's pruning half ships — the mode half (`0600`)
+   is unaffected and can proceed. Note the scope: this promise is in the shared
+   integration guide, so it is owed to every tenant, not to jobhunt alone.
 
 ---
 
-## 10. The question, stated crisply
+## 10. The question, stated crisply — ✅ **ANSWERED 2026-07-31**
+
+> ### Answer: **keep the durability.** `D + A`.
+>
+> The promise is rewritten as a bounded, stated retention rather than restored as
+> an absolute, and option D shrinks that bound from weeks to seconds at no
+> durability cost. **The snapshot sub-question came back "no"**, which is what
+> made D's shrink a real one.
+>
+> **The question below is kept exactly as it was asked.** It is the artifact —
+> the thing this ADR was written to produce — and a decided ADR that deletes its
+> own question leaves the next reader unable to see what was actually weighed.
 
 > **CG-54 bought durability by writing every `/v1/notify` body to disk, where it
 > stays for roughly 500 gateway-wide notifies — weeks, at the traffic shape the
@@ -652,17 +994,28 @@ Recorded plainly, because an unrecorded gap becomes a silent assumption.
 - [`docs/consumers/aitrader.md`](../../consumers/aitrader.md) §6, §8, §9 —
   **this ADR's decision determines that file's correction, and this ADR does not
   edit it.** CG-65 is the queue item that will.
+- ⚠ [`docs/integration-guide.md`](../../integration-guide.md) `:366-367` and
+  `:382-383` — the *"never pruned"* / *"the only copy"* promises that D5's
+  pruning half would breach. **§9 Q6, open.** Owed to every consumer, not to one
+  tenant.
 - [`docs/superpowers/specs/2026-07-31-production-readiness-arc-design.md`](../../superpowers/specs/2026-07-31-production-readiness-arc-design.md)
   §7 and its plan — D2 (the tailnet ACL before first deploy) and the
   `install -d -m 0750` line that `journal.py` cites in advance.
-- `docs/BUILDER_QUEUE.md` — **CG-65** (blocked on this decision), **CG-66**
-  (`.gitignore`, `journal.py`'s forward-dated citation; a Builder owns both),
-  **CG-54** (the change), **CG-55** (the deploy that would make any of this
-  reach a real body for the first time).
+- `docs/BUILDER_QUEUE.md` — **CG-65** (unblocked by §6; scope now covers both
+  exposures per D5), **CG-66** (`journal.py`'s forward-dated citation — its
+  `.gitignore` half shipped separately as **CG-67**/#48), **CG-54** (the change
+  that caused this), **CG-55** (the deploy that would make any of this reach a
+  real body for the first time). **This ADR does not edit that file.**
 - [`CLAUDE.md`](../../../CLAUDE.md) — the six hard rules, audited in §7, and the
   verification ledger, **linked and deliberately not summarized**.
 
-**Handoff.** No Designer involvement — there is no UX surface. **Planner** picks
-this up once §9 question 1 (and ideally 4) is answered, and turns the chosen
-option into CG-65's scope plus, if B/C/D/E/F/G, a new implementation row. A
-Builder must not select an option from this document.
+**Handoff — the decision is made; the implementation is not written here.**
+
+- **No Designer involvement.** There is no UX surface.
+- **Planner** turns §6 into CG-65's scope: **(a)** option D's compact-on-drain
+  off §4's code shape, **(b)** option A's contract correction off §5's five
+  consequences, and **(c)** D5's `inbox-data/` half off §4.1 — mode first,
+  pruning **gated on §9 Q6**.
+- **Builder** ships from that plan. A Builder must not re-open §6, must not
+  resolve §9 Q6, and must not prune `inbox-data/` until Q6 is answered.
+- **This ADR touches no source, no consumer contract, and no queue file.**
