@@ -76,6 +76,14 @@ curl -s -X DELETE $GW/v1/heartbeat/aitrader/daily-trading-run -H "$AUTH"
 Per-source accounting: `enqueued → retrying* → delivered | failed` (plus
 `deduped` occurrences). Titles and statuses only — bodies are never logged.
 
+Two further terminal statuses appear **only at boot**, written by queue replay:
+`expired` (queued longer than the 24h replay ceiling — posting it now would
+mislead) and `unroutable` (the job could not be rebuilt: identity no longer
+granted, or a payload that no longer validates). Both mean *accepted from you
+and then never sent*, both name the id, and both also show up as counters on
+`/healthz` — see [Durability counters](#durability-counters-at-healthz). Switch
+on the full set, not the four above.
+
 ```bash
 curl -s "$GW/v1/deliveries?limit=20" -H "$AUTH"
 ```
@@ -333,8 +341,14 @@ will find it; that is a deliberate omission, not a gap.
 
 ## Inbound replies — `GET /v1/inbox` (tier 2, opt-in)
 
-Polling returns and clears your app's replies (each carries `space`,
-`thread_key`, sender, text, raw event); a JSONL audit keeps everything.
+Polling returns and clears your app's **pending** replies (each carries `space`,
+`thread_key`, sender, text, raw event). Delivery to you is **at-most-once**: the poll
+empties the queue while it assembles the response, so a response that never
+lands — a dropped connection, a crash in your handler — is a reply you do not
+get again. (One exception, and it points the other way: if the journal write
+that retires a polled batch **fails**, those replies stay open in the journal
+and replay at the next boot. `/healthz` → `delivery.journal_write_errors` is
+non-zero when that has happened; see below.)
 Apps with `allow_inbound: false` in the registry get a hard **403** —
 the no-inbound-control contract is enforced, not just omitted, and the
 gateway never turns Chat input into calls against a consumer system.
@@ -343,12 +357,72 @@ gateway never turns Chat input into calls against a consumer system.
 curl -s $GW/v1/inbox -H "$AUTH"
 ```
 
+### A gateway restart no longer drops your unpolled replies
+
+This section used to say *"a JSONL audit keeps everything"*, which reads like an
+answer to that question and never was one. There are **two** files answering
+**two** questions, and only the second one is about durability:
+
+- The per-app **JSONL audit** says what **ARRIVED**. One file per app per day,
+  written before anything is queued, never pruned. It holds no terminal records
+  — nothing in it marks a reply as polled — so **your pending queue cannot be
+  reconstructed from it.** It is a forensic record on the gateway host, not
+  something you can re-poll.
+- The **queue journal** says what is still **PENDING**. Since 2026-07-31 the
+  inbox queue is journalled under `CHAT_GATEWAY_STATE_DIR/queue/` and replayed
+  at boot, so a restart while your poller is asleep no longer loses the taps
+  waiting for you. **Before that date it did, silently** — which mattered most
+  for exactly the tenants that poll rather than take a callback, because a host
+  that sleeps can leave a tap sitting in that queue for hours.
+
+Both stay; neither substitutes for the other. One consequence is worth planning
+for: a journalled reply that no longer validates as an `InboundReply` at boot —
+an envelope change across a deploy looks precisely like this — is **dropped, not
+delivered**, and counted at `/healthz` → `inbox.unrevivable_at_boot`, which
+degrades the endpoint. It is not resent, and the audit file is then the only
+copy.
+
 ## Identities + health
 
 ```bash
 curl -s $GW/v1/identities -H "$AUTH"    # what you may send as, with readiness
 curl -s $GW/healthz                     # honest health — no auth required
 ```
+
+### Durability counters at `/healthz`
+
+This is where the queue journals report themselves **to you**. A boot line on
+the gateway's console says some of it as well, but that is the operator's copy
+and you cannot read it. Seven fields arrived with the journals on 2026-07-31,
+and **five of them can flip `status` to `degraded`** — so a consumer that alarms
+on `status` should know what they mean before one fires at 03:00. `status` is
+computed **from** `reasons`: anything that can degrade this endpoint says so in
+words, because a number nobody reads is not honest health.
+
+| Field | What it means | Degrades? |
+|---|---|---|
+| `delivery.replayed_at_boot` | outbound jobs restored from the journal at boot, attempt count preserved | no — the feature working |
+| `inbox.replayed_at_boot` | pending inbound replies restored at boot; still yours to poll | no — same |
+| `delivery.expired_at_boot` | queued jobs older than the 24h replay ceiling, **closed rather than posted** — a three-day-old alert delivered now actively misleads | **yes** |
+| `delivery.unroutable_at_boot` | queued jobs that could not be rebuilt at boot: the registry no longer grants that identity (never sent on a withdrawn permission), **or** the stored payload no longer validates as an envelope — the outbound twin of `unrevivable` | **yes** |
+| `inbox.unrevivable_at_boot` | journalled replies that no longer parse as an `InboundReply`; dropped, not delivered | **yes** |
+| `delivery.journal_skipped_lines` | journal lines that did not parse. A torn trailing line is the *expected* shape after a power loss and is deliberately not fatal — a gateway that refuses to boot over a half-written byte is a crash loop | **yes** |
+| `delivery.journal_write_errors` | journal writes that **failed** since start. The queues keep running — raising there would turn a full disk into a re-send storm — so while this is non-zero they are running **without** durability, and a reply you already polled can be delivered to you a second time after a restart | **yes** |
+
+Three things the field names do not tell you:
+
+- **Two of the `delivery.*` fields count both queues.**
+  `journal_skipped_lines` and `journal_write_errors` are sums across the
+  outbound *and* inbox journals — despite the prefix. The other three
+  `delivery.*` fields, and both `inbox.*` fields, are per-queue exactly as
+  their prefixes say. Do not read the prefix as a guarantee on those two.
+- **Five fields, four `reasons` lines.** `expired_at_boot` and
+  `unroutable_at_boot` share one entry: both mean "queued, then not delivered",
+  and one investigation reads them together.
+- **The `*_at_boot` reasons will not clear while the process runs.** They
+  describe this boot, and boot compaction has already removed the records, so a
+  restart clears them. `journal_write_errors` is the opposite — it is live, and
+  a rising one means the durability above has stopped being true.
 
 ### Which identity your message shows as
 

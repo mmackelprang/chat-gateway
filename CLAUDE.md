@@ -60,7 +60,7 @@ printed in full (see below); `adapters/` — webhook (tier 1), chat_api + pubsub
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 202 passing.
+`python` is 3.13.7) — offline, 246 passing.
 
 ## Current status (2026-07-31)
 
@@ -80,8 +80,27 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   per-source delivery log, titles-only logging) and /v1/heartbeat (dead-man
   monitor; tz-aware `weekdays` schedule rolls weekend due-dates to Monday;
   daily repeat; JSON-persisted checks). US market holidays deliberately not
-  modeled (contract says widen grace). Queue is in-memory (restart drops
-  undelivered jobs — visible in the log; accepted v0).
+  modeled (contract says widen grace).
+- **BOTH queues are durable, since CG-54 (#45, 2026-07-31)** — outbound
+  delivery *and* the inbound inbox, which the brief's scope missed. Undelivered
+  jobs and unpolled replies are journalled as JSONL under
+  `CHAT_GATEWAY_STATE_DIR/queue/` (env-var NAME, hard rule #2) and **replayed at
+  boot with the attempt count preserved** — preserving it is what stops a crash
+  loop from resetting the backoff ladder every boot and hammering Google.
+  This bullet read *"Queue is in-memory (restart drops undelivered jobs —
+  visible in the log; accepted v0)"* until 2026-07-31; that was true for v0 and
+  false the moment #45 landed. It was left standing for hours **on purpose** —
+  CG-60 was rewriting this same file concurrently, and a stale bullet for a few
+  hours is cheaper than a merge conflict eating a careful edit — and corrected
+  as CG-64.
+  **The replay rule and the journal's rationale have one home each, and neither
+  is here:** `delivery.py`'s
+  docstring states it (open-minus-close; `expired` past the ceiling;
+  `unroutable` when the registry no longer grants the identity, hard rule #4;
+  mid-flight replayed and therefore possibly delivered twice), and
+  `journal.py`'s says why the per-app audit files cannot answer the same
+  question — they record what ARRIVED, never what LEFT. Do not restate either
+  here; a second copy of this is exactly what the test count above did.
 - **The live project is `chat-gateway-gw` (`#860649224827`), and it is the only
   one.** `chat-gateway-prod` — which every "Cloud resources now exist" note in
   this file used to describe — was **deleted 2026-07-30**, along with E1's

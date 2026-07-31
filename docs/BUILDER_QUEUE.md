@@ -1,6 +1,44 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-31 (Builder — **CG-54 shipped as #45**: both queues
+**Last updated:** 2026-07-31 (Builder — **CG-64 shipped as [#46](https://github.com/mmackelprang/chat-gateway/pull/46)**:
+the four claims CG-54 falsified are corrected, and CG-60's bookkeeping caught up
+with its own merge.
+
+**The suite was RUN, not trusted** — the row said 246 and the row was right, but
+`CLAUDE.md`'s Layout line is the one home for that number precisely because
+copies of it drift, so it was re-measured (`246 passed`) rather than copied from
+a queue row that was itself a copy.
+
+⚠ **The row said FOUR `/healthz` fields can degrade. Reading `service.py` says
+FIVE**, and the guide ships five. `expired_at_boot` and `unroutable_at_boot`
+share ONE `reasons` entry, so there are four lines of text and five fields that
+produce them — an easy off-by-one to make from the reason blocks, and exactly
+the kind of thing a consumer alarming on `status` would find the hard way. The
+count in the CG-64 row below is left as written with the correction beside it.
+
+**Pre-merge review caught one HIGH, and it was this PR's own claim:** the CG-60
+**detail heading** still read `📋 queued` while the table row and the banner both
+said shipped — a merged item still advertising the marker Builder claims on. Two
+MEDIUMs with it, both measured against the source: `/v1/deliveries` gained two
+terminal statuses at #45 (`expired`, `unroutable`) that its section never
+listed, and a count of `*_at_boot` fields was ambiguous in the one section whose
+job is getting counts right. All fixed here.
+
+**Two new rows filed rather than raced — CG-65 and CG-66.** The sweep that
+checked CG-64's scope found the same staleness concentrated in
+`docs/consumers/aitrader.md`, and ⚠ **one of those four is a PRIVACY claim, not
+a durability one**: that contract still promises *"no body text of yours is ever
+written anywhere"* while `Dispatcher.enqueue` now journals whole `text` + `cards`
+on every `/v1/notify`. Hard rule #2 is intact — no credential reaches the
+journal — but the tenant was told something that is no longer true, so it is
+**their** decision to re-take. CG-66 collects the rest, including the one
+non-doc item (`.gitignore` does not ignore `state/`, which now holds bodies).
+**CG-63 was never allocated** — a gap in the numbering, not a lost row.
+
+**No ⚠ flag cleared, added or reworded** — verified by reading the diff, not
+from memory: the diff touches no Google seam and no ledger row.
+
+Also 2026-07-31 (Builder — **CG-54 shipped as #45**: both queues
 are durable. `journal.py` is new, the replay rule and the mid-flight
 double-send answer are written down rather than implied, and the suite is
 **202 → 246**.
@@ -17,16 +55,20 @@ erased it. The drop is right; the silence was not, and the asymmetry with the
 outbound twin (`unroutable`, which had a counter, a log record and a reason
 from the start) was the actual defect. Fixed and mutation-verified.
 
-**It filed CG-64 rather than racing CG-60.** `CLAUDE.md` still says the queue is
-in-memory and still reports 202 tests, and `docs/integration-guide.md`'s inbox
-section still makes the audit-versus-queue conflation this row exists to
-correct — but both files are CG-60's, so the correction is a row, not a gamble.
+**It filed CG-64 rather than racing CG-60.** As of that PR `CLAUDE.md` still
+said the queue was in-memory and still reported 202 tests, and
+`docs/integration-guide.md`'s inbox section still made the audit-versus-queue
+conflation — but both files were CG-60's, so the correction was a row, not a
+gamble. (**All four are fixed as of #46**; the past tense here is CG-64's doing.)
 **No ⚠ flag cleared, added or reworded**: CG-54 touched no Google seam.
 
-Also 2026-07-31 (Builder — **CG-60 is in flight and PAUSED AT ITS
-MERGE GATE**: the PR is open and deliberately **not merged**, per a user-imposed
-gate, because it touches consumer contracts and works in the verification
-ledger's neighbourhood.
+Also 2026-07-31 (Builder — **CG-60 shipped as #44**. It waited at a user-imposed
+merge gate first — deliberately open and **not** merged, because it touches
+consumer contracts and works in the verification ledger's neighbourhood — and
+the user released that gate the same day. **The gate is spent, not standing.**
+This paragraph read *"CG-60 is in flight and PAUSED AT ITS MERGE GATE"* until
+CG-64 corrected it, which is the same shape of staleness CG-64 exists for: a
+status sentence outliving the status.
 
 **What it is:** the repo-wide correction of the one-space premise. Documentation
 plus **one dated docstring note** in `adapters/chat_api.py`; suite **202 → 202**,
@@ -592,17 +634,19 @@ Parts A–G map one-to-one onto these rows, one PR each.
 
 | Item | State | Note |
 |---|---|---|
-| **CG-60** · repo-wide correction of the one-space premise | 🚀 in-flight · [PR #44](https://github.com/mmackelprang/chat-gateway/pull/44) | ⏸ **merge gate — OPEN, NOT MERGED**, awaiting the user. Consumer contracts. **Sequenced FIRST.** Plan Part H. Filed **CG-62** |
+| **CG-60** · repo-wide correction of the one-space premise | ✅ done (#44) | Plan Part H. Merge gate **released by the user 2026-07-31**; merged the same day. Consumer contracts. **Sequenced FIRST.** Filed **CG-62** |
 | **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 📋 queued | ⏸ **merge gate**. **Must land before CG-55.** Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
-| **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | 🚀 in-flight | Filed by CG-54's Builder. Small, doc-only, but the claims are now FALSE. Dependency CG-60 has landed (#44) |
+| **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | ✅ done (#46) | Filed by CG-54's Builder. Shipped 2026-07-31 after CG-60 (#44) cleared the way. Item 4's "four fields degrade" was **five** — measured, and the row records both |
 | **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, and ⚠ an **external homelab-repo prerequisite (D2)**. Part C |
 | **CG-56** · inbox delivery semantics: at-most-once → ack | 📋 queued | ✅ **APPROVED (D3)** — opt-in per request; default path unchanged. Part D |
 | **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
 | **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
+| **CG-65** · `docs/consumers/aitrader.md` — four post-#45 falsehoods, one of them a **privacy** guarantee | 📋 queued | **Filed by CG-64's Builder rather than raced.** A live-false claim in a consumer contract; ranks with CG-60 by the same argument. Doc-only |
+| **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`, and **one non-doc item**: `.gitignore` does not ignore `state/`, which now holds message bodies |
 
 **Recommended order is the table order, and it is NOT the order the arc was
 briefed in.** The brief had deploy first. Three rows move ahead of it:
@@ -988,7 +1032,7 @@ the paragraph by its text.
 
 ---
 
-### CG-60 · Repo-wide correction of the one-space premise  📋 queued · **SEQUENCED FIRST**
+### CG-60 · Repo-wide correction of the one-space premise  ✅ shipped 2026-07-31 · [PR #44](https://github.com/mmackelprang/chat-gateway/pull/44) · ⏸ gate released
 
 | | |
 |---|---|
@@ -1385,7 +1429,7 @@ carry claims this row falsified. Filed as **CG-64**.
 
 ---
 
-### CG-64 · Stale durability claims left behind by CG-54  🚀 in-flight
+### CG-64 · Stale durability claims left behind by CG-54  ✅ done (#46)
 
 | | |
 |---|---|
@@ -1421,6 +1465,120 @@ sentences is how a merge conflict eats a careful edit.
 
 ⚠ **Do not restate the verification ledger while in `CLAUDE.md`** — nothing
 here clears, adds or rewords a ⚠ flag. CG-54 touched no Google seam.
+
+**Shipped 2026-07-31 (#46).** All four corrections landed, plus the CG-60 row
+and header paragraph this row's own dependency left stale.
+
+⚠ **Item 4's count was wrong, and the guide ships the measured number.** This
+row says **four** fields can make `/healthz` report `degraded`; `service.py`
+says **five** — `delivery.{expired_at_boot, unroutable_at_boot,
+journal_skipped_lines, journal_write_errors}` and `inbox.unrevivable_at_boot`.
+The two `replayed_at_boot` counters are the only pair that cannot. The row's
+four is the count of `reasons` **entries**: `expired_at_boot` and
+`unroutable_at_boot` append one line between them, because both mean *queued,
+then not delivered* and one investigation reads them together. Four reasons,
+five fields. The wrong number is kept above rather than edited away — a
+consumer alarming on `status` is precisely who would have found this by being
+paged for a field the doc said was inert.
+
+**Item 2 was re-measured, not copied.** The Layout line is the single home for
+the test count *because* copies of it drift, so taking 246 from a queue row —
+itself a copy — would have reproduced the exact defect this item corrects.
+`python -m pytest -q` → **246 passed**.
+
+---
+
+### CG-65 · `aitrader.md` still describes the pre-#45 gateway — and one of the four is a PRIVACY claim  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by CG-64's Builder, 2026-07-31, rather than raced |
+| **Depends on** | nothing |
+| **Touches** | `docs/consumers/aitrader.md` |
+| **Merge gate** | no |
+
+CG-64 was scoped to `CLAUDE.md` + `docs/integration-guide.md`. A sweep run
+beside it found the same staleness concentrated somewhere worse: **a consumer
+contract**, four claims, and the loudest one is not about durability at all.
+
+1. **`:219`** — *"**Restart drops undelivered jobs.** The queue is in-memory."*
+   False since #45. This is §6's load-bearing durability sentence and a tenant
+   sizes its own fallback machinery on it.
+2. **`:547`** — the same falsehood under **"Accepted limitations, agreed in the
+   contract"**, which reads as a negotiated term rather than a description.
+3. ⚠ **`:217`** — *"If you never call `/v1/messages`, no body text of yours is
+   ever written anywhere."* **This is a privacy guarantee and it is now false.**
+   `Dispatcher.enqueue` (`delivery.py:189-192`) writes
+   `message.model_dump(mode="json")` — whole `text` + `cards` — to the journal on
+   **every** `/v1/notify`. `journal.py`'s own docstring says so in capitals
+   ("WHAT REACHES DISK"). The sentences immediately before it are still true of
+   `DeliveryLog`, which is what makes this one dangerous: the reader is walked
+   up to a true claim and handed a false absolute.
+4. ⚠ **`:418`** — *"**Nothing about aitrader's traffic is persisted anywhere, in
+   any configuration.**"* Framed at `:414-417` as *"the claim your contract
+   actually rests on"*, i.e. the sentence that already survived two corrections.
+   Its §8 context is inbound; its wording is unqualified, and outbound bodies now
+   sit in `state/queue/delivery.jsonl` for up to the backoff ladder — or up to
+   the 24h ceiling if the gateway is down.
+
+Plus one that is stale rather than false: **`:442`** tells the operator that the
+only two `/healthz` fields gating their path are `env_resolved` and
+`key_configured`, and that a `degraded` reading is a tier-2 concern leaving
+*"your alerting unaffected"*. Since #45 four outbound-queue reasons can degrade
+it, and every one of them means an aitrader alert was dropped or will be
+double-sent. That paragraph now trains the reader to ignore exactly the counters
+that concern them. **`:569`**'s env table describes `CHAT_GATEWAY_STATE_DIR` as
+*"heartbeat checks + delivery JSONL"*, which no longer says what the directory
+holds.
+
+**Item 3 and item 4 are why this is filed as its own row and not deferred into a
+sweep.** Rule #2 is not violated — no credential reaches the journal, and
+`journal.py` is explicit that identities are stored as NAMES and re-resolved
+through the registry — but a tenant was told its message bodies are never
+written down, and they now are. That is the tenant's decision to re-take, not a
+Builder's to paper over. **Do not soften the correction into "the journal is
+secure"; state what reaches disk, for how long, and at what mode.**
+
+---
+
+### CG-66 · Post-#45 residue outside CG-64's two files  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by CG-64's Builder, 2026-07-31 |
+| **Depends on** | nothing |
+| **Touches** | `README.md`, `src/chat_gateway/__init__.py`, `src/chat_gateway/journal.py`, `.env.example`, `.gitignore` |
+| **Merge gate** | no |
+
+Everything the CG-64 sweep found that is neither CG-64's two files nor a
+consumer contract (CG-65). Small, but two of them are the exact defect shapes
+this queue keeps re-learning:
+
+- **`README.md:54` — *"98 tests"*.** A **second home** for the number whose one
+  home is `CLAUDE.md`'s Layout line, and it is stale by 148. It predates #45;
+  #45 only widened the gap. This is the same defect CG-64 item 2 fixed, in the
+  copy nobody looked at — which is the argument for one home, made twice.
+- **`src/chat_gateway/__init__.py:8` — *"inbox.py — inbound-reply queue per app
+  (memory + JSONL audit)"*.** CG-54 rewrote `inbox.py`'s own first line
+  *specifically* to kill this framing (`inbox.py:10-14`: it *"invites exactly
+  the wrong conclusion"*), and the retracted wording survives verbatim in the
+  package's module map — the first thing a reader of `chat_gateway` sees.
+- **`src/chat_gateway/journal.py:26` and `:290` cite a control that has not
+  shipped**: *"the deploy runbook puts the state dir at 0750."* There is no
+  `docs/deploy/` in this repo. The mode **is** specified — in CG-53/CG-55's
+  plan and spec (`2026-07-31-production-readiness-arc.md:411`) — so this is a
+  forward-dated claim, not an invented one, and it becomes true when CG-53
+  lands. **Sequencing choice, not a bug to fix twice:** either tense it now or
+  let CG-53 make it true, but a content-sensitive file should not cite its
+  compensating control in the present tense before that control exists.
+- **`.env.example:15`** describes `CHAT_GATEWAY_STATE_DIR` as *"heartbeat checks
+  + delivery audit JSONL"* — incomplete the same way `aitrader.md:569` is.
+- ⚠ **`.gitignore` — the one non-doc item.** `state/` is not ignored, and
+  `.env.example:15` defaults `CHAT_GATEWAY_STATE_DIR=state`, i.e. the repo root.
+  Pre-existing, but #45 changed the stakes: `state/queue/*.jsonl` now holds
+  message bodies, so a local dev run leaves tenant content stageable by
+  `git add -A`. Not a false sentence — a missing line — and the reason this row
+  is not purely documentation.
 
 ---
 
