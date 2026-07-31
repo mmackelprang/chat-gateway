@@ -15,30 +15,81 @@ TOPIC="${TOPIC:-chat-gateway-events}"
 SUBSCRIPTION="${SUBSCRIPTION:-chat-gateway-sub}"
 SA_NAME="${SA_NAME:-chat-gateway}"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
-# ⚠ Pass a per-project KEY_FILE — e.g. KEY_FILE=chat-gateway-sa-<project>.json.
-# The "already exists — not minting another" branch near the bottom matches on
-# FILENAME ONLY; it cannot tell which project a key belongs to, so a key left
-# over from a different project satisfies it. That is not hypothetical: the
-# deleted `chat-gateway-prod` minted its key under this exact default, so any
-# working tree that provisioned it still holds a `chat-gateway-sa.json` that
-# authenticates to nothing. Re-run here for a fresh project and the script
-# prints "not minting another", then emits a .env block pointing
+# The key filename is DERIVED FROM PROJECT_ID (CG-51, user decision 2026-07-30)
+# so it can never name a project that does not exist.
+#
+# It used to default to a flat `chat-gateway-sa.json`, and the "already exists —
+# not minting another" branch near the bottom matches on FILENAME ONLY: it
+# cannot tell which project a key belongs to, so a key left over from a
+# DIFFERENT project satisfied it. That was not hypothetical — the deleted
+# `chat-gateway-prod` minted its key under that exact default, so a working tree
+# which provisioned it still holds a `chat-gateway-sa.json` that authenticates
+# to nothing, and re-running here for a fresh project printed "not minting
+# another" and then emitted a .env block pointing
 # GOOGLE_APPLICATION_CREDENTIALS at that dead credential.
 #
-# The default is left unchanged ON PURPOSE (CG-19): renaming it would make this
-# script mint a SECOND service-account key on every host that already has one,
-# and a comment fix must not create credentials as a side effect.
-KEY_FILE="${KEY_FILE:-chat-gateway-sa.json}"
+# CG-19 declined to rename the default, with evidence: ANY fixed new name stops
+# matching on a host that holds the old key and mints a SECOND service-account
+# key, and key sprawl is worse than a documented trap. That objection is
+# answered by the GUARD below, not by the derivation — when the derived name is
+# absent but a sibling `<SA_NAME>-sa*.json` is present, this script refuses to
+# mint, says exactly what it found, and exits non-zero. An unresolved key is
+# loud; a second credential nobody knows about is not.
+KEY_FILE="${KEY_FILE:-${SA_NAME}-sa-${PROJECT_ID}.json}"
+# Deliberate escape hatch for that guard — set it only when you really do want
+# a second key beside an existing one (several projects on one host).
+ALLOW_SECOND_KEY="${ALLOW_SECOND_KEY:-0}"
 
-# ⚠ VERIFY on the Chat API Configuration page when you wire the topic:
-# the principal Google Chat publishes events AS. Per current docs it is:
+# A relative KEY_FILE resolves against THIS SCRIPT'S directory, not the caller's
+# working directory, so the key lands in the same place either way — matching
+# the .ps1 sibling, which has always resolved against $PSScriptRoot. For the
+# documented invocation (`cd iac && ./gcloud-setup.sh`) the two are the same
+# directory, so this changes nothing about the usage line at the top.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+case "${KEY_FILE}" in
+  /*)                        KEY_PATH="${KEY_FILE}" ;;   # POSIX absolute
+  # Windows drive-absolute. POSIX would call `C:/x` RELATIVE, and prefixing
+  # SCRIPT_DIR to it yields a path that cannot exist — measured: it aborted the
+  # run outright. This script is also used from Git Bash on the Windows dev box
+  # (that is where CG-19 measured CG-35b), so treat a drive letter as rooted.
+  [A-Za-z]:/* | [A-Za-z]:\\*) KEY_PATH="${KEY_FILE}" ;;
+  *)                         KEY_PATH="${SCRIPT_DIR}/${KEY_FILE}" ;;
+esac
+KEY_DIR="$(dirname "${KEY_PATH}")"
+# The .env block at the bottom is a HOST path (/srv/chat-gateway/...), so it
+# takes the BASENAME. Concatenating a caller-supplied absolute path emitted
+# `GOOGLE_APPLICATION_CREDENTIALS=/srv/chat-gateway/C:/…/key.json` (CG-35b,
+# measured, not read). The .ps1 already did `Split-Path -Leaf`; this is the
+# parity fix, and it is the .sh that moved.
+KEY_NAME="$(basename "${KEY_PATH}")"
+KEY_UNRESOLVED=0
+
+# The principal Google Chat publishes events AS. Per Google's docs it is:
 CHAT_EVENTS_PUBLISHER="serviceAccount:chat-api-push@system.gserviceaccount.com"
-# NOTE: GCP accepts a binding to a *@system.gserviceaccount.com principal
-# WITHOUT validating that it exists, so a clean bind proves nothing. Nor is "a
-# real event landed in the subscription" sufficient: the Workspace Add-ons
-# service agent (bound further down) is also a publisher, so an arriving event
-# does not attribute itself to either principal. Stays ⚠ LIVE-UNVERIFIED until
-# the principal is confirmed on the Chat API "Connection settings" page.
+#
+# WHICH principal actually published this project's first events is CLOSED BY
+# CIRCUMSTANCE, not answered — it is not a gap to close and not a task, and this
+# script no longer asks you to settle it (CG-35). Both this principal and the
+# Workspace Add-ons service agent (bound further down) were bound on
+# `chat-gateway-prod`; that project was DELETED on 2026-07-30, so the question
+# can never be settled. See CLAUDE.md, "Verification ledger".
+#
+# Two reasons it was never answerable from inside this script anyway, and both
+# still apply to YOUR project: GCP accepts a binding to a
+# *@system.gserviceaccount.com principal WITHOUT validating that it exists, so a
+# clean bind proves nothing; and "a real event landed in the subscription" does
+# not attribute itself, because both principals are publishers.
+#
+# THE BINDING BELOW STAYS, and so does the add-ons one further down — a classic
+# Chat app (what this script provisions, and what we run) needs the Chat-API
+# publisher, and a project that does deploy an add-on needs the other.
+#
+# On the wording: this comment used to end by declaring the question a pending
+# hard-rule-#3 flag. That flag was MISAPPLIED — rule #3's flag marks CODE not yet
+# exercised against real Google endpoints, and an unanswerable question about
+# which principal published is not that. Dropping it (CG-35, user sign-off
+# 2026-07-30) is removing a misapplied flag, NOT clearing a real one, and is no
+# precedent for clearing one.
 
 echo "== project: ${PROJECT_ID}"
 # gcloud projects create "${PROJECT_ID}" --name="chat-gateway"   # if not created yet
@@ -87,7 +138,7 @@ echo "== topic: ${TOPIC}"
 gcloud pubsub topics describe "${TOPIC}" >/dev/null 2>&1 || \
   gcloud pubsub topics create "${TOPIC}"
 
-echo "== grant Chat's event publisher on the topic (VERIFY principal — see comment)"
+echo "== grant Chat's event publisher on the topic"
 gcloud pubsub topics add-iam-policy-binding "${TOPIC}" \
   --member="${CHAT_EVENTS_PUBLISHER}" --role="roles/pubsub.publisher" >/dev/null
 
@@ -130,14 +181,40 @@ echo "== grant the gateway SA subscribe"
 gcloud pubsub subscriptions add-iam-policy-binding "${SUBSCRIPTION}" \
   --member="serviceAccount:${SA_EMAIL}" --role="roles/pubsub.subscriber" >/dev/null
 
-# ⚠ Filename-only check — it does not know which project the existing key
-# belongs to. See the KEY_FILE note at the top of this script.
-if [[ -f "${KEY_FILE}" ]]; then
-  echo "== key file ${KEY_FILE} already exists — not minting another"
+# Filename-only check — it does not know which project the existing key belongs
+# to. That is why the name is derived from PROJECT_ID and why the else-branch
+# looks for predecessors. See the KEY_FILE note at the top of this script.
+if [[ -f "${KEY_PATH}" ]]; then
+  echo "== key file ${KEY_PATH} already exists — not minting another"
 else
-  echo "== minting SA key -> ${KEY_FILE} (keep off-repo; chmod 600; SECRETS.md pointer)"
-  gcloud iam service-accounts keys create "${KEY_FILE}" --iam-account="${SA_EMAIL}"
-  chmod 600 "${KEY_FILE}"
+  # Do not silently mint a SECOND credential (CG-51). A sibling key under the
+  # same naming convention almost always means "the key you want is already
+  # here under another name" — a rename this script must not guess at.
+  # `|| true` and the -d guard are both load-bearing under `set -euo pipefail`:
+  # a find over a missing directory exits non-zero, pipefail propagates that
+  # through the pipeline, and the failed assignment then kills the whole run.
+  # Measured — that is exactly how the first draft of this aborted.
+  PREDECESSORS=""
+  if [[ -d "${KEY_DIR}" ]]; then
+    PREDECESSORS="$(find "${KEY_DIR}" -maxdepth 1 -type f -name "${SA_NAME}-sa*.json" 2>/dev/null \
+      | sed 's#.*/##' | sort || true)"
+  fi
+  if [[ -n "${PREDECESSORS}" && "${ALLOW_SECOND_KEY}" != "1" ]]; then
+    echo "!! NOT minting a key. ${KEY_NAME} is absent, but ${KEY_DIR} already holds:"
+    while IFS= read -r existing; do
+      [[ -n "${existing}" ]] && echo "!!   ${existing}"
+    done <<< "${PREDECESSORS}"
+    echo "!! Minting now would leave two service-account keys on this host and no"
+    echo "!! record of which one is live. Resolve it yourself, then re-run:"
+    echo "!!   * reuse an existing key      -> KEY_FILE=<that filename>"
+    echo "!!   * it belongs to a dead/other project -> move or delete it"
+    echo "!!   * you really do want another -> ALLOW_SECOND_KEY=1 (deliberate)"
+    KEY_UNRESOLVED=1
+  else
+    echo "== minting SA key -> ${KEY_PATH} (keep off-repo; chmod 600; SECRETS.md pointer)"
+    gcloud iam service-accounts keys create "${KEY_PATH}" --iam-account="${SA_EMAIL}"
+    chmod 600 "${KEY_PATH}"
+  fi
 fi
 
 cat <<ENV
@@ -147,6 +224,16 @@ cat <<ENV
 
 == .env block for the gateway host:
 GATEWAY_ENABLE_PUBSUB=1
-GOOGLE_APPLICATION_CREDENTIALS=/srv/chat-gateway/${KEY_FILE}
+GOOGLE_APPLICATION_CREDENTIALS=/srv/chat-gateway/${KEY_NAME}
 CHAT_GATEWAY_PUBSUB_SUBSCRIPTION=projects/${PROJECT_ID}/subscriptions/${SUBSCRIPTION}
 ENV
+
+if [[ "${KEY_UNRESOLVED}" -eq 1 ]]; then
+  echo
+  echo "!! Everything above is provisioned, but NO KEY WAS CREATED: the"
+  echo "!! GOOGLE_APPLICATION_CREDENTIALS line names ${KEY_NAME}, which does not"
+  echo "!! exist. Exiting non-zero so this cannot pass unnoticed — see the !!"
+  echo "!! block above. Re-running once you have resolved it is a no-op for"
+  echo "!! everything else."
+  exit 3
+fi

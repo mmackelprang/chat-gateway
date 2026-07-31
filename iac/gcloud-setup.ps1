@@ -53,21 +53,13 @@ param(
     # Relative values resolve against this script's directory (iac/), so the
     # key lands in the same place regardless of the caller's working dir.
     #
-    # ⚠ Pass a per-project -KeyFile — e.g. chat-gateway-sa-<project>.json. The
-    # "already exists — not minting another" branch near the bottom matches on
-    # FILENAME ONLY; it cannot tell which project a key belongs to, so a key
-    # left over from a different project satisfies it. That is not
-    # hypothetical: the deleted `chat-gateway-prod` minted its key under this
-    # exact default, so any working tree that provisioned it still holds an
-    # iac\chat-gateway-sa.json that authenticates to nothing. Re-run here for a
-    # fresh project and the script prints "not minting another", then emits a
-    # .env block pointing GOOGLE_APPLICATION_CREDENTIALS at that dead
-    # credential.
-    #
-    # The default is left unchanged ON PURPOSE (CG-19): renaming it would make
-    # this script mint a SECOND service-account key on every host that already
-    # has one, and a comment fix must not create credentials as a side effect.
-    [string] $KeyFile = 'chat-gateway-sa.json'
+    # DEFAULT: derived from -ProjectId, just below the param block (CG-51) —
+    # the reasoning lives there so it sits beside the guard it depends on.
+    [string] $KeyFile = '',
+
+    # Deliberate escape hatch for that guard — pass it only when you really do
+    # want a second key beside an existing one (several projects on one host).
+    [switch] $AllowSecondKey
 )
 
 Set-StrictMode -Version Latest
@@ -82,16 +74,55 @@ if (Test-Path 'Variable:PSNativeCommandUseErrorActionPreference') {
 
 $SaEmail = "$SaName@$ProjectId.iam.gserviceaccount.com"
 
-# ⚠ VERIFY on the Chat API Configuration page when you wire the topic:
-# the principal Google Chat publishes events AS. Per current docs it is:
+# The key filename is DERIVED FROM $ProjectId (CG-51, user decision 2026-07-30)
+# so it can never name a project that does not exist.
+#
+# It used to default to a flat 'chat-gateway-sa.json', and the "already exists —
+# not minting another" branch near the bottom matches on FILENAME ONLY: it
+# cannot tell which project a key belongs to, so a key left over from a
+# DIFFERENT project satisfied it. That was not hypothetical — the deleted
+# `chat-gateway-prod` minted its key under that exact default, so a working tree
+# which provisioned it still holds an iac\chat-gateway-sa.json that
+# authenticates to nothing, and re-running here for a fresh project printed "not
+# minting another" and then emitted a .env block pointing
+# GOOGLE_APPLICATION_CREDENTIALS at that dead credential.
+#
+# CG-19 declined to rename the default, with evidence: ANY fixed new name stops
+# matching on a host that holds the old key and mints a SECOND service-account
+# key, and key sprawl is worse than a documented trap. That objection is
+# answered by the GUARD below, not by the derivation — when the derived name is
+# absent but a sibling `<SaName>-sa*.json` is present, this script refuses to
+# mint, says exactly what it found, and exits non-zero. An unresolved key is
+# loud; a second credential nobody knows about is not.
+if (-not $KeyFile) { $KeyFile = "$SaName-sa-$ProjectId.json" }
+
+# The principal Google Chat publishes events AS. Per Google's docs it is:
 $ChatEventsPublisher = 'serviceAccount:chat-api-push@system.gserviceaccount.com'
-# NOTE: GCP accepts an IAM binding to a *@system.gserviceaccount.com principal
-# WITHOUT validating that it exists — a clean `add-iam-policy-binding` here
-# proves nothing. Nor is "a real event landed in the subscription" sufficient:
-# the Workspace Add-ons service agent (bound further down) is also a publisher,
-# so an arriving event does not attribute itself to either principal. This
-# stays ⚠ LIVE-UNVERIFIED until the principal is confirmed on the Chat API
-# "Connection settings" console page.
+#
+# WHICH principal actually published this project's first events is CLOSED BY
+# CIRCUMSTANCE, not answered — it is not a gap to close and not a task, and this
+# script no longer asks you to settle it (CG-35). Both this principal and the
+# Workspace Add-ons service agent (bound further down) were bound on
+# `chat-gateway-prod`; that project was DELETED on 2026-07-30, so the question
+# can never be settled. See CLAUDE.md, "Verification ledger".
+#
+# Two reasons it was never answerable from inside this script anyway, and both
+# still apply to YOUR project: GCP accepts an IAM binding to a
+# *@system.gserviceaccount.com principal WITHOUT validating that it exists, so a
+# clean `add-iam-policy-binding` proves nothing; and "a real event landed in the
+# subscription" does not attribute itself, because both principals are
+# publishers.
+#
+# THE BINDING BELOW STAYS, and so does the add-ons one further down — a classic
+# Chat app (what this script provisions, and what we run) needs the Chat-API
+# publisher, and a project that does deploy an add-on needs the other.
+#
+# On the wording: this comment used to end by declaring the question a pending
+# hard-rule-#3 flag. That flag was MISAPPLIED — rule #3's flag marks CODE not yet
+# exercised against real Google endpoints, and an unanswerable question about
+# which principal published is not that. Dropping it (CG-35, user sign-off
+# 2026-07-30) is removing a misapplied flag, NOT clearing a real one, and is no
+# precedent for clearing one.
 
 function Resolve-Gcloud {
     <#  Locate gcloud without assuming PATH or a hardcoded username.
@@ -175,7 +206,14 @@ if ([System.IO.Path]::IsPathRooted($KeyFile)) {
 else {
     $KeyPath = Join-Path $PSScriptRoot $KeyFile
 }
+# $KeyName is what the .env block below emits: it is a HOST path
+# (/srv/chat-gateway/...), so it takes the leaf, never the caller's local path.
+# The .sh sibling concatenated its raw ${KEY_FILE} there and emitted
+# `/srv/chat-gateway/C:/…/key.json` for an absolute input (CG-35b, measured);
+# it does the same basename now, so the pair is at parity on this input.
 $KeyName = Split-Path -Leaf $KeyPath
+$KeyDir = Split-Path -Parent $KeyPath
+$KeyUnresolved = $false
 
 Write-Host "== project: $ProjectId"
 # Invoke-Gcloud @('projects','create',$ProjectId,'--name=chat-gateway')   # if not created yet
@@ -226,7 +264,7 @@ if (-not (Test-GcloudResource @('pubsub', 'topics', 'describe', $Topic))) {
     Invoke-Gcloud @('pubsub', 'topics', 'create', $Topic)
 }
 
-Write-Host '== grant Chat''s event publisher on the topic (VERIFY principal — see comment)'
+Write-Host '== grant Chat''s event publisher on the topic'
 Invoke-Gcloud @(
     'pubsub', 'topics', 'add-iam-policy-binding', $Topic,
     "--member=$ChatEventsPublisher", '--role=roles/pubsub.publisher'
@@ -292,25 +330,50 @@ Invoke-Gcloud @(
     "--member=serviceAccount:$SaEmail", '--role=roles/pubsub.subscriber'
 ) -Quiet
 
-# ⚠ Filename-only check — it does not know which project the existing key
-# belongs to. See the -KeyFile note in the param block at the top.
+# Filename-only check — it does not know which project the existing key belongs
+# to. That is why the name is derived from $ProjectId and why the else-branch
+# looks for predecessors. Full note: the $KeyFile derivation block just above
+# $ChatEventsPublisher.
 if (Test-Path -LiteralPath $KeyPath) {
     Write-Host "== key file $KeyPath already exists — not minting another"
 }
 else {
-    Write-Host "== minting SA key -> $KeyPath (keep off-repo; owner-only ACL; SECRETS.md pointer)"
-    Invoke-Gcloud @('iam', 'service-accounts', 'keys', 'create', $KeyPath, "--iam-account=$SaEmail")
+    # Do not silently mint a SECOND credential (CG-51). A sibling key under the
+    # same naming convention almost always means "the key you want is already
+    # here under another name" — a rename this script must not guess at.
+    $Predecessors = @()
+    if (Test-Path -LiteralPath $KeyDir) {
+        $Predecessors = @(
+            Get-ChildItem -LiteralPath $KeyDir -File -Filter "$SaName-sa*.json" |
+                Select-Object -ExpandProperty Name | Sort-Object
+        )
+    }
 
-    # chmod 600 is a no-op on NTFS. Break inheritance, grant only this user.
-    icacls $KeyPath /inheritance:r /grant:r "$($env:USERNAME):(R,W)" | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw @"
+    if ($Predecessors.Count -gt 0 -and -not $AllowSecondKey) {
+        Write-Host "!! NOT minting a key. $KeyName is absent, but $KeyDir already holds:"
+        foreach ($existing in $Predecessors) { Write-Host "!!   $existing" }
+        Write-Host '!! Minting now would leave two service-account keys on this host and no'
+        Write-Host '!! record of which one is live. Resolve it yourself, then re-run:'
+        Write-Host '!!   * reuse an existing key      -> -KeyFile <that filename>'
+        Write-Host '!!   * it belongs to a dead/other project -> move or delete it'
+        Write-Host '!!   * you really do want another -> -AllowSecondKey (deliberate)'
+        $KeyUnresolved = $true
+    }
+    else {
+        Write-Host "== minting SA key -> $KeyPath (keep off-repo; owner-only ACL; SECRETS.md pointer)"
+        Invoke-Gcloud @('iam', 'service-accounts', 'keys', 'create', $KeyPath, "--iam-account=$SaEmail")
+
+        # chmod 600 is a no-op on NTFS. Break inheritance, grant only this user.
+        icacls $KeyPath /inheritance:r /grant:r "$($env:USERNAME):(R,W)" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw @"
 icacls failed (exit $LASTEXITCODE) — the key at $KeyPath may still be readable
 by other principals. Lock it down before using it:
   icacls "$KeyPath" /inheritance:r /grant:r "%USERNAME%:(R,W)"
 "@
+        }
+        Write-Host "== key ACL: inheritance removed, $($env:USERNAME) only (contents never printed)"
     }
-    Write-Host "== key ACL: inheritance removed, $($env:USERNAME) only (contents never printed)"
 }
 
 Write-Host @"
@@ -323,3 +386,13 @@ GATEWAY_ENABLE_PUBSUB=1
 GOOGLE_APPLICATION_CREDENTIALS=/srv/chat-gateway/$KeyName
 CHAT_GATEWAY_PUBSUB_SUBSCRIPTION=projects/$ProjectId/subscriptions/$Subscription
 "@
+
+if ($KeyUnresolved) {
+    Write-Host ''
+    Write-Host '!! Everything above is provisioned, but NO KEY WAS CREATED: the'
+    Write-Host "!! GOOGLE_APPLICATION_CREDENTIALS line names $KeyName, which does not"
+    Write-Host '!! exist. Exiting non-zero so this cannot pass unnoticed — see the !!'
+    Write-Host '!! block above. Re-running once you have resolved it is a no-op for'
+    Write-Host '!! everything else.'
+    exit 3
+}
