@@ -77,6 +77,33 @@ def _stale_after(subscriber) -> float:
                POLL_STALE_INTERVAL_MULTIPLE * subscriber.interval_seconds)
 
 
+def _journal_skipped(dispatch, inbox) -> int:
+    """Unparseable journal lines across both queues; 0 when unjournalled.
+
+    Read through the public `journal` property rather than the private
+    attribute, so /healthz does not reach through either class.
+    """
+    total = 0
+    for owner in (dispatch, inbox):
+        journal = getattr(owner, "journal", None)
+        if journal is not None:
+            total += getattr(journal, "skipped_lines", 0)
+    return total
+
+
+def _journal_write_errors(dispatch, inbox) -> int:
+    """Journal writes that FAILED on a path that could not raise.
+
+    A close or a reschedule that cannot reach disk does not stop
+    delivery — raising there would turn a full disk into a re-send storm
+    — so the only thing that makes it visible is this counter. A durable
+    queue whose durability has silently stopped working is worse than an
+    in-memory one, because it is trusted.
+    """
+    return sum(getattr(owner, "journal_write_errors", 0)
+               for owner in (dispatch, inbox))
+
+
 def _interaction_config(registry: Registry, app_id: str) -> dict | None:
     """The card convention, published so producers never hardcode it.
 
@@ -309,8 +336,21 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         body = {
             "version": __version__,
             "registry": registry.health(),
-            "inbox": {"pending": inbox.pending_counts(), "dropped": inbox.dropped},
-            "delivery": {"pending_jobs": dispatch.pending()},
+            "inbox": {"pending": inbox.pending_counts(), "dropped": inbox.dropped,
+                      "replayed_at_boot": getattr(inbox, "replayed", 0)},
+            "delivery": {"pending_jobs": dispatch.pending(),
+                         "replayed_at_boot": getattr(dispatch, "replayed", 0),
+                         "expired_at_boot": getattr(dispatch, "expired", 0),
+                         "unroutable_at_boot": getattr(dispatch, "unroutable", 0),
+                         # Journal lines that did not parse, and journal
+                         # writes that failed. A torn trailing line is
+                         # the expected shape after a power loss and is
+                         # deliberately not fatal (journal.py) — but a
+                         # mechanism whose whole purpose is surviving
+                         # something nobody watched must say when it lost
+                         # something. Rule #5.
+                         "journal_skipped_lines": _journal_skipped(dispatch, inbox),
+                         "journal_write_errors": _journal_write_errors(dispatch, inbox)},
             "heartbeats": {"checks": len(hb_all),
                            "missed": sum(1 for c in hb_all if c.status == "missed"),
                            "last_scan_at": monitor.last_scan_at.isoformat() if monitor.last_scan_at else None},
@@ -402,6 +442,35 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         for app_id, a in body["registry"]["apps"].items():
             if not a["key_configured"]:
                 reasons.append(f"app {app_id!r}: key env var is not set")
+        # CG-54. Three ways queue durability can have lost work, and all
+        # three are silent by construction — they happen at boot or on a
+        # background thread, with nobody watching. A number in the body is
+        # not enough: `status` is computed FROM `reasons`, so anything that
+        # should make an operator look has to be able to say so in words.
+        queue = body["delivery"]
+        if queue["journal_skipped_lines"]:
+            reasons.append(
+                f"queue journal: {queue['journal_skipped_lines']} unparseable "
+                "line(s) skipped at boot — at least one queued item was lost to "
+                "a torn or corrupt write. The JSONL audit files under the state "
+                "dir are the recovery record"
+            )
+        if queue["journal_write_errors"]:
+            reasons.append(
+                f"queue journal: {queue['journal_write_errors']} write(s) FAILED "
+                "since start — the queues are still running but are no longer "
+                "durable, so a restart will lose or double-send the affected "
+                "entries. Check free space and the state dir's permissions"
+            )
+        if queue["expired_at_boot"] or queue["unroutable_at_boot"]:
+            reasons.append(
+                f"queue replay dropped {queue['expired_at_boot']} expired and "
+                f"{queue['unroutable_at_boot']} unroutable job(s) at boot — they were "
+                "queued and were NOT delivered. Expired means older than the "
+                "replay ceiling (posting a stale alert now would mislead); "
+                "unroutable means the registry no longer grants that identity "
+                "(hard rule #4). Both are in the delivery log by id"
+            )
         sub = body["subscriber"]
         if sub["enabled"]:
             if sub["last_poll_at"] is None:

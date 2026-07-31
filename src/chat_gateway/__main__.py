@@ -14,9 +14,11 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 
 from .auth import mint_key
 from .inbox import Inbox
+from .journal import Journal
 from .log_redaction import install_url_redaction
 from .registry import RegistryError, load_registry
 
@@ -33,7 +35,14 @@ def build_runtime():
 
     registry = load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml"))
     state_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
-    inbox = Inbox(audit_dir=os.environ.get("CHAT_GATEWAY_INBOX_DIR", "inbox-data"))
+    # CG-54: the inbox's PENDING QUEUE is journalled here, at
+    # construction, rather than attached afterwards — `_journal` is
+    # private and assigning it from outside reaches through the class.
+    # This is not the audit trail beside it: the audit says what
+    # ARRIVED, the journal says what is still UNPOLLED, and passive
+    # polling is the only inbound path an opted-out tenant has.
+    inbox = Inbox(audit_dir=os.environ.get("CHAT_GATEWAY_INBOX_DIR", "inbox-data"),
+                  journal=Journal(Path(state_dir) / "queue" / "inbox.jsonl"))
 
     from .adapters.webhook import WebhookAdapter
 
@@ -83,13 +92,25 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "serve":
         import uvicorn
 
-        from pathlib import Path
-
-        from .delivery import DeliveryLog
+        from .delivery import DeliveryLog, Dispatcher
         from .heartbeat import HeartbeatStore
         from .service import create_app
 
         log = DeliveryLog(audit_dir=Path(state_dir) / "deliveries")
+        # CG-54: replay BEFORE anything serves or dispatches. `restore`
+        # re-resolves every identity through the registry, so a grant
+        # withdrawn while the gateway was down closes the job as
+        # unroutable instead of sending it on a stale permission
+        # (hard rule #4). The counts are echoed at /healthz too — a
+        # boot that quietly dropped work is the failure rule #5 exists
+        # for, so it must be legible in both places.
+        queue_dir = Path(state_dir) / "queue"
+        dispatcher = Dispatcher(adapters, log,
+                                journal=Journal(queue_dir / "delivery.jsonl"))
+        restored, not_restored = dispatcher.restore(registry)
+        inbound_restored = inbox.restore()
+        print(f"queue: restored {restored} outbound job(s), {not_restored} expired or unroutable; "
+              f"{inbound_restored} inbound reply(ies)", flush=True)
         if subscriber is not None:
             from .forwarder import CallbackForwarder
 
@@ -101,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         app = create_app(
             registry, inbox, adapters, subscriber,
             delivery_log=log,
+            dispatcher=dispatcher,
             heartbeats=HeartbeatStore(Path(state_dir) / "heartbeats.json"),
         )
         app.state.dispatcher.start()
