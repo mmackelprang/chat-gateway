@@ -1,6 +1,38 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-31 (Builder — **CG-67 shipped as [#48](https://github.com/mmackelprang/chat-gateway/pull/48)**:
+**Last updated:** 2026-07-31 (Builder — **CG-61 is at [PR #50](https://github.com/mmackelprang/chat-gateway/pull/50)
+and PAUSED AT ITS MERGE GATE — open, NOT merged.** It narrows a tenant's inbound
+surface, which hard rule #6 says needs explicit sign-off naming that rule;
+narrowing is still a change to the surface.
+
+⚠ **The row is not finished when the PR merges.** `config/registry.yaml` is
+gitignored, so the PR changes only the EXAMPLE. Measured today with the real
+`load_registry` against the real live file: `aiteam-harness` is still
+`allow_inbound=True`, and the **key is absent** — the default is doing the work,
+which is decision D1's entire argument. Until an operator edits that file the
+app is **still open inbound in production**, and **CG-55 depends on the live
+file, not on the example**. The PR body carries the edit and its verification
+snippet.
+
+**Pre-merge review caught one HIGH, and it was this PR asserting its own
+outcome:** `CLAUDE.md`'s consumer bullet stated `allow_inbound: false` as the
+LIVE posture — beside an `aitrader` entry that genuinely describes the live
+registry — while this same file's CG-12 bullet fifty lines above correctly said
+*"NOT YET"*. One file, two tenses, the load-bearing one wrong. One MEDIUM with
+it (`allow_inbound: True` written in YAML-key syntax, reading as a quote of
+bytes that are not there) and four LOW, all fixed.
+
+**The disk claim was proven against its own counterfactual, not asserted.** The
+real `dispatch` + real `Inbox` + real `Journal`, same event, two registries:
+with the CG-61 line, nothing anywhere and only the counter moves; without it,
+that event lands in **both** disk surfaces — the per-app audit JSONL *and*
+`state/queue/inbound.jsonl` — carrying text, sender email and whole raw event.
+Rule #6's three absolutes were also driven against a **serving** gateway: inbox
+403 naming the rule, `interaction.enabled: false`, and `callback_url` a load
+error. Suite **246 → 247**. **No ⚠ flag cleared, added or reworded** — proven by
+reading the diff: the `adapters/` hunk has zero non-comment lines.
+
+Previously 2026-07-31 (Builder — **CG-67 shipped as [#48](https://github.com/mmackelprang/chat-gateway/pull/48)**:
 `state/` is ignored, so a local run can no longer stage tenant message bodies.
 **Split out of CG-66 and promoted by the user**, which leaves CG-66 doc-only.
 
@@ -657,7 +689,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | Item | State | Note |
 |---|---|---|
 | **CG-60** · repo-wide correction of the one-space premise | ✅ done (#44) | Plan Part H. Merge gate **released by the user 2026-07-31**; merged the same day. Consumer contracts. **Sequenced FIRST.** Filed **CG-62** |
-| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 🚀 in flight | ⏸ **merge gate**. **Must land before CG-55.** Plan Part I |
+| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 🚀 in-flight · [PR #50](https://github.com/mmackelprang/chat-gateway/pull/50) | ⏸ **merge gate — OPEN, NOT MERGED**, awaiting the user. **Must land before CG-55**, and ⚠ the **live registry edit is a separate operator action the PR cannot make**. Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
 | **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | ✅ done (#46) | Filed by CG-54's Builder. Shipped 2026-07-31 after CG-60 (#44) cleared the way. Item 4's "four fields degrade" was **five** — measured, and the row records both |
@@ -1176,7 +1208,7 @@ call**, because "likely" is the exact word rule #3 exists to refuse.
 
 ---
 
-### CG-61 · Close `aiteam-harness`'s inbound path  🚀 in flight · **MUST LAND BEFORE CG-55**
+### CG-61 · Close `aiteam-harness`'s inbound path  🚀 in-flight · [PR #50](https://github.com/mmackelprang/chat-gateway/pull/50) — **NOT MERGED** · **MUST LAND BEFORE CG-55**
 
 | | |
 |---|---|
@@ -1228,6 +1260,21 @@ warning does not bite. Recorded so a reader need not re-derive it.
 
 **Ships a test** pinning that an opted-out owner's event reaches neither the
 app's inbox nor `_unrouted` nor disk, so a refactor cannot quietly undo it.
+
+**Builder, 2026-07-31 — [PR #50](https://github.com/mmackelprang/chat-gateway/pull/50)
+is open at the gate.** Two notes for whoever releases it:
+
+- **The pre-state was re-measured, not copied from this row.** The real
+  `load_registry` against the real live file returns `aiteam-harness
+  allow_inbound=True` today, and the key is **absent** — so the default is what
+  granted inbound, exactly as D1 argues. This row's ⚠ paragraph above was right.
+- ⚠ **Merging is not finishing.** The PR changes `registry.example.yaml`; the
+  live edit is the operator action, and it **falsifies a dated "not yet" in two
+  files** — `CLAUDE.md`'s CG-12 bullet and `adapters/pubsub.py`'s counter
+  comment, each of which now names the other so neither is missed. The plan's
+  I3 sketch was also one disk surface short (it predates #45's journal); the
+  shipped test asserts **both**, and a mutation that wrote only the journal was
+  used to prove that half bites.
 
 ---
 
