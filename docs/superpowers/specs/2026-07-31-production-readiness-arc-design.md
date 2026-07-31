@@ -30,6 +30,198 @@ within two PRs, and this spec is not going to be the sixth.
 
 ---
 
+## 0.1 Premise correction (2026-07-31) — the Chat app is in FOUR spaces, not one
+
+This spec was first written against the premise *"Tier 2 is live in the JobHunt
+space ONLY."* **That is false**, and the correction changes enough that it sits
+here rather than in a footnote.
+
+**The corrected facts — a dated user statement about the Google Chat console, not
+something this repository can prove or has measured:**
+
+- The classic app **"Agent Comms" is DEPRECATED.** It was workspace-specific.
+- It has been replaced by an app named **"Chat Gateway"** — same functionality,
+  better interaction support in the space.
+- **"Chat Gateway" participates in four spaces**: FamilyWorkspace, Ai Trader,
+  Ai Trader Reports, and JobHunt.
+
+No source file, no registry entry and no test records which spaces an app has
+been added to. The registry's `space:` per identity is a **posting target** —
+where the gateway *sends* — and is not a record of membership; the two can
+disagree in either direction. So this is recorded exactly as
+`docs/google-cloud-setup.md` already teaches: a console snapshot, dated, that
+goes stale the moment somebody changes it.
+
+### 0.1.1 The consequence that matters — and it was PREDICTED
+
+Re-derived here by running the real `apps_for_space` against the **live**
+(gitignored) `config/registry.yaml`, not by reading it, and reported without
+reproducing any space id:
+
+| Space (anonymised) | `apps_for_space` | `allow_inbound` |
+|---|---|---|
+| S1 | `['aitrader']` | **false** |
+| S2 | `['job-hunter']` | true |
+| S3 | `['aitrader']` | **false** |
+| S4 | `['aiteam-harness']` | true |
+
+**Four distinct spaces are configured, and every one has a `space:` already
+filled in.** The registry was already wired for all four; the app's *absence*
+from three of them was the only thing keeping events from flowing.
+
+So: **every event in either Ai Trader space now increments `suppressed_opt_out`
+on an unauthenticated `/healthz`.** Hard rule #6 still holds absolutely —
+nothing crosses to aitrader, the `continue` fires before any `inbox.put` — but
+CG-12's recorded caveat, *"a de-facto unauthenticated activity meter for that
+tenant by inference"*, has gone from hypothetical to a **live property of the
+deployment**.
+
+**`docs/consumers/aitrader.md` predicted this exact trigger, in these words:**
+
+> So the safeguard is **one step away, not two.** … In the live registry the
+> `space:` is **already filled** — adding the Chat app to an aitrader space would
+> be sufficient on its own, and it is a console action that leaves no trace in
+> version control.
+
+**The prediction fired.** That reframes the repo-wide correction (CG-60): its job
+is not merely to delete a sentence that went false, but to convert a documented
+*prediction* into a documented *live state* — which is a stronger and more useful
+edit, and one that vindicates rather than embarrasses the file.
+
+### 0.1.2 A second consequence the correction brief did not name
+
+The same re-derivation shows **S4 → `['aiteam-harness']`, `allow_inbound: true`,
+and `allowed_users` empty** (empty = no restriction).
+
+`dispatch()` is **event-type agnostic** — it filters on space ownership, opt-in
+and allowlist, never on event type, and calls `inbox.put(reply)` for whatever
+arrives. So events in the FamilyWorkspace space are now **enqueued to
+`aiteam-harness`'s inbox and written to the JSONL audit trail on disk**, with no
+sender restriction and no evidence anyone is draining that inbox.
+
+Consequences, each stated at its real confidence:
+
+- **Certain, from the code:** an undrained inbox fills to `max_pending: 1000`,
+  then silently drops its oldest (`inbox.dropped` counts). The JSONL audit keeps
+  everything, forever, unpruned.
+- **Certain, and it cuts against complacency:** under **CG-54** this content
+  becomes *persisted across restarts* rather than lost. Durability makes this
+  finding bigger, not smaller.
+- **NOT knowable from this repo:** *which* events Google actually sends. A
+  classic app in a room conventionally receives a MESSAGE only when @mentioned,
+  which would make this near-empty; if it receives more, it is a family
+  workspace's message content sitting in an unread queue and an unpruned audit
+  file. **This repo cannot answer that, and must not guess.** It becomes the
+  single highest-value observation on first deploy (§4.3) — and it is a
+  privacy-shaped question, not merely an operational one.
+
+### 0.1.3 What does NOT change
+
+- **Decisions A and B stand**, unmodified.
+- **`aitrader` stays `allow_inbound: false`.** Nothing here widens any inbound
+  surface; hard rule #6 is doing exactly its job, visibly.
+- **No ⚠ flag is cleared, added or reworded.** In particular `CLAUDE.md`'s ledger
+  row recording `sender: {displayName: "Agent Comms"}` is a **correct historical
+  observation** — that response really did carry that name on 2026-07-29. The
+  observation is not rewritten; CG-60 adds a dated note that the app has since
+  been replaced.
+
+---
+
+## 0.2 Second premise correction (2026-07-31) — the NAS, measured rather than described
+
+Two further corrections arrived, and both were **probed read-only against the box
+rather than taken on description.** Everything in this section is measured.
+
+### 0.2.1 The deploy can be EXECUTED — `ssh claude@nas`, passwordless sudo
+
+`ssh nas` works with `BatchMode`, `id -nG` returns
+`claude builtin_administrators builtin_users`, and **`sudo` is passwordless —
+effectively root.** TrueNAS Scale on Debian 12 bookworm, kernel
+`6.12.91-production+truenas`, Docker `28.3.1`, storage driver `overlay2`.
+`claude` is **not** in a `docker` group, so every docker call needs `sudo`.
+
+This changes CG-53 and CG-55 from *"write instructions and hand over"* to
+*"execute and verify"* — and it makes the SSH policy in §4.3.1 a required part of
+the plan rather than a courtesy.
+
+### 0.2.2 The NAS is NOT "backup target only" — so this is NOT a role change
+
+That framing came from jobhunt's `two-host-split.md`, whose column header is
+*"Role **here**"* — its role in **jobhunt's** pipeline, not globally. My earlier
+draft repeated it and built a "blast radius of making the NAS an app host"
+section on top. **Both are withdrawn.**
+
+Measured: **15 running containers across 10 app stacks** — beszel (×2), calibre,
+calibre-web, claude-mem (×5, including Postgres), czkawka, homepage, jellyfin,
+pihole, tailscale, upsnap. Every one named `ix-<app>-<service>-1`, which
+independently confirms §1.1's custom-app/middleware model. Config under
+`/mnt/datapool/apps`; pools `boot-pool` + `datapool`.
+
+**The real blast-radius question is narrower and answerable with numbers: what
+does a *tenth* stack do to a box already running these?**
+
+| Measured | Value | Reading |
+|---|---|---|
+| RAM total / available | 31.9 GB / **20.8 GB available** | a small Python service is noise |
+| Load (1/5/15m) | 0.29 / 0.42 / 0.39 on **16 cores** | effectively idle |
+| `datapool` | 13 TB, **1% used** | journals and audit JSONL are irrelevant at this scale |
+| Heaviest tenant | jellyfin, 1.23 GiB (of a 4 GiB cap) | nothing is near a limit |
+| **Swap** | **0** | ⚠ **the one real finding** |
+
+⚠ **Zero swap is the whole of the risk.** There is no cushion: a memory spike
+anywhere is an OOM kill, and the box hosts claude-mem's Postgres. So the
+gateway's compose **should declare a memory limit** — and that is a **deliberate
+deviation from house style**, because it was measured that **no existing custom
+app declares one** (`mem_limit` is unset on all of beszel, homepage, upsnap,
+pihole, czkawka and every claude-mem service; the 4 GiB caps visible on jellyfin,
+calibre, calibre-web and tailscale are TrueNAS's own, applied to *catalog* apps).
+Flagged as open question 6 rather than adopted silently.
+
+**Measured port facts**, replacing the list this spec previously took from the
+homelab docs. In use: `22 53 80 139 443 445 3000 5357 5800 6000 6999 8081 8090
+8098 30013 30014 31067 32014 32015 32016 37877 41175 62716`. **`8085` is free.**
+The app name `chat-gateway` is also free — `app.query` returns `[]`, a
+fail-closed check that must be re-run at deploy time rather than trusted from
+here.
+
+### 0.2.3 Tailscale is a container — and the probe INVERTS the concern
+
+The concern was that `ix-tailscale-tailscale-1` being a container means tailnet
+exposure is *not* simply binding a host interface, and would need a subnet
+router, userspace proxy, sidecar, or `serve`/`funnel`. **Measured, it needs none
+of those:**
+
+| Probe | Result |
+|---|---|
+| `HostConfig.NetworkMode` | **`host`** |
+| `Devices` | **`/dev/net/tun`** |
+| `CapAdd` | `CAP_NET_ADMIN`, `CAP_NET_RAW`, `CAP_SYS_MODULE`, … |
+| `TS_USERSPACE` | **`false`** |
+| `ip link` on the **host** | **`tailscale0` present, global-scope address, kernel-mode** |
+| `TS_EXTRA_ARGS` | `--advertise-exit-node=false --reset=false --accept-routes=false` |
+
+The container runs `tailscaled` in **kernel mode inside the host network
+namespace**, so it creates a **real `tailscale0` interface on the host**. A
+published container port bound to `0.0.0.0` is therefore reachable over the
+tailnet with **no additional plumbing at all** — exactly the "usual host-daemon
+assumption", which happens to hold here.
+
+**But it holds for a non-obvious reason, and that reason is load-bearing**: if
+this app were ever reconfigured to `TS_USERSPACE=true`, or off host networking,
+`tailscale0` would disappear from the host and every service's tailnet
+reachability would silently vanish with it. That is a dependency worth writing
+down in the runbook's Gotchas, because nothing in the gateway's own config would
+show it. It also confirms the node is a **plain tailnet node** — not an exit node,
+not a subnet router, not accepting routes — so nothing here is routing for anyone
+else.
+
+`tailscale` is **not on the host PATH**; any tailnet inspection goes through
+`sudo docker exec ix-tailscale-tailscale-1 tailscale …`, which §4.3.1 classifies
+as touching another stack.
+
+---
+
 ## 1. Three findings that contradict the brief
 
 These are recorded first, and prominently, because a plan built on the brief's
@@ -209,6 +401,7 @@ long-run.
 
 | # | Row | Why here |
 |---|---|---|
+| 0 | **CG-60** repo-wide correction of the one-space premise | **New, and it goes first.** Docs-only, no dependencies — and `docs/consumers/aitrader.md` currently tells that tenant's operator something **false about their own privacy posture** (§0.1.1). A live-false claim in a consumer contract outranks preparatory work; CG-27 set that precedent by shipping exactly this kind of removal as its own item. |
 | 1 | **CG-53** deployment artifacts + secret-safety proof (**no deploy**) | Largest unknowns, and it carries the §1.2 leak finding. That finding must not wait behind two code PRs. Produces the image strategy, the on-box layout, the `CHAT_GATEWAY_ENV_FILE` loader, and the runbook — all offline-verifiable. |
 | 2 | **CG-54** queue + inbox durability | The **only hard prerequisite** for an always-on deploy. `restart: unless-stopped` means the thing restarts by itself; every restart silently empties both queues. A trusted always-on service that loses work on restart is worse than a hand-run one that does, because nobody is watching. Offline-testable. |
 | 3 | **CG-55** first NAS deploy + live smoke (**user-executed**) | Everything after this benefits from being observed on a running instance, and **the soak clock starts here** — so CG-59 harvests days of real uptime instead of beginning a wait. |
@@ -234,6 +427,19 @@ inbox too.
 a numbered workstream) and lands after the semantics it must describe are
 settled.
 
+**Does four live spaces change the sequence?** It adds CG-60 at the front and
+otherwise **reinforces the existing order rather than disturbing it**:
+
+- **CG-54 before the deploy gets stronger, not weaker.** Inbound is no longer
+  hypothetical — three of the four spaces now route to an opted-in or opted-out
+  owner, and the first deploy will drain a real backlog into a queue that is
+  in-memory today.
+- **The deploy's blast radius grew**, which is an argument for the artifacts
+  (CG-53) and durability (CG-54) preceding it, not for hurrying it.
+- **CG-59's soak got more valuable**, because the subscription is no longer quiet
+  (§4.7).
+- Nothing argues for moving CG-56, CG-57 or CG-58.
+
 **Nothing in this arc widens any tenant's inbound surface.** `aitrader` stays
 `allow_inbound: false`. Decision A *narrows* jobhunt's. Hard rule #6 holds
 throughout, and CG-57 is the row that touches it — narrowing only.
@@ -242,22 +448,93 @@ throughout, and CG-57 is the row that touches it — narrowing only.
 
 ## 4. Workstream specs
 
+### 4.0 CG-60 — repo-wide correction of the one-space premise
+
+**Sequenced first** (§3). Documentation only; no code, no registry change.
+
+The claims below went false when the app was replaced and added to four spaces
+(§0.1). They were **located by text** and must be **re-derived, not trusted from
+this list** — line numbers move, and this repo's own convention (CG-52) is to
+find a paragraph by its words.
+
+| File | Claim | Why it is now wrong |
+|---|---|---|
+| **`docs/consumers/aitrader.md`** | *"the Chat app is not in aitrader's spaces, so no Pub/Sub event originates from them"* | **Highest priority.** The reasoning is falsified, and this is a **consumer contract** telling that tenant's operator something untrue about their own privacy posture |
+| `docs/google-cloud-setup.md` | the dated *"JobHunt space only"* console observation; the app-name guidance; the sender table | superseded console facts |
+| `docs/integration-guide.md`, `docs/consumers/jobhunt.md`, `docs/consumers/jobhunt-handoff.md` | *"Agent Comms"* as the live identity | the app is now **"Chat Gateway"** |
+| `docs/BUILDER_QUEUE.md` | several | **judge claims vs records** — shipped rows are history and stay |
+
+#### The aitrader edit is a promotion, not a retraction
+
+That file already contains the prediction, in its own words:
+
+> So the safeguard is **one step away, not two.** … adding the Chat app to an
+> aitrader space would be sufficient on its own, and it is a console action that
+> leaves no trace in version control.
+
+**It came true.** So the edit converts a documented prediction into a documented
+**live state** — and the surrounding table (`registry.example.yaml` → `[]` vs
+`registry.yaml` → `['aitrader']`, *"would increment `suppressed_opt_out`"*) needs
+only its tense changed from conditional to present. That is a far better edit
+than deleting a sentence, and it vindicates the file.
+
+It must also state plainly what has **not** changed: hard rule #6 holds, the
+`continue` fires before any `inbox.put`, and **nothing crosses to aitrader**. The
+disclosure is a volume counter on an unauthenticated endpoint (open question 2),
+not a data path.
+
+#### The historical observations stay
+
+⚠ `CLAUDE.md`'s ledger row recording `sender: {displayName: "Agent Comms"}` — and
+the identical sentences in `adapters/chat_api.py`'s docstrings — are **correct
+observations of what happened on 2026-07-29**. They are evidence, not claims
+about today.
+
+**Do not rewrite them. Do not reword or clear any ⚠ flag** — that needs the
+user's explicit sign-off naming hard rule #3, which this row does not have. Add a
+**dated note** that the app has since been replaced, adjacent to the observation,
+leaving the observation intact. This is the CG-50 shape exactly: the finding is
+kept, the currency pointer is what changes.
+
+Record the new facts as a **dated user statement about the console**, in the
+voice `docs/google-cloud-setup.md` already uses — not as something measured.
+What *is* measured, and should be labelled as such, is the `apps_for_space`
+re-derivation in §0.1.1.
+
+**Merge gate: yes** — consumer contracts, and it works next to the ledger.
+
+---
+
 ### 4.1 CG-53 — deployment artifacts and the secret-safety proof
 
 **Ships no deploy.** It ships the artifacts, the layout, the one small code
 change that makes rule #2 hold on the NAS, and a runbook.
 
-#### The role change, stated
+#### Blast radius — the tenth stack, not a role change
 
-The NAS is **"backup target only"** today. This is a role change, not just a
-deploy: it becomes the first always-on *application* host in that repo's NAS
-tree that other projects depend on. Blast radius on existing NAS services is a
-real consideration and is addressed as: a distinct non-colliding port, no
-`network_mode: host`, no new capabilities, bind mounts confined to one app
-directory, and no change to any existing app's config. Port `8085` is free —
-the in-use set on that box is `3000, 5800, 8081, 8090, 8098, 30013, 31067,
-32015, 32016, 37877`, with `80`/`443` owned by the TrueNAS UI and `53` by its
-dnsmasq.
+⚠ **This section previously read "the role change, stated" and claimed the NAS
+was backup-target-only. That was wrong and is withdrawn — see §0.2.2.** The box
+already runs **10 app stacks / 15 containers**, including a five-container
+claude-mem deployment with Postgres. The gateway is a **tenth stack on an
+established app host**, so the question is capacity, not precedent.
+
+Measured (§0.2.2): **20.8 GB RAM available, load 0.29 on 16 cores, `datapool` 1%
+used.** A small Python service is noise against that.
+
+**The one real finding is that the box has zero swap**, so any memory spike is an
+OOM kill on a host running someone else's Postgres. Mitigations, in order of
+force:
+
+- **Declare a memory limit on the gateway service** — a deliberate deviation from
+  house style, since it was measured that no existing *custom* app sets one.
+  Open question 6.
+- A distinct non-colliding published port. **`8085` is free, measured** — the
+  in-use set is in §0.2.2, and it is *not* the set this spec previously quoted
+  from the homelab docs.
+- **No `network_mode: host`** — the gateway needs one port, not the box's network
+  namespace.
+- No new capabilities; bind mounts confined to `/mnt/datapool/apps/chat-gateway`.
+- No change to any existing app's config — §4.3.1 makes that a hard stop.
 
 #### Image strategy
 
@@ -353,7 +630,18 @@ The runbook states the ordering constraint that makes this safe: **create the
 directory tree with restrictive modes first, then copy** — never copy into a
 world-readable directory and tighten afterwards.
 
-#### Tailnet exposure — what per-app keys do and do not protect
+#### Tailnet exposure — resolved by measurement (§0.2.3)
+
+**Publishing `8085` is sufficient.** `ix-tailscale-tailscale-1` runs host-networked
+with `/dev/net/tun` and `TS_USERSPACE=false`, so `tailscale0` is a **real host
+interface** and a port bound to `0.0.0.0` is tailnet-reachable with **no subnet
+router, userspace proxy, sidecar, `serve` or `funnel`.**
+
+⚠ **Record the dependency, because nothing in the gateway's config reveals it:**
+that reachability is a property of *another app's* configuration. If tailscale is
+ever switched to userspace mode or off host networking, `tailscale0` disappears
+from the host and every service's tailnet reachability silently goes with it.
+Runbook Gotcha, not a footnote.
 
 The gateway needs **no public ingress**: Pub/Sub is an outbound pull. Tailnet
 reachability exists only so consumer apps can call `/v1/*`. `docker-compose.yml`'s
@@ -484,15 +772,105 @@ does not need rewriting to accommodate persistence.
 reporting of a mechanism whose whole purpose is to survive something nobody
 watched (rule #5).
 
+#### What durability does NOT cover — say it, or the name oversells it
+
+**"Queue durability" does not mean "no inbound event is ever lost."** The
+subscription is created with `--message-retention-duration=24h` (both setup
+scripts and the Terraform agree). A gateway that is **down for more than 24
+hours loses inbound events at Pub/Sub, before any journal exists to protect
+them** — the ceiling is set by the subscription, not by us, and no amount of
+local persistence raises it.
+
+This is worth writing down now precisely because §0.1 makes inbound real: three
+of four spaces route somewhere, so "the gateway was off for a weekend" stops
+being a thought experiment. The journal protects what the gateway has
+**accepted**; nothing protects what it never pulled.
+
+Two things follow, and both are deliberately *not* actions in this row: whether
+24h is the right retention is an operator decision on the Google side, and a
+gateway-down alarm is what the aitrader dead-man monitor already does for
+consumers — pointing it at the gateway itself would be a **new item with its own
+justification**, not a quiet widening of this one.
+
 **Merge gate: no.** No secret handling, no IaC, no Google-facing code.
 
 ### 4.3 CG-55 — first NAS deploy and live smoke
 
-**User-executed**, in the pattern of CG-15 / CG-16 (the E1/E2 experiments the
-user ran while Builder prepared them). Builder prepares exact commands and the
-observation checklist; the user runs them against real hardware. Builder does
-not deploy to production hardware unattended, and this queue has no precedent
-for it.
+**Builder-executed over SSH, within a declared blast radius** (§0.2.1). This
+supersedes the earlier "user-executed, CG-15/CG-16 pattern" framing: the account
+exists, works with `BatchMode`, and has passwordless sudo, so Builder can both
+run and *verify* the deploy rather than hand over instructions and hope.
+
+**That capability is also the largest one this arc introduces**, so it is bounded
+before it is used.
+
+#### 4.3.1 What a Builder may and may not do over that connection
+
+Passwordless root on a box running 10 live stacks — including claude-mem's
+Postgres — is a large blast radius. `claude` is not in a `docker` group, so
+**every** docker call is `sudo docker`, i.e. root: a single `-v /:/host` would be
+total host compromise. The policy therefore names *operations*, not tools.
+
+| | Allowed | Examples |
+|---|---|---|
+| ✅ | **Read-only probing, unattended** | `docker ps`, `docker stats --no-stream`, `docker inspect`, `midclt call app.query`, `free`, `df`, `ss -tln`, `ip link` |
+| ✅ | **Creating the gateway's OWN app, dataset, directories and config** — only within the declared paths | `/mnt/datapool/apps/chat-gateway/**`, and the single app name `chat-gateway` |
+| ✅ | **Building and running the gateway's own image** | `docker build`, `midclt call app.create` for `chat-gateway` only |
+| 🛑 | **Anything touching another stack** | never restart, stop, exec into, or reconfigure any other `ix-*` container — including `sudo docker exec ix-tailscale-tailscale-1 tailscale …` |
+| 🛑 | **Anything global to the Docker daemon** | **never** `docker system prune`, `docker network prune`, `docker volume prune`, daemon restart, or image cleanup |
+| 🛑 | **Anything touching the pools or TrueNAS itself** | no dataset changes outside the gateway's own path, no pool operations, no `midclt` write calls against another app |
+| 🛑 | **The homelab repo's captured state** | `capture.sh` rewrites `nas/compose/*.json` for **every** custom app — it is a cross-repo write and belongs to whoever owns that working tree |
+
+**Two additions to the position I was given, both from measurement rather than
+principle:**
+
+1. **Check the app name is free, fail-closed, immediately before creating it.**
+   `midclt call app.query '[["name","=","chat-gateway"]]'` returns `[]` today —
+   but this arc has already been wrong twice about what is on that box, and a
+   non-empty result must abort rather than proceed. Same fail-closed discipline
+   the homelab's own `restore.sh` uses.
+2. **`capture.sh` is explicitly a STOP**, which the position I was given did not
+   name. It looks like a verification step — CG-53 even makes reading its output
+   a gate — but it writes files for all ten stacks into another repo.
+
+**On stopping:** a stop means *stop and report*, not *work around*. If the
+gateway's app cannot be created without touching something on the 🛑 list, that
+is a finding for the user, not an obstacle to route around.
+
+#### 4.3.2 Getting the secrets onto the box — the highest-risk step in the arc
+
+Real per-app API keys and webhook URLs (which embed `key`+`token` and **are**
+bearer credentials with no rotate-in-place) must reach a live host. This is hard
+rule #2 executed rather than described.
+
+**The rule: secret material travels over stdin or as a file copy — never as a
+command-line argument.** An argument lands in the local shell's history, in the
+remote shell's history, and in `ps` output on a box other people's software runs
+on. `sudo` logs the command it ran, not what was piped into it.
+
+```
+FORBIDDEN   ssh nas "echo '<secret>' > /path/.env"
+FORBIDDEN   ssh nas "sudo sh -c 'echo <secret> >> /path/.env'"
+REQUIRED    ssh nas 'sudo tee /path/.env >/dev/null' < ./.env
+```
+
+Ordering matters and is part of the rule — **create restrictive, then fill**,
+never fill and then tighten:
+
+1. `sudo install -d -m 0750 …/chat-gateway` and its subdirectories.
+2. `sudo install -m 0600 /dev/null …/.env` — an **empty file, already 0600**.
+3. Stream the content in over **stdin** with `sudo tee`, which does not change
+   the existing mode.
+4. Same three steps for the service-account key JSON, mode `0600`.
+
+**Verify without printing.** Compare `sha256sum` on both ends and check
+`stat -c '%a %U:%G'` — that proves the transfer and the mode without a byte of
+secret material reaching any log, terminal or transcript. **Never `cat` the file
+to check it landed.**
+
+The registry (`config/registry.yaml`) holds env-var **names**, not values, so it
+is not secret material — but it is gitignored and still travels the same way, at
+`0640`.
 
 Deploy-then-document is the homelab convention — *"the repo documents reality;
 it does not declare intent"* — so the homelab-side artifacts (`nas/services/`
@@ -520,6 +898,24 @@ Smoke checklist (each is a fact to observe, not a box to tick):
 4. Restart the app; confirm the journal replays and the counters say so. This is
    CG-54's proof on real hardware, and it is the point of doing it here.
 5. `capture.sh`, then **read the captured JSON**.
+
+**§0.1 adds a sixth item, and it is the highest-value observation of the whole
+deploy — the first drain.** The gateway has never pulled while the app was in
+four spaces, so the first successful poll drains **up to 24 hours** of
+accumulated backlog (the subscription's retention) from all four at once.
+Record, before and after that first drain:
+
+| Observe | Why it is the interesting number |
+|---|---|
+| `events_seen` | the backlog's actual size — the first real measurement of this deployment's inbound volume |
+| `suppressed_opt_out` | **the aitrader activity meter, live.** Its magnitude is what re-prices open question 2 (§7) from "app-id enumeration" to "another tenant's traffic volume" |
+| `inbox.pending` per app, and `inbox.dropped` | whether the FamilyWorkspace inbox is being drained by anybody. **Non-zero `dropped` on the first drain means the 1000-item cap was hit by a backlog** |
+| **which event types actually arrived** | §0.1.2's open question. If a space-member classic app only sees @mentions, the FamilyWorkspace concern is near-empty; if not, it is real. **This repo cannot answer it — the first drain can.** |
+| `interactions_without_action_id`, `unparseable_seen` | three of these spaces have never had a single event parsed from them |
+
+⚠ **Do not record any space id, sender identity or message content** when writing
+this up. Counts and app ids only — the same discipline `/healthz` itself follows,
+and for the same reason.
 
 **Merge gate: yes** — deploy + secret-handling path.
 
@@ -768,9 +1164,20 @@ in this queue's house style.
 ⚠ **Whether this clears the ledger's `SubscriberLoop` long-run row is a hard rule
 #3 question and needs the user's explicit sign-off**, on the CG-35 precedent. The
 row must present the evidence and **propose**; it must not clear a flag on its own
-authority. A quiet subscription running for three days proves the thread
-survives; it does not prove much about behaviour under load, and the difference
-should be stated rather than smoothed.
+authority.
+
+**§0.1 materially improves what this soak can prove, and the row should say so
+rather than inherit the old caveat.** This spec first read *"a quiet subscription
+running for three days proves the thread survives; it does not prove much about
+behaviour under load."* **The subscription is no longer quiet** — four spaces feed
+it, two of them generating suppression traffic and two enqueueing. The soak now
+exercises the pull loop against **real, continuous, multi-space traffic**, which
+is a materially stronger claim than a quiet loop staying alive.
+
+It is still not a load *test*, and the sign-off request must say so rather than
+smooth it: this measures the loop under **organic** traffic from four spaces over
+days, not under deliberate pressure. That is exactly what the evidence reaches —
+no more.
 
 #### Also in scope
 
@@ -828,11 +1235,45 @@ PR rather than this spec predicting them.
    per request so nothing breaks. Changes a published contract, so it is the
    user's call. **Blocks CG-56's dispatch; does not block anything else** —
    CG-57 can document either answer.
-2. **`/healthz` exposure on an allow-all tailnet.** It is unauthenticated by
-   design (CG-12's bare-counter decision rests on it) and enumerates app ids and
-   identity names to anyone who can reach the port. The homelab's restricting ACL
-   is drafted but unapplied. Accept as-is and record it in Gotchas (recommended,
-   and what this spec assumes), or file a separate item to restrict it?
+2. **`/healthz` exposure on an allow-all tailnet — RE-PRICED, and it went up.**
+   This first read as app-id and identity-name enumeration: an inventory of who
+   the gateway serves, mildly embarrassing, not sensitive. **§0.1 changes the
+   assessment.** With the app live in both Ai Trader spaces and
+   `allow_inbound: false`, `suppressed_opt_out` now increments once per event
+   there — so the endpoint publishes **a live activity meter for another
+   tenant's private trading spaces**: not content, not attribution, but volume
+   and timing, sampled as often as the reader likes.
+
+   That is a different kind of disclosure from a name list. Trading activity
+   volume is inferable from it (a burst at market open is a burst at market
+   open), and **`aitrader`'s entire contract is that it takes no inbound path** —
+   its operator opted out of two-way *because* it is a real-money system. An
+   unauthenticated counter that reveals when that system is busy is not what
+   they opted into, even though hard rule #6 is working perfectly and nothing
+   crosses.
+
+   Three things sharpen it: §0.2.3 confirms tailnet reachability is **automatic**
+   once the port is published; the homelab's restricting ACL is **drafted but
+   unapplied**, so the audience is every tailnet peer including a teammates group
+   that exists for an unrelated service; and §0.2.2 shows the deploy is now
+   **executable**, so this becomes real on the day CG-55 runs rather than
+   someday.
+
+   **This is no longer a "record it in Gotchas" item, and I am withdrawing that
+   recommendation.** Options, in increasing cost — the user's call:
+
+   | Option | Cost | Note |
+   |---|---|---|
+   | Accept + document | zero | what the spec previously assumed; I no longer recommend it |
+   | **Bind `8085` to the LAN address only** until the ACL lands | one compose line | ⚠ **but this also removes tailnet access for consumers, which is the reason for exposing it at all** — so it only works while every consumer is on the LAN. Check that before choosing it. |
+   | Split `/healthz`: keep liveness unauthenticated, move **counters** behind a key | small code change, new row | targets the actual disclosure and keeps rule #5's honesty; `?strict=1` (CG-59) already gives dashboards what they need without counters |
+   | Apply the drafted ACL first | homelab repo, not ours | fixes it for every NAS service at once, and is the only option that does |
+
+   **Recommended: land the drafted ACL before CG-55, or take the split.** If
+   neither is wanted, CG-55 should still be allowed to proceed — but the decision
+   should be *made*, not defaulted into. Note the counters are also the thing
+   CG-55's first-drain observation depends on, so removing them entirely is not
+   free either.
 3. **Image strategy** — build-on-box (recommended) vs publish to GHCR. Reversible
    either way; worth a nod before CG-53 ships, since it sets what the runbook
    says.
@@ -843,6 +1284,17 @@ PR rather than this spec predicting them.
    topology-independence regardless. Flagged only so that if OD9 is accepted, the
    spec's *stated reason* does not read as falsified. Whether jobhunt's contract
    doc should record both reasons is jobhunt's call.
+
+6. **A memory limit on the gateway service?** The box has **zero swap** and hosts
+   claude-mem's Postgres, so an unbounded stack can OOM-kill a neighbour. But it
+   was **measured** that no existing *custom* app declares `mem_limit` — the
+   4 GiB caps on jellyfin/calibre/calibre-web/tailscale are TrueNAS's own, on
+   *catalog* apps. Setting one is therefore a deliberate deviation from house
+   style, which is why it is a question rather than a silent choice.
+   **Recommended: set it** — the deviation is one line and the failure it
+   prevents lands on someone else's database. Also unverified whether the
+   TrueNAS renderer honours `mem_limit` in a custom app; CG-53 checks that on
+   the box.
 
 ---
 
@@ -855,9 +1307,10 @@ regardless.
 
 | Row | Gate | Why |
 |---|---|---|
+| CG-60 | ⏸ **yes** | consumer contracts, and it works in the ledger's neighbourhood |
 | CG-53 | ⏸ **yes** | secret handling (`.env` on-box layout, SA key mount), IaC-adjacent |
 | CG-54 | no | core code, no secrets, no Google surface |
-| CG-55 | ⏸ **yes** | deploy + secret handling; **user-executed** |
+| CG-55 | ⏸ **yes** | deploy + secret handling; **Builder-executed over SSH under §4.3.1** |
 | CG-56 | no — but **dispatch blocked** on open question 1 | published-contract change |
 | CG-57 | no | registry + docs; hard rule #6 territory, narrowing only |
 | CG-58 | no | touches `adapters/`; **no ⚠ flag may be cleared, added or reworded** |
