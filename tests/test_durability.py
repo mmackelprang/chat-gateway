@@ -466,6 +466,67 @@ def test_an_overflow_drop_is_closed_so_it_does_not_come_back_at_boot(tmp_path):
     assert [r.text for r in second.poll("app-a")] == ["tap 2", "tap 3"]
 
 
+def test_a_journalled_reply_that_no_longer_parses_is_COUNTED_not_silently_erased(tmp_path):
+    """Pre-merge review finding. The drop is right; the silence was not.
+
+    A record that cannot be revived is dropped and boot compaction then removes
+    it for good — so without a counter, an envelope change across a deploy
+    erases a tap and nobody is ever told. This is the inbound twin of the
+    dispatcher's `unroutable`, which had a counter, a log entry and a /healthz
+    reason from the start.
+    """
+    path = tmp_path / "inbox.jsonl"
+    good = Inbox(journal=Journal(path))
+    good.put(_reply(text="survives"))
+    # A record from a hypothetical future envelope: valid JSON, valid journal
+    # record, no longer a valid InboundReply.
+    Journal(path).open(999, "inbound", {"app": "app-a", "not": "an InboundReply"})
+
+    revived = Inbox(journal=Journal(path))
+    assert revived.restore() == 1
+    assert revived.unrevivable == 1
+    assert [r.text for r in revived.poll("app-a")] == ["survives"]
+    # ...and it is gone from the journal rather than replay-failing every boot.
+    assert Inbox(journal=Journal(path)).restore() == 0
+
+
+def test_an_unrevivable_reply_is_reported_at_healthz_as_a_reason_not_a_number(tmp_path):
+    # Rule #5: `status` is computed FROM `reasons`, so a counter nobody turns
+    # into words cannot make an operator look.
+    from fastapi.testclient import TestClient
+
+    from chat_gateway.service import create_app
+
+    path = tmp_path / "inbox.jsonl"
+    Journal(path).open(1, "inbound", {"app": "app-a", "not": "an InboundReply"})
+    inbox = Inbox(journal=Journal(path))
+    inbox.restore()
+    assert inbox.unrevivable == 1
+
+    app = create_app(_registry(), inbox, {"webhook": OkAdapter()})
+    body = TestClient(app).get("/healthz").json()
+    assert body["inbox"]["unrevivable_at_boot"] == 1
+    assert body["status"] == "degraded"
+    assert any("no longer parse" in r for r in body["reasons"]), body["reasons"]
+
+
+def test_restore_honours_max_pending_when_the_cap_was_LOWERED_between_runs(tmp_path):
+    # `max_pending` is the memory bound this class advertises, and boot must not
+    # be the one path that ignores it. A journal written under a wider cap would
+    # otherwise restore straight past the new one.
+    path = tmp_path / "inbox.jsonl"
+    wide = Inbox(max_pending=5, journal=Journal(path))
+    for n in range(5):
+        wide.put(_reply(text=f"tap {n}"))
+
+    narrow = Inbox(max_pending=2, journal=Journal(path))
+    assert narrow.restore() == 2
+    assert [r.text for r in narrow.poll("app-a")] == ["tap 3", "tap 4"]
+    # ...and the three it shed are gone from the journal, not waiting for the
+    # next boot to blow the cap all over again.
+    assert Inbox(max_pending=2, journal=Journal(path)).restore() == 0
+
+
 def test_a_failed_poll_close_redelivers_rather_than_losing_the_batch(tmp_path):
     # `poll` has already emptied the queue when the close is written. Raising
     # would drop the replies on the floor; counting means they replay.

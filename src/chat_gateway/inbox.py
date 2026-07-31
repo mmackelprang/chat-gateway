@@ -29,6 +29,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 
 from .envelope import InboundReply
+from .errors import describe_exception
 
 
 class Inbox:
@@ -45,6 +46,13 @@ class Inbox:
         self._ids_by_app: dict[str, deque[int]] = defaultdict(deque)
         self.dropped = 0  # overflow counter, surfaced by healthz
         self.replayed = 0
+        #: Journalled replies that no longer validate as an `InboundReply` at
+        #: boot. Counted rather than swallowed: the record is DROPPED and boot
+        #: compaction then removes it for good, so without this an envelope
+        #: change across a deploy would erase a tap with nobody ever told.
+        #: The dispatcher's `unroutable` is the same shape; this is its inbound
+        #: twin, and both reach /healthz.
+        self.unrevivable = 0
         #: Journal writes that failed on the poll path, where raising would
         #: throw away replies already handed to the consumer. Surfaced at
         #: /healthz (hard rule #5).
@@ -92,7 +100,23 @@ class Inbox:
         return items
 
     def restore(self) -> int:
-        """Re-populate pending replies from the journal. Returns how many."""
+        """Re-populate pending replies from the journal. Returns how many.
+
+        A record that no longer validates is DROPPED, counted in
+        `unrevivable`, and named on the console by id — never revived, never
+        retried. Dropping is the right call and the count is what makes it
+        honest: a record that cannot be parsed today cannot be parsed on the
+        next boot either, so keeping it would replay-and-fail forever and the
+        journal would never shrink. **The per-app JSONL audit beside this queue
+        is the recovery record** — it holds what arrived, which is exactly the
+        artifact an operator needs here.
+
+        The console line names the id and the exception TYPE, never the record.
+        A pydantic `ValidationError` embeds the input it rejected, and an
+        inbound Chat event carries a per-message capability URL — which is why
+        it goes through `describe_exception` (CG-29's allowlist) rather than an
+        f-string.
+        """
         if self._journal is None:
             return 0
         survivors = self._journal.replay()
@@ -104,14 +128,34 @@ class Inbox:
                     highest = max(highest, rec["id"])
                 try:
                     reply = InboundReply(**rec["payload"])
-                except Exception:  # noqa: BLE001 — a record we cannot revive is not fatal
+                except Exception as exc:  # noqa: BLE001 — config/envelope drift, not a bug
+                    self.unrevivable += 1
+                    print(f"inbox: journalled reply {rec['id']!r} no longer parses "
+                          f"({describe_exception(exc)}) — DROPPED, not delivered; "
+                          "the per-app JSONL audit under the inbox dir is the "
+                          "recovery record", flush=True)
                     continue
-                self._pending[reply.app].append(reply)
+                q = self._pending[reply.app]
+                if len(q) >= self._max_pending:
+                    # `max_pending` is the memory bound this class advertises, and
+                    # boot must not be the one path that ignores it. Reachable
+                    # when the cap is LOWERED between runs: a journal written
+                    # under the old cap would otherwise restore straight past the
+                    # new one. Same rule as `put` — oldest goes, and it is closed
+                    # so the next boot does not see it again.
+                    q.popleft()
+                    ids = self._ids_by_app[reply.app]
+                    if ids:
+                        dropped_id = ids.popleft()
+                        revived = [r for r in revived if r["id"] != dropped_id]
+                    self.dropped += 1
+                q.append(reply)
                 self._ids_by_app[reply.app].append(rec["id"])
                 revived.append(rec)
-        # Continue the id sequence past anything the journal already used, so a
-        # restart cannot mint an id that collides with a live record.
-        self._ids = itertools.count(highest + 1)
+            # Continue the id sequence past anything the journal already used, so
+            # a restart cannot mint an id that collides with a live record. Set
+            # under the lock with the queues it has to stay consistent with.
+            self._ids = itertools.count(highest + 1)
         self._journal_write(lambda: self._journal.compact(revived), "compact")
         self.replayed = len(revived)
         return self.replayed

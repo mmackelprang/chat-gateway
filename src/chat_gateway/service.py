@@ -337,7 +337,13 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             "version": __version__,
             "registry": registry.health(),
             "inbox": {"pending": inbox.pending_counts(), "dropped": inbox.dropped,
-                      "replayed_at_boot": getattr(inbox, "replayed", 0)},
+                      "replayed_at_boot": getattr(inbox, "replayed", 0),
+                      # The inbound twin of delivery's `unroutable_at_boot`:
+                      # a journalled reply that no longer parses is dropped
+                      # and boot compaction then removes it for good, so
+                      # this counter is the only thing standing between a
+                      # lost tap and nobody knowing. Rule #5.
+                      "unrevivable_at_boot": getattr(inbox, "unrevivable", 0)},
             "delivery": {"pending_jobs": dispatch.pending(),
                          "replayed_at_boot": getattr(dispatch, "replayed", 0),
                          "expired_at_boot": getattr(dispatch, "expired", 0),
@@ -462,6 +468,16 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "durable, so a restart will lose or double-send the affected "
                 "entries. Check free space and the state dir's permissions"
             )
+        if body["inbox"]["unrevivable_at_boot"]:
+            reasons.append(
+                f"inbox replay dropped {body['inbox']['unrevivable_at_boot']} "
+                "journalled reply(ies) that no longer parse as an InboundReply — "
+                "they were NOT delivered to the owning app and are gone from the "
+                "queue journal. An envelope change across a deploy looks like "
+                "this. The per-app JSONL audit under the inbox dir holds what "
+                "arrived and is the recovery record; the ids are on the boot "
+                "console"
+            )
         if queue["expired_at_boot"] or queue["unroutable_at_boot"]:
             reasons.append(
                 f"queue replay dropped {queue['expired_at_boot']} expired and "
@@ -469,7 +485,10 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "queued and were NOT delivered. Expired means older than the "
                 "replay ceiling (posting a stale alert now would mislead); "
                 "unroutable means the registry no longer grants that identity "
-                "(hard rule #4). Both are in the delivery log by id"
+                "(hard rule #4). Both are in the delivery log by id. This is a "
+                "fact about THIS boot and will not change while the process runs "
+                "— boot compaction already removed the records, so the next "
+                "restart clears it"
             )
         sub = body["subscriber"]
         if sub["enabled"]:
