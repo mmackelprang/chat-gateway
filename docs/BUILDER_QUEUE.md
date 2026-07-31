@@ -545,7 +545,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 
 | Item | State | Note |
 |---|---|---|
-| **CG-60** · repo-wide correction of the one-space premise | 📋 queued | ⏸ **merge gate** — consumer contracts. **Sequenced FIRST.** Plan Part H |
+| **CG-60** · repo-wide correction of the one-space premise | 🚀 in-flight | ⏸ **merge gate** — consumer contracts. **Sequenced FIRST.** Plan Part H |
 | **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 📋 queued | ⏸ **merge gate**. **Must land before CG-55.** Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | 📋 queued | Part B. The one hard prerequisite for an always-on deploy |
