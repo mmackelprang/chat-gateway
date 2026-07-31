@@ -412,8 +412,21 @@ Never copy into a world-readable directory and tighten afterwards.
 └── inbox-data/             0750   inbound JSONL audit                     (rw)
 ```
 
-**§4 Build the image on the box** (recommended; §9 records the registry
-alternative). Ship the source, build, tag locally, never publish.
+**§4 Build the image on the box** — ✅ **DECIDED (D4)**; §9 keeps the registry
+alternative as the upgrade path. No registry, no credentials, no external
+dependency in the deploy path.
+
+Getting the source there: `git clone` this **public** repo at a **pinned
+commit** is the auditable form — it records exactly what was built and carries no
+secret. Fallback if the box lacks egress: stream a tarball over stdin (`git
+archive` | `ssh nas 'tar -x -C …'`), which is the same no-argv transport the
+standing rules require, though source is not secret. Then `sudo docker build -t
+chat-gateway:local .` and tag locally; `pull_policy: missing` means it is never
+pulled.
+
+⚠ **A rebuild is a MANUAL step.** There is no CI to the NAS and none is wanted.
+The upgrade procedure — re-clone at the new commit, rebuild, `app.redeploy` —
+belongs in this runbook, or the first upgrade is an improvisation.
 
 **§5 The compose document** — `custom_compose_config`, carrying **paths only**:
 
@@ -445,11 +458,12 @@ bind mounts under `/mnt/datapool/apps/<app>/`, **no** `container_name` (TrueNAS
 names it `ix-chat-gateway-chat-gateway-1`), **no** `labels`, **no** `env_file`,
 **no** `logging`.
 
-⚠ **`mem_limit` is a DELIBERATE DEVIATION from house style** — measured, no
-existing *custom* app sets one (the 4 GiB caps on jellyfin, calibre, calibre-web
-and tailscale are TrueNAS's own, applied to *catalog* apps). It is here because
-the box has **zero swap** and hosts claude-mem's Postgres. **Spec open question
-6** — if the user declines, remove the line; do not quietly keep it.
+✅ **`mem_limit` — DECIDED (D6): set one.** Recorded explicitly as a **deliberate
+deviation from local convention: no existing *custom* app on that box sets one**
+(measured; the 4 GiB caps on jellyfin, calibre, calibre-web and tailscale are
+TrueNAS's own, on *catalog* apps). The reason: an unbounded Python service on a
+**swapless** box is a neighbour that takes others down, and **the OOM killer
+picks its own victim — possibly claude-mem's Postgres.**
 
 ⚠ **Three things to verify on the box rather than assume**, recorded as decision
 points so they are not discovered live:
@@ -490,8 +504,10 @@ if the homelab repo ever wants defence in depth here, a `*_API_KEY__*` /
   and `allow_inbound: false`, **`suppressed_opt_out` increments once per event
   there**, making the endpoint a live activity meter for another tenant's private
   trading spaces: volume and timing, no content and no attribution. Hard rule #6
-  is working — nothing crosses — but see **spec open question 2**, which is
-  unresolved and should be decided before this is published on the tailnet.
+  is working — nothing crosses. ✅ **Decided (D2): the drafted homelab tailnet ACL
+  lands BEFORE this is deployed**, so the endpoint is fenced from the start. ⚠ The
+  ACL governs the **tailnet only** — anyone on the home **LAN** still reaches this
+  unauthenticated, which is the accepted residual, stated rather than glossed.
   Per-app API keys (rule #4) protect `/v1/*` and nothing else.
 - **The restricting tailnet ACL is drafted but NOT applied** (homelab records
   this, 2026-07-28) — the live policy is default allow-all, so any tailnet peer
@@ -1388,7 +1404,35 @@ the spec's §1.2 shows that script's suffix rule cannot see this project's secre
 shapes, so the assurance is worth exactly nothing here. Read the file. (Running
 `capture.sh` itself is a 🛑 — request it, then read what it produced.)
 
-### C1a · Item 6 — the first drain
+### C0 · Two prerequisites — check BOTH before anything else
+
+**(a) The homelab tailnet ACL must already be applied (D2).** The endpoint is
+fenced from the start, never afterwards. ⚠ **This is homelab-repo work a
+chat-gateway Builder cannot do** — if it is not done, **STOP and report**; do not
+deploy and fence later. It is validated through that repo's
+`network/tailscale-acl.hujson` `tests` block, which the Tailscale console
+enforces on save.
+
+**(b) CG-61 must be in the live registry (D1).** This Part streams
+`config/registry.yaml` to the box. If the opt-out is not in that file, the
+deployed gateway runs `allow_inbound: true` and the first drain writes
+FamilyWorkspace content to disk — the exact outcome D1 exists to prevent. **Make
+it fail-closed, not a memory test:**
+
+```bash
+python - <<'PY'
+import sys; sys.path.insert(0, "src")
+from chat_gateway.registry import load_registry
+r = load_registry("config/registry.yaml")
+expected = {"aitrader": False, "aiteam-harness": False, "job-hunter": True}
+actual = {a: app.allow_inbound for a, app in r.apps.items()}
+assert actual == expected, f"STOP — registry opt-in map is {actual}, expected {expected}"
+print("pre-flight OK:", actual)
+PY
+# Non-zero exit => do NOT transfer, do NOT deploy.
+```
+
+## C1a · Item 6 — the first drain
 
 The gateway has **never** pulled while the Chat app was in four spaces
 (spec §0.1). The first successful poll drains **up to 24 hours** of accumulated
@@ -1398,10 +1442,10 @@ once. Sample `/healthz` **immediately before and after**:
 | Field | Why it is the interesting number |
 |---|---|
 | `events_seen` | the backlog's real size — the first measurement of this deployment's inbound volume, ever |
-| `suppressed_opt_out` | **the aitrader activity meter, live.** Its magnitude re-prices spec open question 2 |
-| `inbox.pending` per app | whether anyone drains the FamilyWorkspace inbox |
+| `suppressed_opt_out` | now pooled across **three** opted-out spaces (D1), so it no longer decomposes to aitrader. Its magnitude is what D2's residual **LAN** exposure is judged against |
+| `inbox.pending` | **`job-hunter` only** now — D1 closed the other open path |
 | `inbox.dropped` | **non-zero on the first drain means the 1000-item cap was hit by the backlog** |
-| **which event types arrived** | spec §0.1.2's open question — if a space-member classic app only sees @mentions, the FamilyWorkspace concern is near-empty; if not, it is real. **Only the box can answer this.** |
+| **which event types arrived** | spec §0.1.2's question. ⚠ **Now about `job-hunter` only** — D1 made this a capacity-and-shape question about the one open tenant, not a privacy question about a family space. **Only the box can answer it.** |
 | `unparseable_seen`, `interactions_without_action_id` | three of these spaces have never had an event parsed from them |
 
 ⚠ **Record counts and app ids only — never a space id, a sender identity, or
@@ -1424,10 +1468,15 @@ reason, and this write-up lands in a public repo.
 
 ---
 
-# Part D — CG-56 · Inbox delivery semantics ⏸ NEEDS USER SIGN-OFF
+# Part D — CG-56 · Inbox delivery semantics ✅ APPROVED (D3)
 
-**Do not dispatch until the user answers open question 1** in the spec. If they
-decline, skip to Part E and document at-most-once explicitly there.
+**Unblocked** by user decision D3 (spec §7). The published contract must keep
+working **unchanged** for any caller that does not ask for acks — a requirement
+of the approval, not an implementation preference.
+
+The reason, recorded so it is not re-argued: decision A makes polling jobhunt's
+**only** inbound path, so a read lost mid-processing is a **lost Approve**.
+Tolerable when the inbox was a fallback behind push; not now.
 
 ## D1 · Opt-in ack mode, so nothing breaks
 
@@ -1961,7 +2010,8 @@ for years. Report measured growth per day and **propose** a retention rule.
 
 **Do not implement one.** A retention policy on an audit trail whose stated
 purpose is that *"nothing is ever silently lost"* is a rule-#5-flavoured decision
-and belongs to the user (spec §7, open question 4).
+and belongs to the user — ✅ **decided (D5): measure first, propose here with real
+numbers.** With `aiteam-harness` closed (D1) only `job-hunter` accumulates.
 
 ---
 
@@ -2021,8 +2071,9 @@ The file already carries the prediction:
   aitrader**, and `allow_inbound: false` is doing exactly its job. The change is
   that a *counter moves on an unauthenticated endpoint* — a volume signal, not a
   data path.
-- Point at **spec open question 2** as unresolved rather than silently accepting
-  the exposure.
+- Point at **D2 (spec §7)**: the exposure is not silently accepted — the drafted
+  homelab tailnet ACL lands before the deploy. Name the residual too: the ACL
+  governs the tailnet, not the LAN.
 
 **Do not delete the prediction.** It is the most valuable paragraph in the file:
 it named the trigger, the trigger fired, and leaving it visible is what makes the
@@ -2081,6 +2132,95 @@ python -m pytest -q tests/test_fixtures_scrubbed.py  # CG-26 guard reads these f
 - [ ] No ⚠ flag cleared, added or reworded — **verify with a diff**, not memory.
 - [ ] No space id, email, `users/…` id or tenant value introduced.
 - [ ] The aitrader prediction paragraph still present.
+
+---
+
+# Part I — CG-61 · Close `aiteam-harness`'s inbound path (D1)
+
+⏸ **Merge gate: a live-config change narrowing a tenant's inbound surface.**
+**Sequenced second, and it MUST land before Part C** — that Part streams the live
+registry to the NAS.
+
+Reasoning lives in spec §7 D1 and §4.0b. This Part is only the mechanics.
+
+## I1 · `config/registry.example.yaml`
+
+```yaml
+  aiteam-harness:
+    key_env: CHAT_GATEWAY_API_KEY__AITEAM_HARNESS
+    identities: [pm-familyworkspace]
+    # Inbound was on only because `true` is the DEFAULT — this app never asked
+    # for it. It has no callback_url, no allowed_users, and CLAUDE.md describes
+    # it as a notify.py OUTBOUND transport. Hard rule #6 is default-deny in
+    # spirit; this makes it so in fact, and that space's content never reaches
+    # disk (an opted-out owner's event is discarded entirely — it cannot even
+    # land under `_unrouted`, because that fallback only fires for a space with
+    # NO owner).
+    #
+    # A DEFAULT CORRECTED, NOT A VERDICT about this consumer. Reversible in this
+    # one line if aiteam ever wants inbound.
+    allow_inbound: false
+```
+
+## I2 · The live registry — an operator action, recorded
+
+⚠ **`config/registry.yaml` is gitignored; a PR cannot change it.** Verified
+2026-07-31 that it still reads `allow_inbound=True` for this app, so this is a
+real edit and not a no-op. Make the same change on the dev box, then confirm:
+
+```bash
+python - <<'PY'
+import sys; sys.path.insert(0, "src")
+from chat_gateway.registry import load_registry
+r = load_registry("config/registry.yaml")
+for aid, a in sorted(r.apps.items()):
+    print(f"{aid}: allow_inbound={a.allow_inbound}")
+PY
+# expected: aiteam-harness False, aitrader False, job-hunter True
+```
+
+## I3 · The test that pins the property D1 rests on
+
+Without this, a future refactor can quietly reintroduce the disk write.
+
+```python
+def test_an_opted_out_owner_reaches_neither_its_inbox_nor_unrouted(tmp_path):
+    """D1's benefit, pinned.
+
+    `dispatch()` discards an opted-out owner's event entirely: the
+    `or [UNROUTED]` fallback CANNOT fire, because that only triggers for a space
+    with NO owner and this space HAS one. So nothing reaches the app's inbox,
+    nothing reaches `_unrouted`, and nothing reaches the JSONL audit on disk —
+    only the counter moves. That last clause is the whole point of the decision.
+    """
+    inbox = Inbox(audit_dir=tmp_path)
+    suppressed = []
+    delivered = dispatch(EVENT_IN_THE_CLOSED_SPACE, registry, inbox,
+                         on_suppressed=lambda app_id, reason: suppressed.append((app_id, reason)))
+    assert delivered == []
+    assert inbox.poll("aiteam-harness") == []
+    assert inbox.poll(UNROUTED) == []
+    assert list(tmp_path.glob("*.jsonl")) == []          # nothing on disk
+    assert suppressed == [("aiteam-harness", REASON_OPT_OUT)]   # but it IS counted
+```
+
+Build the event from an existing classic fixture. ⚠ **Use a synthetic space id** —
+never the real one.
+
+## I4 · Docs
+
+`CLAUDE.md`'s consumer list, and anywhere describing that app's inbound posture.
+Keep it short: the reasoning belongs in one place, and that place is the spec.
+
+## I5 · Verify
+
+```bash
+python -m pytest -q          # expect 202 + the new test
+```
+
+- [ ] Reversibility stated in the comment — a default corrected, not a verdict.
+- [ ] `aitrader` untouched and still `allow_inbound: false`.
+- [ ] No real space id introduced.
 
 ---
 

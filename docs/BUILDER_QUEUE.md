@@ -1,7 +1,7 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-31 (Planner — **the production-readiness arc is filed:
-CG-53 … CG-59**, one shared
+**Last updated:** 2026-07-31 (Planner — **the production-readiness arc is filed
+and DISPATCHABLE: CG-53 … CG-61**, one shared
 [spec](superpowers/specs/2026-07-31-production-readiness-arc-design.md) ·
 [plan](superpowers/plans/2026-07-31-production-readiness-arc.md), Parts A–G
 mapping one-to-one onto the rows. **It has never been deployed** — `Dockerfile`
@@ -46,6 +46,15 @@ risk. **`ssh claude@nas` with passwordless sudo exists**, so CG-53/CG-55 are now
 assumes. Tailscale runs as a **container** — but host-networked with
 `TS_USERSPACE=false` and a real `tailscale0` **host** interface, so publishing a
 port is tailnet-reachable with no extra plumbing.
+
+**All six open questions the spec raised are ANSWERED by the user, 2026-07-31 —
+recorded as D1–D6 in spec §7 with their reasoning, so none is re-litigated.**
+D1 closes `aiteam-harness`'s inbound path (**new row CG-61**, and Planner's
+finding acted on); D2 lands the drafted homelab tailnet ACL **before** CG-55, so
+`/healthz` is fenced from the start; D3 approves CG-56's acks, opt-in per
+request; D4 builds the image on the box; D5 measures audit growth before setting
+any retention window; D6 sets a `mem_limit` as an explicit deviation from local
+convention. **The arc is dispatchable.**
 
 Previously (2026-07-30, Builder): **CG-51, CG-35, CG-50 and CG-52 shipped as
 ONE PR, [PR #42](https://github.com/mmackelprang/chat-gateway/pull/42)** — since
@@ -537,16 +546,25 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | Item | State | Note |
 |---|---|---|
 | **CG-60** · repo-wide correction of the one-space premise | 📋 queued | ⏸ **merge gate** — consumer contracts. **Sequenced FIRST.** Plan Part H |
+| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 📋 queued | ⏸ **merge gate**. **Must land before CG-55.** Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | 📋 queued | Part B. The one hard prerequisite for an always-on deploy |
-| **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **USER-EXECUTED**. Depends on CG-53, CG-54. Part C |
-| **CG-56** · inbox delivery semantics: at-most-once → ack | ⏸ **blocked** | **needs user sign-off** — changes a published contract. Part D |
-| **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54; **reads better after CG-56 resolves either way**. Part E |
+| **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, and ⚠ an **external homelab-repo prerequisite (D2)**. Part C |
+| **CG-56** · inbox delivery semantics: at-most-once → ack | 📋 queued | ✅ **APPROVED (D3)** — opt-in per request; default path unchanged. Part D |
+| **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
 | **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
 
 **Recommended order is the table order, and it is NOT the order the arc was
 briefed in.** The brief had deploy first. Three rows move ahead of it:
+
+**All six open questions were answered by the user on 2026-07-31 (D1–D6) and are
+recorded in spec §7 with their reasoning. Two of them change this sequence:**
+**CG-61** is new and must precede CG-55, and **CG-55 gains an external blocker**
+— the drafted homelab tailnet ACL, applied first, so `/healthz` is *fenced from
+the start rather than fenced afterwards*. That is **homelab-repo work a
+chat-gateway Builder cannot perform**; CG-60, CG-61, CG-53 and CG-54 all proceed
+in parallel with it, and only CG-55 waits.
 
 - **CG-60 first.** Docs-only, no dependencies — and
   `docs/consumers/aitrader.md` currently tells that tenant's operator something
@@ -990,11 +1008,66 @@ rather than trusting any list** — including the one in the plan. In
 `docs/BUILDER_QUEUE.md`, **judge claims vs records**: shipped rows are history
 and stay.
 
-**This also re-prices spec open question 2** (`/healthz` on an allow-all
+**This also re-priced what became decision D2** (`/healthz` on an allow-all
 tailnet). It is no longer app-id enumeration — it is another tenant's live
 traffic volume and timing, on a real-money system whose whole contract is that it
 takes no inbound path. See the spec; the recommendation there **changed** as a
 result.
+
+---
+
+### CG-61 · Close `aiteam-harness`'s inbound path  📋 queued · **MUST LAND BEFORE CG-55**
+
+| | |
+|---|---|
+| **Decision** | **user, 2026-07-31 (D1)** — from Planner's finding while correcting the four-spaces premise |
+| **Depends on** | nothing. **CG-55 depends on THIS** being in the live registry |
+| **Touches** | `config/registry.example.yaml`, `CLAUDE.md` (consumer list), one new test. ⚠ the **live** `config/registry.yaml` is gitignored — an operator action, recorded |
+| **Merge gate** | ⏸ **YES — a live-config change narrowing a tenant's inbound surface** (hard rule #6 territory) |
+| **Spec / plan** | [spec §4.0b + §7 D1](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part I](superpowers/plans/2026-07-31-production-readiness-arc.md) |
+
+Set `allow_inbound: false` on `aiteam-harness`.
+
+**Why: inbound was on ONLY because `true` is the default** — `registry.py` reads
+`allow_inbound=bool(spec.get("allow_inbound", True))`. That app has no
+`callback_url`, no `allowed_users`, and `CLAUDE.md` describes it as a `notify.py`
+**outbound** transport. **It never asked for inbound.** Hard rule #6 is
+default-deny in spirit; this makes it so in fact.
+
+**The benefit is verified, not assumed.** `dispatch()` discards an opted-out
+owner's event **entirely**: the `or [UNROUTED]` fallback **cannot** fire, because
+it only triggers for a space with **no** owner and this space has one. So
+**nothing reaches the inbox, nothing reaches `_unrouted`, nothing reaches disk** —
+only the counter moves. FamilyWorkspace content therefore never lands in a JSONL
+audit file. (Read the comment at that `continue` in `adapters/pubsub.py`; it is
+the same gap CG-12 was filed for.)
+
+⚠ **A DEFAULT CORRECTED, NOT A VERDICT** about that consumer, and **reversible in
+one registry line** if aiteam ever wants inbound. The row must say so in those
+words — otherwise a future reader mistakes a default for a judgement.
+
+**Why its own row rather than folded into CG-60.** CG-60 is a **documentation
+correction with no behaviour change**; this **changes behaviour**. This repo has
+an established split for exactly that pair: **CG-19** was scoped
+comments-and-defaults-only and *explicitly declined* to change emitted behaviour,
+filing that as **CG-51** with its own gate. Mixing them makes the docs PR
+unreviewable as docs and buries a live-config change in a prose sweep. The gates
+differ too, and this row carries a sequencing constraint CG-60 does not.
+
+⚠ **The live registry is gitignored, so a PR cannot change it.** Verified
+2026-07-31: it still reads `allow_inbound=True`, so this is a real edit, not a
+no-op. **CG-55 streams that file to the NAS** — if this has not landed there
+first, the deployed gateway runs with inbound open and the first drain writes
+that content to disk. CG-55 carries a **fail-closed pre-flight** asserting the
+opt-in map rather than trusting anyone to remember.
+
+**Collision note:** CG-57 also edits `config/registry.example.yaml` (removing
+`job-hunter`'s `callback_url`). Independent in content, sequential in time —
+CG-61 before CG-55, CG-57 after — so the queue's standing two-rows-one-file
+warning does not bite. Recorded so a reader need not re-derive it.
+
+**Ships a test** pinning that an opted-out owner's event reaches neither the
+app's inbox nor `_unrouted` nor disk, so a refactor cannot quietly undo it.
 
 ---
 
@@ -1083,8 +1156,8 @@ the shape rule #5 exists for; and **values are never logged**, only a count.
   hosting someone else's Postgres, so the compose should declare a `mem_limit`.
   That is a **deliberate deviation from house style** — measured, no existing
   *custom* app sets one (the 4 GiB caps on jellyfin/calibre/calibre-web/tailscale
-  are TrueNAS's own, on *catalog* apps). **Spec open question 6**; do not adopt
-  it silently, and verify the renderer honours it — a limit believed present but
+  are TrueNAS's own, on *catalog* apps). ✅ **Decided: set one (D6)** — recorded as
+  a deliberate deviation, not adopted silently; verify the renderer honours it — a limit believed present but
   silently dropped is worse than none.
 - **Tailnet exposure needs NO extra plumbing, and that was measured rather than
   assumed.** `ix-tailscale-tailscale-1` is a *container*, which looked like it
@@ -1202,7 +1275,7 @@ incident — that is half the reason for the format), restart, and confirm
 
 | | |
 |---|---|
-| **Depends on** | **CG-53** (artifacts) and **CG-54** (durability) |
+| **Depends on** | **CG-53** (artifacts), **CG-54** (durability), **CG-61** (in the LIVE registry — D1), and ⚠ an **external prerequisite in the homelab repo: the drafted tailnet ACL, applied (D2)** |
 | **Touches** | `docs/deploy/nas.md` § *Executed* only. The homelab-side artifacts land in **that** repo |
 | **Merge gate** | ⏸ **YES — deploy + secret-handling path** |
 | **Spec / plan** | [spec §4.3 + §4.3.1](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part C + standing rules](superpowers/plans/2026-07-31-production-readiness-arc.md) |
@@ -1268,14 +1341,14 @@ host`; any change to an existing NAS app; or reaching for the dead
 
 ---
 
-### CG-56 · Inbox delivery semantics: at-most-once → ack-based at-least-once  ⏸ BLOCKED — needs user sign-off
+### CG-56 · Inbox delivery semantics: at-most-once → ack-based at-least-once  📋 queued · ✅ APPROVED (D3)
 
 | | |
 |---|---|
-| **Blocked on** | **the user's answer.** It changes a *published* contract, so Planner recommends and does not decide |
+| **Decision** | **user, 2026-07-31 (D3) — APPROVED.** Opt-in per request; the published contract must keep working **unchanged** for any caller that does not ask for acks |
 | **Depends on** | CG-54 |
 | **Touches** | `inbox.py`, `service.py`, `client.py`, `README.md`, `docs/integration-guide.md`, `docs/consumers/aitrader.md` (a row citing line numbers), `tests/test_service.py` |
-| **Merge gate** | no — but **do not dispatch** until answered |
+| **Merge gate** | no |
 | **Spec / plan** | [spec §4.4](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part D](superpowers/plans/2026-07-31-production-readiness-arc.md) |
 
 `Inbox.poll()` **clears on read** (`inbox.py:37-42`) — at-most-once, documented as

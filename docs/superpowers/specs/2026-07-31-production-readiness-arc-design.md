@@ -111,9 +111,26 @@ Consequences, each stated at its real confidence:
   classic app in a room conventionally receives a MESSAGE only when @mentioned,
   which would make this near-empty; if it receives more, it is a family
   workspace's message content sitting in an unread queue and an unpruned audit
-  file. **This repo cannot answer that, and must not guess.** It becomes the
-  single highest-value observation on first deploy (§4.3) — and it is a
-  privacy-shaped question, not merely an operational one.
+  file. **This repo cannot answer that, and must not guess.**
+
+> ✅ **RESOLVED by user decision D1 (2026-07-31): `aiteam-harness` is set
+> `allow_inbound: false`, filed as CG-61 (§4.0b).** Once that lands, events in
+> that space are **discarded entirely** — verified against `dispatch()`: an
+> opted-out owner's event cannot reach `_unrouted` either, because the
+> `or [UNROUTED]` fallback only fires when a space has **no** owner. Nothing
+> reaches the inbox, nothing reaches disk, only the counter moves.
+>
+> **Two consequences for the rest of this spec, applied rather than left
+> dangling:** the first-drain privacy observation (§4.3) is now about
+> **`job-hunter` only** — the FamilyWorkspace framing is withdrawn there; and
+> audit-log growth (§4.7) now accrues from one tenant, which is part of D5's
+> reasoning for measuring before setting a retention window.
+>
+> ⚠ **Ordering matters and is easy to miss:** CG-55 streams the live registry to
+> the NAS. If CG-61 has not landed in that file first, the deployed gateway runs
+> with `allow_inbound: true` and the first drain writes this content to disk —
+> the exact outcome D1 exists to prevent. §4.3 makes it a **fail-closed
+> pre-flight assertion**, not a thing to remember.
 
 ### 0.1.3 What does NOT change
 
@@ -176,7 +193,7 @@ deviation from house style**, because it was measured that **no existing custom
 app declares one** (`mem_limit` is unset on all of beszel, homepage, upsnap,
 pihole, czkawka and every claude-mem service; the 4 GiB caps visible on jellyfin,
 calibre, calibre-web and tailscale are TrueNAS's own, applied to *catalog* apps).
-Flagged as open question 6 rather than adopted silently.
+✅ **Decided: set one (D6, §7)** — recorded as a deliberate deviation rather than adopted silently.
 
 **Measured port facts**, replacing the list this spec previously took from the
 homelab docs. In use: `22 53 80 139 443 445 3000 5357 5800 6000 6999 8081 8090
@@ -402,10 +419,11 @@ long-run.
 | # | Row | Why here |
 |---|---|---|
 | 0 | **CG-60** repo-wide correction of the one-space premise | **New, and it goes first.** Docs-only, no dependencies — and `docs/consumers/aitrader.md` currently tells that tenant's operator something **false about their own privacy posture** (§0.1.1). A live-false claim in a consumer contract outranks preparatory work; CG-27 set that precedent by shipping exactly this kind of removal as its own item. |
+| 0b | **CG-61** close `aiteam-harness`'s inbound path (D1) | **New.** Behaviour change, so it is not folded into CG-60 (§4.0b). **Must land before CG-55**, which streams the live registry to the box. |
 | 1 | **CG-53** deployment artifacts + secret-safety proof (**no deploy**) | Largest unknowns, and it carries the §1.2 leak finding. That finding must not wait behind two code PRs. Produces the image strategy, the on-box layout, the `CHAT_GATEWAY_ENV_FILE` loader, and the runbook — all offline-verifiable. |
 | 2 | **CG-54** queue + inbox durability | The **only hard prerequisite** for an always-on deploy. `restart: unless-stopped` means the thing restarts by itself; every restart silently empties both queues. A trusted always-on service that loses work on restart is worse than a hand-run one that does, because nobody is watching. Offline-testable. |
 | 3 | **CG-55** first NAS deploy + live smoke (**user-executed**) | Everything after this benefits from being observed on a running instance, and **the soak clock starts here** — so CG-59 harvests days of real uptime instead of beginning a wait. |
-| 4 | **CG-56** inbox delivery semantics (at-most-once → ack) — ⏸ **needs user sign-off** | Before the contract doc is rewritten, so it is written once. |
+| 4 | **CG-56** inbox delivery semantics (at-most-once → ack) — ✅ **approved, D3** | Before the contract doc is rewritten, so it is written once. |
 | 5 | **CG-57** jobhunt `callback_url` → passive polling | Documents the *final* semantics, whichever way CG-56 resolves. |
 | 6 | **CG-58** structured adapter failures + `Retry-After` | Improves a running system; needs no deploy to test (fakes can return 429 + `Retry-After`), and benefits from real traffic having been seen. |
 | 7 | **CG-59** long-run observation + what a **deployed** `/healthz` needs | Strictly after a deploy. Harvests the soak from step 3. |
@@ -480,8 +498,8 @@ than deleting a sentence, and it vindicates the file.
 
 It must also state plainly what has **not** changed: hard rule #6 holds, the
 `continue` fires before any `inbox.put`, and **nothing crosses to aitrader**. The
-disclosure is a volume counter on an unauthenticated endpoint (open question 2),
-not a data path.
+disclosure is a volume counter on an unauthenticated endpoint (D2, §7), not a
+data path.
 
 #### The historical observations stay
 
@@ -502,6 +520,58 @@ What *is* measured, and should be labelled as such, is the `apps_for_space`
 re-derivation in §0.1.1.
 
 **Merge gate: yes** — consumer contracts, and it works next to the ledger.
+
+---
+
+### 4.0b CG-61 — close `aiteam-harness`'s inbound path (decision D1)
+
+**Sequenced second, and it MUST land before CG-55.** Registry + documentation.
+
+Set `allow_inbound: false` on `aiteam-harness`. Reasoning and the verification
+behind it are in D1 (§7); it is **not restated here** — this section covers only
+what the row must do.
+
+#### Why a separate row rather than folding it into CG-60
+
+CG-60 is a **documentation correction with no behaviour change**. This **changes
+behaviour**: events in that space stop being enqueued and stop reaching disk.
+
+**This repo has an established split for exactly that pair.** CG-19 was scoped
+comments-and-illustrative-defaults-only and **explicitly declined** to change
+emitted behaviour, filing the behaviour change as CG-51 with its own gate. Mixing
+them makes the docs PR unreviewable *as docs* and buries a live-config change in
+a sweep of prose edits. The gates differ too: CG-60's is consumer contracts;
+this one narrows a tenant's inbound surface — hard rule #6 territory.
+
+It also carries a sequencing constraint CG-60 does not: **it must precede CG-55's
+config transfer.**
+
+#### What the row can and cannot touch
+
+⚠ **`config/registry.yaml` is gitignored.** A PR **cannot** change the live file.
+The row therefore delivers:
+
+1. `config/registry.example.yaml` — `allow_inbound: false` on `aiteam-harness`,
+   with the reasoning in a comment (default corrected, not a verdict; reversible
+   in one line).
+2. The documentation: `CLAUDE.md`'s consumer list, and any place describing that
+   app's inbound posture.
+3. **A recorded operator action**: the live registry on the dev box must be
+   edited to match. Verified 2026-07-31 that it currently reads
+   `allow_inbound=True`, so this is a real edit, not a no-op.
+4. A test proving an opted-out owner's event reaches **neither** the app's inbox
+   **nor** `_unrouted` — pinning the property D1's benefit rests on, so a future
+   refactor cannot quietly reintroduce the disk write.
+
+#### Collision note
+
+CG-57 also edits `config/registry.example.yaml` (removing `job-hunter`'s
+`callback_url`). They are **independent in content and sequential in time** —
+CG-61 before CG-55, CG-57 after — so the queue's standing warning about two rows
+touching one file does not bite here. Recorded because that warning exists and a
+reader comparing the two should not have to re-derive this.
+
+**Merge gate: yes** — a live-config change narrowing a tenant's inbound surface.
 
 ---
 
@@ -549,8 +619,13 @@ TrueNAS custom apps take an `image:`, not a `build:`. Two options:
    a registry, an auth path, and a published artifact for a service whose entire
    design is *not* to be publicly reachable.
 
-Option 1, with option 2 named in the runbook as the upgrade path if rebuilding
-on the box ever becomes the annoyance.
+**DECIDED: option 1, build on the box (D4).** No registry, no credentials, no
+external dependency in the deploy path. Two consequences the runbook owns: **the
+box needs the source** — a `git clone` of this public repo at a pinned commit is
+the auditable form, with a tarball over stdin as the fallback if the box lacks
+egress — and **a rebuild is a manual step**, so the runbook carries the upgrade
+procedure. Option 2 stays named as the upgrade path if rebuilding ever becomes
+the annoyance.
 
 ⚠ **Verify on the box, do not assume:** that the middleware accepts a compose
 referencing a locally-present image with `pull_policy: missing`. This is a
@@ -899,18 +974,46 @@ Smoke checklist (each is a fact to observe, not a box to tick):
    CG-54's proof on real hardware, and it is the point of doing it here.
 5. `capture.sh`, then **read the captured JSON**.
 
-**§0.1 adds a sixth item, and it is the highest-value observation of the whole
-deploy — the first drain.** The gateway has never pulled while the app was in
-four spaces, so the first successful poll drains **up to 24 hours** of
-accumulated backlog (the subscription's retention) from all four at once.
-Record, before and after that first drain:
+#### Two prerequisites this row now depends on
+
+**(a) The homelab tailnet ACL must be applied first (D2).** The endpoint is
+**fenced from the start, never fenced afterwards**. ⚠ This is **work in the
+homelab repo that a chat-gateway Builder cannot perform** — it is an external
+blocker on this row, not a task within it. It must be validated through
+`network/tailscale-acl.hujson`'s `tests` block, which the Tailscale console
+enforces on save, so the other ten stacks' reachability is machine-checked rather
+than carefully read. **CG-60, CG-61, CG-53 and CG-54 can all proceed in
+parallel with it** — only this row waits.
+
+**(b) CG-61 must already be in the live registry (D1).** This row streams
+`config/registry.yaml` to the box; if the opt-out is not in that file, the
+deployed gateway runs with `allow_inbound: true` and the first drain writes
+FamilyWorkspace content to disk. **Make it a fail-closed pre-flight, not a
+memory test** — assert the expected opt-in map before transferring, and abort on
+any mismatch:
+
+```
+for each configured space: apps_for_space(space) -> owners, and each owner's
+allow_inbound must equal the expected map. Expected 2026-07-31:
+  two spaces -> ['aitrader']        allow_inbound False
+  one  space -> ['aiteam-harness']  allow_inbound False   <- CG-61
+  one  space -> ['job-hunter']      allow_inbound True
+Anything else: STOP. Do not transfer, do not deploy.
+```
+
+#### The sixth observation — the first drain
+
+**The highest-value observation of the whole deploy.** The gateway has never
+pulled while the app was in four spaces, so the first successful poll drains
+**up to 24 hours** of accumulated backlog (the subscription's retention) from all
+four at once. Record before and after:
 
 | Observe | Why it is the interesting number |
 |---|---|
 | `events_seen` | the backlog's actual size — the first real measurement of this deployment's inbound volume |
-| `suppressed_opt_out` | **the aitrader activity meter, live.** Its magnitude is what re-prices open question 2 (§7) from "app-id enumeration" to "another tenant's traffic volume" |
-| `inbox.pending` per app, and `inbox.dropped` | whether the FamilyWorkspace inbox is being drained by anybody. **Non-zero `dropped` on the first drain means the 1000-item cap was hit by a backlog** |
-| **which event types actually arrived** | §0.1.2's open question. If a space-member classic app only sees @mentions, the FamilyWorkspace concern is near-empty; if not, it is real. **This repo cannot answer it — the first drain can.** |
+| `suppressed_opt_out` | now pooled across **three** opted-out spaces (D1). Its magnitude is what D2's residual LAN exposure is judged against |
+| `inbox.pending` / `inbox.dropped` | **`job-hunter` only** now. Non-zero `dropped` means the 1000-item cap was hit by the backlog |
+| **which event types actually arrived** | §0.1.2's question. ⚠ **Now about `job-hunter` only** — D1 closed the FamilyWorkspace path, so this is no longer a privacy question about a family space, it is a capacity-and-shape question about the one open tenant |
 | `interactions_without_action_id`, `unparseable_seen` | three of these spaces have never had a single event parsed from them |
 
 ⚠ **Do not record any space id, sender identity or message content** when writing
@@ -919,7 +1022,7 @@ and for the same reason.
 
 **Merge gate: yes** — deploy + secret-handling path.
 
-### 4.4 CG-56 — inbox delivery semantics ⏸ needs user sign-off
+### 4.4 CG-56 — inbox delivery semantics ✅ approved (D3)
 
 `Inbox.poll()` **clears on read**:
 
@@ -944,8 +1047,9 @@ Pub/Sub is at-least-once. The gateway already speaks this idiom in
 `PubSubPuller.pull()` / `.acknowledge()`; this is the same shape one layer out,
 not a new concept.
 
-**It is flagged for sign-off rather than decided, because it changes a published
-contract**, and the blast radius is real and enumerable: `client.py:64`'s
+**APPROVED by the user (D3, §7).** The reason recorded there is decision A: polling
+is jobhunt's only inbound path, so a read lost mid-processing is a lost Approve.
+The blast radius is real and enumerable: `client.py:64`'s
 `poll_inbox`, `README.md`'s endpoint table, `docs/integration-guide.md` §
 *Inbound replies*, `docs/consumers/aitrader.md`'s comparison row (which cites
 `service.py` line numbers), and the pinning test above.
@@ -957,10 +1061,9 @@ any caller that does not ack, turning a working consumer into an infinitely
 growing queue. Given the gateway is about to become always-on, growing-forever is
 the worse default.
 
-If the user declines: CG-57 documents at-most-once **explicitly, with this risk
-stated in the jobhunt contract**, so jobhunt builds its poller knowing it. Either
-answer is workable; what is not workable is jobhunt building a poller against an
-unstated guarantee.
+**The declined branch is now moot** — it read *"if the user declines, CG-57
+documents at-most-once explicitly."* D3 approved acks, so CG-57 documents
+at-least-once with an explicit ack, and it is written once.
 
 **Merge gate: no**, but **dispatch is blocked on the user's answer.**
 
@@ -1184,9 +1287,15 @@ no more.
 Disk growth. The audit JSONL files (`inbox-data/`, `state/deliveries/`) are
 per-app-per-day and **never pruned** — fine on the dev box, a slow leak on a host
 meant to run for years. The row reports measured growth per day and **proposes** a
-retention rule; it does not implement one, because a retention policy on an audit
-trail whose entire purpose is that *"nothing is ever silently lost"* is a decision
-with a rule-#5 flavour and belongs to the user.
+retention rule.
+
+**DECIDED (D5): measure first, set no window now, decide here with real
+numbers.** Two reasons, both recorded: with `aiteam-harness` closed (D1) only
+`job-hunter` accumulates, so growth is likely modest — and **pruning by age
+before knowing the volume is itself a way to silently lose the thing the trail
+exists to prevent.** A retention policy on an audit trail whose entire purpose is
+that *"nothing is ever silently lost"* has a rule-#5 flavour, which is why it
+gets numbers before it gets a policy.
 
 **Merge gate: no** for the `?strict=1` code; the observation half is
 user-executed.
@@ -1229,74 +1338,119 @@ PR rather than this spec predicting them.
 
 ---
 
-## 7. Open questions — for the user, deliberately not decided here
+## 7. Decisions (user, 2026-07-31) — FINAL, do not re-litigate
 
-1. **CG-56 — inbox at-most-once → ack-based at-least-once?** Recommended, opt-in
-   per request so nothing breaks. Changes a published contract, so it is the
-   user's call. **Blocks CG-56's dispatch; does not block anything else** —
-   CG-57 can document either answer.
-2. **`/healthz` exposure on an allow-all tailnet — RE-PRICED, and it went up.**
-   This first read as app-id and identity-name enumeration: an inventory of who
-   the gateway serves, mildly embarrassing, not sensitive. **§0.1 changes the
-   assessment.** With the app live in both Ai Trader spaces and
-   `allow_inbound: false`, `suppressed_opt_out` now increments once per event
-   there — so the endpoint publishes **a live activity meter for another
-   tenant's private trading spaces**: not content, not attribution, but volume
-   and timing, sampled as often as the reader likes.
+All six open questions this spec raised are answered. Each is recorded with its
+reasoning so the answer survives without the argument being had again.
 
-   That is a different kind of disclosure from a name list. Trading activity
-   volume is inferable from it (a burst at market open is a burst at market
-   open), and **`aitrader`'s entire contract is that it takes no inbound path** —
-   its operator opted out of two-way *because* it is a real-money system. An
-   unauthenticated counter that reveals when that system is busy is not what
-   they opted into, even though hard rule #6 is working perfectly and nothing
-   crosses.
+### D1 · `aiteam-harness` (FamilyWorkspace) — set `allow_inbound: false`
 
-   Three things sharpen it: §0.2.3 confirms tailnet reachability is **automatic**
-   once the port is published; the homelab's restricting ACL is **drafted but
-   unapplied**, so the audience is every tailnet peer including a teammates group
-   that exists for an unrelated service; and §0.2.2 shows the deploy is now
-   **executable**, so this becomes real on the day CG-55 runs rather than
-   someday.
+**Decided: close it.** This spec's §0.1.2 finding, acted on.
 
-   **This is no longer a "record it in Gotchas" item, and I am withdrawing that
-   recommendation.** Options, in increasing cost — the user's call:
+**Reasoning.** Inbound was on **only because `true` is the default**
+(`registry.py`: `allow_inbound=bool(spec.get("allow_inbound", True))`). That app
+has no `callback_url`, no `allowed_users`, and `CLAUDE.md` describes it as a
+`notify.py` **outbound** transport. **It never asked for inbound.** Hard rule #6
+is default-deny in spirit; this makes it so in fact.
 
-   | Option | Cost | Note |
-   |---|---|---|
-   | Accept + document | zero | what the spec previously assumed; I no longer recommend it |
-   | **Bind `8085` to the LAN address only** until the ACL lands | one compose line | ⚠ **but this also removes tailnet access for consumers, which is the reason for exposing it at all** — so it only works while every consumer is on the LAN. Check that before choosing it. |
-   | Split `/healthz`: keep liveness unauthenticated, move **counters** behind a key | small code change, new row | targets the actual disclosure and keeps rule #5's honesty; `?strict=1` (CG-59) already gives dashboards what they need without counters |
-   | Apply the drafted ACL first | homelab repo, not ours | fixes it for every NAS service at once, and is the only option that does |
+**The stated benefit is verified, not assumed.** `dispatch()` discards an
+opted-out owner's event entirely — the `or [UNROUTED]` fallback cannot fire
+because the space *has* an owner — so **nothing reaches the inbox, nothing
+reaches `_unrouted`, nothing reaches disk.** Only the counter moves. FamilyWorkspace
+content therefore never lands in a JSONL audit file.
 
-   **Recommended: land the drafted ACL before CG-55, or take the split.** If
-   neither is wanted, CG-55 should still be allowed to proceed — but the decision
-   should be *made*, not defaulted into. Note the counters are also the thing
-   CG-55's first-drain observation depends on, so removing them entirely is not
-   free either.
-3. **Image strategy** — build-on-box (recommended) vs publish to GHCR. Reversible
-   either way; worth a nod before CG-53 ships, since it sets what the runbook
-   says.
-4. **Audit-log retention.** CG-59 will produce measured growth. The policy is the
-   user's, because pruning a trail whose stated purpose is that nothing is
-   silently lost is a rule-#5-flavoured decision.
-5. **jobhunt's OD9 (§2.2).** No action needed here — decision A stands on
-   topology-independence regardless. Flagged only so that if OD9 is accepted, the
-   spec's *stated reason* does not read as falsified. Whether jobhunt's contract
-   doc should record both reasons is jobhunt's call.
+**Reversible in one registry line** if aiteam ever wants inbound. This is a
+default being corrected, **not a judgement about that consumer** — and the row
+must say so in those words, or a future reader will mistake a default for a
+verdict.
 
-6. **A memory limit on the gateway service?** The box has **zero swap** and hosts
-   claude-mem's Postgres, so an unbounded stack can OOM-kill a neighbour. But it
-   was **measured** that no existing *custom* app declares `mem_limit` — the
-   4 GiB caps on jellyfin/calibre/calibre-web/tailscale are TrueNAS's own, on
-   *catalog* apps. Setting one is therefore a deliberate deviation from house
-   style, which is why it is a question rather than a silent choice.
-   **Recommended: set it** — the deviation is one line and the failure it
-   prevents lands on someone else's database. Also unverified whether the
-   TrueNAS renderer honours `mem_limit` in a custom app; CG-53 checks that on
-   the box.
+**Filed as its own row, CG-61 — see §4.0b for why it is not folded into CG-60.**
+
+### D2 · `/healthz` exposure — land the drafted homelab ACL **before** CG-55
+
+**Decided: fence it from the start, not afterwards.** My re-priced
+recommendation, taken.
+
+Two constraints, both accepted, and one honest caveat this spec adds:
+
+- **It is homelab-repo work.** A chat-gateway Builder cannot do it. It is
+  therefore an **external prerequisite that blocks CG-55**, not a row in this
+  queue — §4.3 records it as a dependency with a named owner.
+- **It must not break tailnet reachability for the ten stacks already there.**
+  The mechanism already exists: `network/tailscale-acl.hujson` carries a `tests`
+  block the Tailscale console **enforces on save**. Extend that block to assert
+  the existing services stay reachable for the owner's own devices. That is a
+  machine-checked guarantee, not a careful read.
+- ⚠ **The caveat: the ACL governs the TAILNET ONLY.** Anyone on the home **LAN**
+  still reaches `:8085/healthz` unauthenticated. Saying "the ACL fixes the
+  exposure" would over-claim, and this repo has corrected that shape repeatedly.
+  The residual is LAN-local unauthenticated access to the counters; on a home LAN
+  that is a reasonable place to land, but it is **stated, not glossed.**
+
+**Reconciling the ACL with CG-55's first-drain observation — it does not "fall
+out", it is a deliberate choice of vantage point.** Neither reader of `/healthz`
+that matters is a tailnet peer:
+
+| Reader | Path | Affected by the ACL? |
+|---|---|---|
+| CG-55's first-drain observation | `curl 127.0.0.1:8085/healthz` **on the NAS, over SSH** | **No** — loopback inside the box is not tailnet traffic |
+| Homepage `siteMonitor` | the **LAN IP**, by homelab convention (that container has no Tailscale and cannot resolve `.ts.net`) | **No** |
+| A tailnet peer | tailnet | **Yes — which is the point** |
+
+**A partial mitigation D1 creates, worth recording because it is real but
+incomplete.** With three of four spaces opted out, `suppressed_opt_out` **pools
+three spaces' traffic into one integer**, so it no longer decomposes to aitrader
+specifically. That genuinely reduces attributability — but an observer watching
+*timing* across market hours can still infer. **Partial, not complete**, and it
+is not a reason to skip the ACL.
+
+### D3 · CG-56 — YES: ack-based at-least-once, opt-in per request
+
+**Unblocked.** The published contract must keep working **unchanged** for any
+caller that does not ask for acks.
+
+**The user's reasoning, recorded:** decision A makes polling jobhunt's **only**
+inbound path, so a read lost mid-processing is a **lost Approve**. That was
+tolerable when the inbox was a fallback behind push. It is not now.
+
+### D4 · Image — build on the box
+
+**Decided.** No registry, no credentials, no external dependency in the deploy
+path — consistent with a service whose whole design is not to be publicly
+reachable.
+
+Two consequences to record rather than discover: **the box needs the source**,
+and **a rebuild is a manual step** (the runbook owns that procedure).
+
+### D5 · Audit retention — measure first, decide at CG-59
+
+**Decided: set no window now.**
+
+**Reasoning.** With `aiteam-harness` closed (D1), only `job-hunter` accumulates,
+so growth is likely modest — and **pruning by age before knowing the volume is
+itself a way to silently lose the thing the trail exists to prevent.** CG-59
+proposes with real numbers.
+
+### D6 · `mem_limit` — YES, set one
+
+**Decided**, and recorded explicitly as a **deliberate deviation from local
+convention: no existing custom app on that box sets one** (measured; the 4 GiB
+caps on jellyfin, calibre, calibre-web and tailscale are TrueNAS's own, applied
+to *catalog* apps).
+
+**Reasoning.** An unbounded Python service on a **swapless** box is a neighbour
+that takes others down, and **the OOM killer picks its own victim — possibly
+claude-mem's Postgres.** CG-53 still verifies the renderer honours it; a limit
+believed present but silently dropped is worse than none.
 
 ---
+
+## 7.1 Still genuinely open — one item, and it is not blocking
+
+**jobhunt's OD9** (§2.2). No action needed here: decision A stands on
+topology-independence regardless of which host jobhunt lands on. Recorded so
+that if OD9 is accepted, this spec's *stated reason* does not read as falsified.
+Whether jobhunt's own contract doc records both reasons is jobhunt's call.
 
 ## 8. Merge gates
 
@@ -1308,10 +1462,11 @@ regardless.
 | Row | Gate | Why |
 |---|---|---|
 | CG-60 | ⏸ **yes** | consumer contracts, and it works in the ledger's neighbourhood |
+| CG-61 | ⏸ **yes** | live-config change narrowing a tenant's inbound surface (hard rule #6 territory) |
 | CG-53 | ⏸ **yes** | secret handling (`.env` on-box layout, SA key mount), IaC-adjacent |
 | CG-54 | no | core code, no secrets, no Google surface |
-| CG-55 | ⏸ **yes** | deploy + secret handling; **Builder-executed over SSH under §4.3.1** |
-| CG-56 | no — but **dispatch blocked** on open question 1 | published-contract change |
+| CG-55 | ⏸ **yes** | deploy + secret handling; **Builder-executed over SSH under §4.3.1**. ⚠ **Externally blocked on the homelab ACL (D2) and on CG-61 being in the live registry (D1)** |
+| CG-56 | no | published-contract change, **approved (D3)** — default path unchanged |
 | CG-57 | no | registry + docs; hard rule #6 territory, narrowing only |
 | CG-58 | no | touches `adapters/`; **no ⚠ flag may be cleared, added or reworded** |
 | CG-59 | no for code | any ledger change needs **explicit hard-rule-#3 sign-off** (CG-35 precedent) |
