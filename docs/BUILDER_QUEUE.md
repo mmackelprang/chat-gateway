@@ -1,6 +1,6 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-31 (Builder — **CG-67 shipped as [#47](https://github.com/mmackelprang/chat-gateway/pull/47)**:
+**Last updated:** 2026-07-31 (Builder — **CG-67 shipped as [#48](https://github.com/mmackelprang/chat-gateway/pull/48)**:
 `state/` is ignored, so a local run can no longer stage tenant message bodies.
 **Split out of CG-66 and promoted by the user**, which leaves CG-66 doc-only.
 
@@ -669,7 +669,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
 | **CG-65** · `docs/consumers/aitrader.md` — four post-#45 falsehoods, one of them a **privacy** guarantee | 📋 queued | **Filed by CG-64's Builder rather than raced.** A live-false claim in a consumer contract; ranks with CG-60 by the same argument. Doc-only |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
-| **CG-67** · `.gitignore` — stop `state/` from ever being committed | ✅ done (#47) | **Split out of CG-66 and promoted by the user**, because it is a live path to committing message bodies and CG-53/CG-55 are the rows that first run the gateway from the repo root. Config-only |
+| **CG-67** · `.gitignore` — stop `state/` from ever being committed | ✅ done (#48) | **Split out of CG-66 and promoted by the user**, because it is a live path to committing message bodies and CG-53/CG-55 are the rows that first run the gateway from the repo root. Config-only |
 
 **Recommended order is the table order, and it is NOT the order the arc was
 briefed in.** The brief had deploy first. Three rows move ahead of it:
@@ -1604,7 +1604,7 @@ this queue keeps re-learning:
 
 ---
 
-### CG-67 · Stop `state/` from ever being committed  ✅ shipped 2026-07-31 · [PR #47](https://github.com/mmackelprang/chat-gateway/pull/47)
+### CG-67 · Stop `state/` from ever being committed  ✅ shipped 2026-07-31 · [PR #48](https://github.com/mmackelprang/chat-gateway/pull/48)
 
 | | |
 |---|---|
