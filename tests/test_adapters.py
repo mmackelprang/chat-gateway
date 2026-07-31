@@ -10,15 +10,16 @@ import pytest
 
 from chat_gateway.adapters.chat_api import ChatApiAdapter, ChatApiError
 from chat_gateway.adapters.pubsub import (
-    SUPPRESSION_REASONS, UNPARSEABLE, UNROUTED, FakePuller, SubscriberLoop,
-    UnrecognizedEventError, _action_params, detect_envelope, dispatch,
-    normalize_event, redact_capability_urls,
+    REASON_OPT_OUT, SUPPRESSION_REASONS, UNPARSEABLE, UNROUTED, FakePuller,
+    SubscriberLoop, UnrecognizedEventError, _action_params, detect_envelope,
+    dispatch, normalize_event, redact_capability_urls,
 )
 from chat_gateway.adapters.webhook import (
     WebhookAdapter, WebhookDeliveryError, build_params, build_payload,
 )
 from chat_gateway.envelope import OutboundMessage
 from chat_gateway.inbox import Inbox
+from chat_gateway.journal import Journal
 from chat_gateway.registry import Identity, load_registry
 
 MSG = OutboundMessage(
@@ -1131,6 +1132,61 @@ def test_on_suppressed_is_called_with_the_declining_app_id_and_its_reason(tmp_pa
                          on_suppressed=lambda app, reason: seen.append((app, reason)))
     assert delivered == []
     assert seen == [("owner-a", "opt_out"), ("owner-b", "opt_out")]
+
+
+# D1's shape in the smallest registry that has it: ONE space, ONE owner, and that
+# owner opted out. Derived from `REGISTRY_YAML` above rather than rewritten, so
+# the delta between the two is exactly the single line CG-61 adds — and the two
+# shape assertions opening the test below fail loudly if this append ever lands
+# on a different app than the one it names.
+SOLE_OWNER_OPTED_OUT_REGISTRY_YAML = REGISTRY_YAML + "    allow_inbound: false\n"
+
+
+def test_an_opted_out_owner_reaches_neither_its_inbox_nor_unrouted_nor_disk(tmp_path):
+    """CG-61 / decision D1's benefit, pinned: the discard is TOTAL, not merely undelivered.
+
+    A space whose only owner opted out drops its events with nothing retained
+    anywhere, and the reason is a property of `dispatch` rather than of this
+    registry: the `or [UNROUTED]` fallback CANNOT fire, because it only triggers
+    for a space with NO owner and this space HAS one. So no inbox entry, no
+    `_unrouted` audit record, and nothing on disk — only the counter moves
+    (CG-12: COUNTED, never RECORDED).
+
+    **A refactor that broke this would be invisible without this test**, because
+    every way of breaking it is silent. Give `_unrouted` a second trigger, hoist
+    the `inbox.put` above the authorization block, or let a suppressed candidate
+    fall through to the fallback — and the tenant still receives nothing (its
+    `/v1/inbox` is a 403 either way), the suppression counters still move and
+    `/healthz` still reads `ok`. The only forensic difference is a JSONL file
+    appearing under a directory nobody asserts on, holding the `text`,
+    `sender_email` and whole `raw` event of a space that opted out of
+    everything.
+
+    **BOTH disk surfaces, because since #45 (CG-54) there are two.** `Inbox.put`
+    writes the per-app JSONL audit *and* opens a durability-journal record, so a
+    test constructing only `audit_dir=` would pin half of "nothing reaches disk"
+    while reading as though it pinned all of it.
+    """
+    reg = _registry_from(tmp_path, SOLE_OWNER_OPTED_OUT_REGISTRY_YAML,
+                         "sole-owner-opted-out.yaml")
+    assert reg.apps_for_space("spaces/AAA") == ["aiteam-harness"]
+    assert reg.apps["aiteam-harness"].allow_inbound is False
+
+    journal = Journal(tmp_path / "queue" / "inbound.jsonl")
+    inbox = Inbox(audit_dir=tmp_path / "audit", journal=journal)
+    suppressed = []
+    delivered = dispatch(CHAT_EVENT, reg, inbox,
+                         on_suppressed=lambda app, reason: suppressed.append((app, reason)))
+
+    assert delivered == [], "nobody received it"
+    assert inbox.poll("aiteam-harness") == []
+    assert inbox.poll(UNROUTED) == [], "the `or [UNROUTED]` fallback must not fire"
+    # rglob, not glob: the audit file and the journal live in different subtrees,
+    # and this assertion has to cover whichever one a future default moves.
+    assert list(tmp_path.rglob("*.jsonl")) == [], "nothing reached disk"
+    assert journal.replay() == []
+    # ...but it IS counted, once, with the reason that names hard rule #6.
+    assert suppressed == [("aiteam-harness", REASON_OPT_OUT)]
 
 
 def test_every_suppression_reason_reaches_a_counter(registry):
