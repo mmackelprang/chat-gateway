@@ -91,6 +91,28 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   **dead** — it belongs to the deleted project; do not try to authenticate with
   it and do not treat its presence as configuration.
   **Provisioning is not verification** — see below.
+- **The live Chat app is in FOUR spaces, not one — corrected 2026-07-31 (CG-60).**
+  A **user statement about the Google Chat console**, which this repo cannot
+  verify and has not measured: **"Agent Comms" is deprecated** (it was
+  workspace-specific), replaced by an app named **"Chat Gateway"** — same
+  functionality, better interaction support — participating in FamilyWorkspace,
+  Ai Trader, Ai Trader Reports and JobHunt. Space membership is readable nowhere
+  in this repo (the registry's `space:` is a *posting target*, not a membership
+  record), so the dated snapshot has exactly **one** home:
+  `docs/google-cloud-setup.md` step 6. Do not copy it here — that is the same
+  two-homes-for-a-moving-fact trap as the test count above, and this one went
+  stale in a single day.
+  **The consequence IS measured, and it is the part that bites.** Running the
+  real `apps_for_space` against the **live** (gitignored) `config/registry.yaml` —
+  not the example, which differs and has caught three people — returns
+  `['aitrader']` with `allow_inbound: false` for **both** Ai Trader spaces. So
+  **every message or card interaction there now increments `suppressed_opt_out`
+  on an unauthenticated `/healthz`.** Hard rule #6 is untouched: the `continue`
+  fires before any `inbox.put`, so nothing crosses to aitrader. What moved is a
+  bare counter — see the CG-12 bullet below, whose recorded caveat this promotes
+  from hypothetical to live. `docs/consumers/aitrader.md` §8 **predicted this
+  exact trigger** and now records it as live; the prediction is kept there
+  verbatim rather than deleted.
 - **The add-ons → classic migration is DONE, and it is now IRREVERSIBLE**
   (ADR-0001 D7; reconciled 2026-07-30 as CG-21). Production cut over
   **2026-07-29** to a classic Chat app; `action.id` arrives natively and the
@@ -187,6 +209,19 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
     response carried `sender: {displayName: "Agent Comms", type: BOT}`). Not
     covered: its `thread.threadKey` threading branch — the live posts were
     unthreaded — and its error branches.
+  - **Naming note, 2026-07-31 — NOT a ledger entry, and it moves NO flag.** The
+    `displayName` in the row above is what that response really carried on
+    2026-07-29; the observation stands and is deliberately left byte-for-byte as
+    written. What has changed since is the app, not the evidence: per a **user
+    statement about the Google Chat console** — which this repo cannot verify and
+    has not measured — **"Agent Comms" is deprecated** (it was workspace-specific)
+    and the live app is named **"Chat Gateway"**. The dated console snapshot lives
+    in `docs/google-cloud-setup.md` step 6 and is **not copied here**, because a
+    console fact with two homes drifts (the same lesson as the test count above).
+    **Nothing is cleared, added or reworded by this note.** Whether replacing the
+    app re-prices any clear in this ledger is a hard-rule-#3 question requiring
+    the user's explicit sign-off; it is **filed as CG-62**, not decided by a docs
+    row.
   - Chat API **send_text()** — ⚠ flag CLEARED 2026-07-30, **both branches**:
     in-thread (`spaces/AAQAgjGR7J4/threads/_CWBxuQ8MlU`) and top-level
     (`thread_name=None`). They matter separately — in-thread is jobhunt R7's
@@ -284,6 +319,12 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   tenant **by inference**, though no field names it. Taken as **volume-only**,
   and marginal beside `events_seen`, which already publishes total inbound
   volume on the same endpoint.
+  ⚠ **That caveat stopped being hypothetical on 2026-07-31** (CG-60): the Chat
+  app is now in both Ai Trader spaces, so the counter **does** move on that
+  tenant's traffic rather than merely *would if*. The accepted-with-eyes-open
+  reasoning above is unchanged and is why this is a note rather than a reopening —
+  what changed is the tense, and the user's D2 decision responds to it by fencing
+  `/healthz` behind the homelab tailnet ACL **before** the first deploy.
   Two integers rather than one because the reasons are different investigations
   — `opt_out` is rule #6 working as designed, `not_authorized` is a real human
   refused (jobhunt R4, newly reachable in production since `job-hunter` gained

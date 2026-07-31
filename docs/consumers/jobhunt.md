@@ -128,10 +128,19 @@ a callback. That `~10s` is the forwarder's contract — these tests drive
 
 **The end-to-end run is no longer blocked on unverified seams or missing
 infrastructure — it is blocked on one config value.** The Chat app
-(classic, "Agent Comms") and the subscription **exist** on `chat-gateway-gw`, and
+(classic, "Chat Gateway") and the subscription **exist** on `chat-gateway-gw`, and
 as of 2026-07-30 every transport link in the chain is verified live: the inbound
 pull and its selective ack, and the in-thread reply both branches. What is
 missing is a `callback_url` for `job-hunter` — see the per-link table above.
+
+**Naming note, 2026-07-31.** That app was named **"Agent Comms"** when the
+2026-07-29/30 verifications above were run; per a **user statement about the
+Google Chat console** (which this repo cannot verify) it is now **deprecated**,
+replaced by an app named **"Chat Gateway"** that also participates in three more
+spaces. Recorded as a **name change only** — this row deliberately does not
+re-price any verification above, because what that would take is
+`CLAUDE.md`'s ⚠-flag sign-off, not a docs sweep. Nothing in the gateway reads the
+app's display name.
 
 For what is still unverified, read `CLAUDE.md`'s **verification ledger** rather
 than a summary here. Deliberately a pointer and not a restatement: the sentence

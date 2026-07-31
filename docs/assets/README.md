@@ -14,7 +14,7 @@ are designed for recognition at 32px, not for decoration at 256px.
 
 | File | Identity | Where it's configured | Mark | Plate |
 |---|---|---|---|---|
-| `avatar-agent-comms.png` | **Agent Comms** — the tier-2 Chat app itself | Chat API → Configuration → *Avatar URL* ([google-cloud-setup.md](../google-cloud-setup.md) step 5) | hub: ring + core | `#5C554B` warm graphite |
+| `avatar-agent-comms.png` | **the tier-2 Chat app itself** — named `Chat Gateway` since 2026-07-31, `Agent Comms` before that | Chat API → Configuration → *Avatar URL* ([google-cloud-setup.md](../google-cloud-setup.md) step 5) | hub: ring + core | `#5C554B` warm graphite |
 | `avatar-pm-familyworkspace.png` | **PM · familyworkspace** (`pm-familyworkspace`) | webhook creation, [setup step 7](../google-cloud-setup.md) | plan: three ragged bars | `#5A4DB8` indigo |
 | `avatar-job-hunter.png` | **Job Hunter** (`job-hunter`) | webhook creation, [setup step 7](../google-cloud-setup.md) | prompt: speech bubble | `#D89B23` amber |
 | `avatar-aitrader-alerts.png` | **aitrader** loud lane (`aitrader-alerts`) | webhook creation, [setup step 7](../google-cloud-setup.md) | spike: solid triangle | `#C82E13` vermilion |
@@ -23,9 +23,17 @@ are designed for recognition at 32px, not for decoration at 256px.
 > **Note on `agent-comms`.** It is *not* an entry in
 > [`config/registry.example.yaml`](../../config/registry.example.yaml) — the
 > four registry identities are the other rows. `agent-comms` is the tier-2
-> Chat **app** name suggested in `docs/google-cloud-setup.md` (step 5), which
-> takes its own avatar URL in the Cloud console. It is the house mark: the
-> parent the registry identities belong to.
+> Chat **app**, which takes its own avatar URL in the Cloud console. It is the
+> house mark: the parent the registry identities belong to.
+>
+> **The app's display name changed on 2026-07-31; the filename deliberately did
+> not.** Per a user statement about the console, `Agent Comms` is deprecated and
+> the live app is named `Chat Gateway`
+> ([google-cloud-setup.md](../google-cloud-setup.md) step 6). The file stays
+> `avatar-agent-comms.png` because **the raw GitHub URL below is what Google
+> fetches** — renaming it would 404 the live app's avatar until somebody pasted a
+> new URL into the console. `agent-comms` is a stable asset slug here, not a
+> claim about the app's current name.
 
 ## Public URLs
 

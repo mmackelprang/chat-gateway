@@ -357,8 +357,13 @@ curl -s $GW/healthz                     # honest health — no auth required
   webhook's name, and a webhook created without one renders as **"Unknown
   User"**. One webhook per identity, as many as you like.
 - **Tier 2 (`mode: app`)** — the Chat app itself, one sender for every
-  identity routed through it (`Agent Comms` on this deployment, `type: BOT`).
+  identity routed through it (`Chat Gateway` on this deployment, `type: BOT`).
   Per-agent flavour has to ride in the message content — a card header, a
   prefix — because the sender is fixed.
 
-Both verified live 2026-07-29.
+Both verified live 2026-07-29 — when the tier-2 app was named `Agent Comms`. That
+app is **deprecated** and the live one is `Chat Gateway` (a **user statement about
+the Google Chat console, dated 2026-07-31**, which this repo cannot verify; see
+[`google-cloud-setup.md`](google-cloud-setup.md) step 6). The rename changes only
+the string a reader sees in the space: the gateway never reads `displayName`, and
+"one sender for every tier-2 identity" is the part that matters here.

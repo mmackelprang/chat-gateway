@@ -183,8 +183,12 @@ Three details worth having:
 
 - **The refusal is posted by the Chat app, not by the "Job Hunter" identity.**
   In-thread replies go out through the Chat API as the gateway's Chat app
-  (`Agent Comms`, `type: BOT`) — the tier-1 webhook identity cannot reply. A
-  refused user therefore sees the refusal from the app, in their thread.
+  (`Chat Gateway`, `type: BOT`) — the tier-1 webhook identity cannot reply. A
+  refused user therefore sees the refusal from the app, in their thread. *(That
+  app was named `Agent Comms` when this document was first written; per a user
+  statement about the console dated **2026-07-31** it is deprecated and replaced
+  by `Chat Gateway`. Cosmetic to your integration — the gateway never reads the
+  app's display name — but it is what your users will see on the refusal.)*
 - **It needs a tier-2 reply path.** The reply function is wired whenever
   `GOOGLE_APPLICATION_CREDENTIALS` is set, independently of whether jobhunt's
   identity is `mode: webhook` or `mode: app`. Without credentials the user is

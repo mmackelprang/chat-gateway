@@ -11,6 +11,17 @@ no sender object at all. Per-agent flavour therefore rides in the message
 content (cards can carry per-PM headers) unless per-identity apps are ever
 justified.
 
+Naming note, 2026-07-31 — a currency pointer, NOT a verification change. The
+`displayName` above is what that 2026-07-29 response really carried, and it and
+the identical line in `send()`'s docstring are left exactly as observed. What
+changed since is the app, not the evidence: per a user statement about the Google
+Chat console — which this repo cannot verify and has not measured — "Agent Comms"
+is deprecated (it was workspace-specific) and the live app is named "Chat
+Gateway", now in four spaces rather than one. NO flag below is cleared, added or
+reworded, and no code path reads `displayName`, so nothing here behaves
+differently. The dated console snapshot has one home: docs/google-cloud-setup.md
+step 6.
+
 ⚠ Verification status is PER METHOD here, not per module — the halves of this
 file have different evidence behind them. Read each docstring; do not
 generalize from one to another. Keep this adapter the only place Chat API calls
