@@ -799,7 +799,9 @@ class SubscriberLoop:
         #    (2026-07-31). Once it carries D1, a second tenant is opted out and
         #    this integer POOLS their traffic instead of decomposing to one —
         #    PARTIAL mitigation, and not a reason to skip the /healthz ACL
-        #    (production-readiness arc spec §7 D2).
+        #    (production-readiness arc spec §7 D2). CLAUDE.md's CG-12 bullet
+        #    carries the same "not yet" and expires on the same operator edit;
+        #    whoever makes it owns both.
         # 3. THE TWO REASONS ARE DISTINCT PHENOMENA, which is why this is two
         #    counters and not one. `opt_out` is hard rule #6 working exactly as
         #    designed — an app installed in a space it will never serve.

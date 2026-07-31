@@ -1155,11 +1155,12 @@ def test_an_opted_out_owner_reaches_neither_its_inbox_nor_unrouted_nor_disk(tmp_
     **A refactor that broke this would be invisible without this test**, because
     every way of breaking it is silent. Give `_unrouted` a second trigger, hoist
     the `inbox.put` above the authorization block, or let a suppressed candidate
-    fall through to the fallback — and the tenant still receives nothing,
-    `poll()` still returns empty, the counters still move and /healthz still
-    reads the same. The only observable difference is a JSONL file appearing
-    under a directory nobody asserts on, holding the `text`, `sender_email` and
-    whole `raw` event of a space that opted out of everything.
+    fall through to the fallback — and the tenant still receives nothing (its
+    `/v1/inbox` is a 403 either way), the suppression counters still move and
+    `/healthz` still reads `ok`. The only forensic difference is a JSONL file
+    appearing under a directory nobody asserts on, holding the `text`,
+    `sender_email` and whole `raw` event of a space that opted out of
+    everything.
 
     **BOTH disk surfaces, because since #45 (CG-54) there are two.** `Inbox.put`
     writes the per-app JSONL audit *and* opens a durability-journal record, so a
