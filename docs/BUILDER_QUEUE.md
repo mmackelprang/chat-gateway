@@ -657,7 +657,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | Item | State | Note |
 |---|---|---|
 | **CG-60** · repo-wide correction of the one-space premise | ✅ done (#44) | Plan Part H. Merge gate **released by the user 2026-07-31**; merged the same day. Consumer contracts. **Sequenced FIRST.** Filed **CG-62** |
-| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 📋 queued | ⏸ **merge gate**. **Must land before CG-55.** Plan Part I |
+| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 🚀 in flight | ⏸ **merge gate**. **Must land before CG-55.** Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
 | **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | ✅ done (#46) | Filed by CG-54's Builder. Shipped 2026-07-31 after CG-60 (#44) cleared the way. Item 4's "four fields degrade" was **five** — measured, and the row records both |
@@ -1176,7 +1176,7 @@ call**, because "likely" is the exact word rule #3 exists to refuse.
 
 ---
 
-### CG-61 · Close `aiteam-harness`'s inbound path  📋 queued · **MUST LAND BEFORE CG-55**
+### CG-61 · Close `aiteam-harness`'s inbound path  🚀 in flight · **MUST LAND BEFORE CG-55**
 
 | | |
 |---|---|
