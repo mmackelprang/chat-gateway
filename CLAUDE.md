@@ -60,7 +60,7 @@ printed in full (see below); `adapters/` — webhook (tier 1), chat_api + pubsub
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 246 passing.
+`python` is 3.13.7) — offline, 247 passing.
 
 ## Current status (2026-07-31)
 
@@ -344,6 +344,13 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   reasoning above is unchanged and is why this is a note rather than a reopening —
   what changed is the tense, and the user's D2 decision responds to it by fencing
   `/healthz` behind the homelab tailnet ACL **before** the first deploy.
+  ⚠ **The "exactly ONE tenant" condition is what CG-61 ends — but NOT YET.** A PR
+  cannot touch the gitignored `config/registry.yaml`, which still read
+  `allow_inbound: True` for `aiteam-harness` when measured 2026-07-31. **Once the
+  live registry carries decision D1** — a recorded operator action — a second
+  tenant is opted out and `suppressed_opt_out` starts **pooling** their traffic,
+  so it stops decomposing to `aitrader`. **Partial mitigation, not complete**, and
+  not a reason to skip the ACL: arc spec §7 D2.
   Two integers rather than one because the reasons are different investigations
   — `opt_out` is rule #6 working as designed, `not_authorized` is a real human
   refused (jobhunt R4, newly reachable in production since `job-hunter` gained
@@ -395,7 +402,10 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   `poll_once`'s error paths and `_post`'s non-200 branch remain unexercised
   against Google, and this changed what they PRINT, not what is verified.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
-  gateway transport, aiteam Stage 6), `aitrader` (docs/consumers/aitrader.md
+  gateway transport, aiteam Stage 6 — `allow_inbound: false` as of CG-61, user
+  decision D1: a **default corrected, not a verdict** about that consumer, and
+  reversible in that one registry line; reasoning lives in the
+  production-readiness arc spec §7 D1), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`
   (docs/consumers/jobhunt.md — the first two-way tenant: whole-event
   callback forwarding with per-user authorization, structured reasons via

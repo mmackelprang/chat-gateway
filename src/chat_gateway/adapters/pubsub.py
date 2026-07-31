@@ -793,7 +793,13 @@ class SubscriberLoop:
         #    deployment — this is a de-facto unauthenticated activity meter for
         #    that tenant BY INFERENCE, though no field names it. Taken as
         #    VOLUME-only and marginal: `events_seen` already publishes total
-        #    inbound volume here.
+        #    inbound volume here. That "exactly ONE" is what CG-61's decision D1
+        #    ends — but NOT YET: a PR cannot edit the gitignored live registry,
+        #    which still granted `aiteam-harness` inbound when this was written
+        #    (2026-07-31). Once it carries D1, a second tenant is opted out and
+        #    this integer POOLS their traffic instead of decomposing to one —
+        #    PARTIAL mitigation, and not a reason to skip the /healthz ACL
+        #    (production-readiness arc spec §7 D2).
         # 3. THE TWO REASONS ARE DISTINCT PHENOMENA, which is why this is two
         #    counters and not one. `opt_out` is hard rule #6 working exactly as
         #    designed — an app installed in a space it will never serve.
