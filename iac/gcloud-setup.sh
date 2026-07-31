@@ -46,14 +46,23 @@ ALLOW_SECOND_KEY="${ALLOW_SECOND_KEY:-0}"
 # documented invocation (`cd iac && ./gcloud-setup.sh`) the two are the same
 # directory, so this changes nothing about the usage line at the top.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Windows paths reach this script through Git Bash on the dev box, in EITHER
+# separator. Fold to `/` once, up front, so everything below — the case arms,
+# dirname, basename, find, the -f test — sees one shape. A POSIX filename
+# containing a literal backslash is deliberately not supported.
+KEY_FILE="${KEY_FILE//\\//}"
 case "${KEY_FILE}" in
-  /*)                        KEY_PATH="${KEY_FILE}" ;;   # POSIX absolute
-  # Windows drive-absolute. POSIX would call `C:/x` RELATIVE, and prefixing
-  # SCRIPT_DIR to it yields a path that cannot exist — measured: it aborted the
-  # run outright. This script is also used from Git Bash on the Windows dev box
-  # (that is where CG-19 measured CG-35b), so treat a drive letter as rooted.
-  [A-Za-z]:/* | [A-Za-z]:\\*) KEY_PATH="${KEY_FILE}" ;;
-  *)                         KEY_PATH="${SCRIPT_DIR}/${KEY_FILE}" ;;
+  /*)          KEY_PATH="${KEY_FILE}" ;;   # POSIX absolute (and a //server UNC)
+  # Windows-absolute. POSIX would call `C:/x` RELATIVE, and prefixing SCRIPT_DIR
+  # to it yields a path that cannot exist — measured, it aborted the run. Treat a
+  # drive letter as rooted, exactly as the .ps1's IsPathRooted does (which is
+  # also true for a drive-relative `C:x`, hence `?*` rather than `/*`).
+  #
+  # Pattern discipline, because the first draft was WRONG and passed review by
+  # reasoning: `[A-Za-z]:\\*` does NOT match `C:\x` in a bash case arm — the
+  # backslashes collapse and escape the `*`. Measured, not argued.
+  [A-Za-z]:?*) KEY_PATH="${KEY_FILE}" ;;
+  *)           KEY_PATH="${SCRIPT_DIR}/${KEY_FILE}" ;;
 esac
 KEY_DIR="$(dirname "${KEY_PATH}")"
 # The .env block at the bottom is a HOST path (/srv/chat-gateway/...), so it
