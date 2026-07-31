@@ -1,6 +1,28 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-31 (Builder — **CG-64 shipped as [#46](https://github.com/mmackelprang/chat-gateway/pull/46)**:
+**Last updated:** 2026-07-31 (Builder — **CG-67 shipped as [#48](https://github.com/mmackelprang/chat-gateway/pull/48)**:
+`state/` is ignored, so a local run can no longer stage tenant message bodies.
+**Split out of CG-66 and promoted by the user**, which leaves CG-66 doc-only.
+
+⚠ **The scoping brief said `inbox-data/` "appears to be a dead directory name —
+confirm nothing writes it, and if so remove it." It is LIVE, and removing it
+would have inverted this row into the defect it exists to prevent.** It is
+`CHAT_GATEWAY_INBOX_DIR`'s default, it is written by `Inbox._audit` on every
+inbound reply, and it holds a human's `text`, `sender_email` and whole `raw`
+event — content the concurrent Architect agent independently measured as the
+*larger* of the two on-disk exposures. Confirming-before-deleting is the only
+reason this row shipped an addition rather than a regression, and it is why the
+block now records *why* each pattern is there.
+
+**Proven by running the gateway, not by editing a file.** A clean clone was
+served with the documented `python3 -m chat_gateway serve`, a real `/v1/notify`
+returned 202, and the resulting body-bearing `state/queue/*.jsonl` was shown
+ignored — then the `state/` line was removed from that same clone and the same
+three files immediately became stageable. Suite re-measured: **246**.
+**No ⚠ flag cleared, added or reworded** — the diff touches no Google seam and
+no ledger row.
+
+Previously 2026-07-31 (Builder — **CG-64 shipped as [#46](https://github.com/mmackelprang/chat-gateway/pull/46)**:
 the four claims CG-54 falsified are corrected, and CG-60's bookkeeping caught up
 with its own merge.
 
@@ -646,7 +668,8 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
 | **CG-65** · `docs/consumers/aitrader.md` — four post-#45 falsehoods, one of them a **privacy** guarantee | 📋 queued | **Filed by CG-64's Builder rather than raced.** A live-false claim in a consumer contract; ranks with CG-60 by the same argument. Doc-only |
-| **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`, and **one non-doc item**: `.gitignore` does not ignore `state/`, which now holds message bodies |
+| **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
+| **CG-67** · `.gitignore` — stop `state/` from ever being committed | ✅ done (#48) | **Split out of CG-66 and promoted by the user**, because it is a live path to committing message bodies and CG-53/CG-55 are the rows that first run the gateway from the repo root. Config-only |
 
 **Recommended order is the table order, and it is NOT the order the arc was
 briefed in.** The brief had deploy first. Three rows move ahead of it:
@@ -1547,7 +1570,7 @@ secure"; state what reaches disk, for how long, and at what mode.**
 |---|---|
 | **Origin** | filed by CG-64's Builder, 2026-07-31 |
 | **Depends on** | nothing |
-| **Touches** | `README.md`, `src/chat_gateway/__init__.py`, `src/chat_gateway/journal.py`, `.env.example`, `.gitignore` |
+| **Touches** | `README.md`, `src/chat_gateway/__init__.py`, `src/chat_gateway/journal.py`, `.env.example` |
 | **Merge gate** | no |
 
 Everything the CG-64 sweep found that is neither CG-64's two files nor a
@@ -1573,12 +1596,97 @@ this queue keeps re-learning:
   compensating control in the present tense before that control exists.
 - **`.env.example:15`** describes `CHAT_GATEWAY_STATE_DIR` as *"heartbeat checks
   + delivery audit JSONL"* — incomplete the same way `aitrader.md:569` is.
-- ⚠ **`.gitignore` — the one non-doc item.** `state/` is not ignored, and
-  `.env.example:15` defaults `CHAT_GATEWAY_STATE_DIR=state`, i.e. the repo root.
-  Pre-existing, but #45 changed the stakes: `state/queue/*.jsonl` now holds
-  message bodies, so a local dev run leaves tenant content stageable by
-  `git add -A`. Not a false sentence — a missing line — and the reason this row
-  is not purely documentation.
+- ~~⚠ **`.gitignore` — the one non-doc item.**~~ **Split out as CG-67 and
+  shipped ahead of this row** (user's promotion, 2026-07-31). The finding was
+  right as written; what it could not know is that the sibling entry it sat
+  beside was live, not dead — see CG-67. **This row is now doc-only**, which is
+  the only thing the split changed about it.
+
+---
+
+### CG-67 · Stop `state/` from ever being committed  ✅ shipped 2026-07-31 · [PR #48](https://github.com/mmackelprang/chat-gateway/pull/48)
+
+| | |
+|---|---|
+| **Origin** | split out of CG-66 by the user, 2026-07-31, and promoted ahead of it |
+| **Depends on** | nothing |
+| **Touches** | `.gitignore` |
+| **Merge gate** | no |
+
+**Why its own row rather than a CG-66 bullet.** CG-66 is documentation
+staleness; this is a live path to putting tenant message bodies into git
+history, and history is the one artifact this repo cannot correct with a later
+PR. The user's sequencing reason, recorded as theirs rather than re-derived
+here: CG-53 and CG-55 are the rows that will first run the gateway *from the
+repo root*, so the window closes ahead of them or not at all. Nothing had fired
+yet — there was no `state/` in the worktree — which is what made it cheap.
+
+**Why CG-67 and not CG-63.** CG-63 is a documented gap (#46's banner: *"never
+allocated — a gap in the numbering, not a lost row"*). Filling it would turn
+that sentence into a description of a row that has nothing to do with what a
+reader was told to expect. A gap costs nothing; a re-used gap costs a reader.
+
+**What was measured, from the repo root, through `build_runtime()` itself** —
+so the paths came from `__main__.py`'s own env defaults rather than from strings
+retyped into a test:
+
+- `CHAT_GATEWAY_STATE_DIR` defaults to `state`, **relative to the working
+  directory**. A run from the repo root produced `state/queue/delivery.jsonl`,
+  `state/queue/inbox.jsonl`, `state/deliveries/*.jsonl` and
+  `state/heartbeats.json` in the worktree, and `git status` listed `?? state/`.
+  The journal line carried the whole `OutboundMessage` — `text` and `cards` —
+  as `Dispatcher.enqueue` writes it (named, not line-cited: this repo has been
+  bitten by drifting line numbers often enough to stop adding new ones).
+- ⚠ **`inbox-data/` is NOT a dead entry, and the brief that scoped this row
+  believed it was.** It is live at `__main__.py`'s `CHAT_GATEWAY_INBOX_DIR`
+  default, documented on `.env.example`'s `CHAT_GATEWAY_INBOX_DIR` line, and
+  written by `Inbox._audit` on
+  every inbound reply. Removing it as stale would have opened a **second** leak
+  path on the **more sensitive side**: that file holds a human's `text`, their
+  `sender_email`, and the whole `raw` event. The entry stays, and the block now
+  says why so the next reader does not re-derive "looks unused" from a name.
+
+**The fix, and the two judgement calls in it.** One added pattern (`state/`),
+one kept (`inbox-data/`), and a comment block naming both env vars and both
+writers.
+
+- **Unanchored, not `/state/`.** The working directory is not knowable from
+  `.gitignore`; a `state/` one level down leaks exactly as much as one at the
+  root, and was verified ignored too. The cost is that a future source package
+  named `state` would need `git add -f` — a loud error at the moment someone
+  adds it, against a silent irreversible leak. It also matches how every other
+  runtime pattern in this file is already written.
+- **No `.gitkeep`.** Every writer already does
+  `mkdir(parents=True, exist_ok=True)` (`journal.py`, `inbox.py`,
+  `delivery.py`, `heartbeat.py`), so a placeholder buys nothing operationally
+  and would put the directory back into the worktree it is being kept out of.
+  Considered because the row asked for it to be considered, and declined with
+  the reason recorded in the file a person editing that block will actually
+  read.
+
+**No test was added, deliberately.** The guard would have to shell out to `git
+check-ignore`, making the first git-dependent test in an otherwise offline suite
+of 246 — a real dependency to take on for a config file. The exercise is in the
+PR body instead: the tree was created, `git status` and `git check-ignore -v`
+recorded before and after, and then removed. **If that trade looks wrong later,
+the follow-up is a test, not a rewrite.**
+
+**Two findings seen and deliberately NOT acted on**, recorded so neither reads
+as unnoticed:
+
+- **`inbox-data/*.jsonl` is mode 0644 and is never pruned**, and it holds whole
+  inbound events including `raw`. Measured by the concurrent **Architect**
+  agent, not by this row, and it belongs to the **CG-65 decision the user has
+  not yet taken**. This row ignores the directory; it does not change what the
+  directory contains or how it is protected. (This Builder's own `stat` read
+  `777` on every file — an artifact of the dev box's 9p `/mnt/d` mount, which
+  does not honour POSIX modes. That is a **measurement-environment artifact,
+  not a contradiction** of Architect's 0644.)
+- **CG-53 and CG-55 do not declare a `Depends on: CG-67`** even though this
+  row's rationale is that it must precede them. Left alone because CG-67 lands
+  first, which makes the edge moot, and adding it would mean editing two rows
+  this row does not own. Worth adding only if this queue is ever dispatched
+  mechanically rather than read top-down by a human.
 
 ---
 

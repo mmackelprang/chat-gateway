@@ -15,7 +15,23 @@ venv/
 dist/
 build/
 
-# runtime state
+# runtime state — a privacy control, not tidiness. `__main__.py` defaults
+# CHAT_GATEWAY_STATE_DIR to `state` and CHAT_GATEWAY_INBOX_DIR to `inbox-data`,
+# and BOTH are relative to the working directory — so README's documented
+# `python3 -m chat_gateway serve`, run from the repo root, writes them into the
+# worktree, where `git add -A` will happily stage them. Both carry message
+# content: `state/queue/*.jsonl` journals `message.model_dump()` — the whole
+# outbound text and cards (delivery.py) — and `inbox-data/<app>-<day>.jsonl`
+# holds an inbound reply's text, sender_email and raw event (inbox.py).
+# Unanchored deliberately: the working directory is not knowable from here, and
+# a `state/` one level down leaks exactly as much as one at the root. Deployment
+# is PLANNED to point both env vars at absolute paths outside any checkout
+# (CG-53/CG-55) — but nothing has been deployed yet, so until then these
+# patterns are the whole guard, not a backstop to one.
+# No .gitkeep placeholder: every writer already does
+# `mkdir(parents=True, exist_ok=True)`, so one would buy nothing and would put
+# the directory back into the worktree it is being kept out of.
+state/
 inbox-data/
 *.log
 
