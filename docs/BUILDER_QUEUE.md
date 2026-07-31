@@ -1,9 +1,38 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-51, CG-35, CG-50 and CG-52 shipped as
-ONE PR, [PR #42](https://github.com/mmackelprang/chat-gateway/pull/42) — OPEN and
-NOT merged**, per a user-imposed gate on the IaC / secret-handling path. **The
-board is now empty.**
+**Last updated:** 2026-07-31 (Planner — **the production-readiness arc is filed:
+CG-53 … CG-59**, one shared
+[spec](superpowers/specs/2026-07-31-production-readiness-arc-design.md) ·
+[plan](superpowers/plans/2026-07-31-production-readiness-arc.md), Parts A–G
+mapping one-to-one onto the rows. **It has never been deployed** — `Dockerfile`
+and `docker-compose.yml` have never been exercised, and every verification across
+2026-07-29/30 was hand-run from the dev box.
+
+**Three findings contradict the brief this arc was planned from, and are recorded
+rather than planned around.** (1) There is **no `nas/compose/<service>.yaml`
+convention** — NAS services are TrueNAS *custom apps* created over the middleware
+API and then *captured* to `nas/compose/<name>.config.json`, so this repo's
+`docker-compose.yml` cannot deploy as written (`build:`, `env_file:` and relative
+mounts all fail there). (2) **The homelab secret redactor cannot see this
+project's secrets** — it matches env-var name *suffixes*, and
+`CHAT_GATEWAY_API_KEY__<APP>` ends with the app id while
+`GOOGLE_CHAT_WEBHOOK_URL__<IDENTITY>` ends with the identity name, so the naive
+house-style deploy would commit every API key and every webhook URL in plaintext
+to a sibling repo **under a script that prints `clean. safe to commit.`** (3)
+`SECRETS.md` is **gitignored and holds real values**; the tracked pointer file is
+`SECRETS.template.md`.
+
+**Two more findings reshaped the workstreams.** jobhunt's push receiver **was
+never built** — no route, no port, no code — so decision A is a contract
+correction *before first use*, not a migration. And `inbox.py`'s queue is
+**in-memory too**, which the brief's durability scope (`delivery.py` only)
+missed: decision A points jobhunt's *only* inbound path at it, and a consumer
+whose host sleeps leaves taps sitting there for hours.
+
+Previously (2026-07-30, Builder): **CG-51, CG-35, CG-50 and CG-52 shipped as
+ONE PR, [PR #42](https://github.com/mmackelprang/chat-gateway/pull/42)** — since
+**MERGED** (2026-07-31), per a user-imposed gate on the IaC / secret-handling
+path.
 
 **One PR because CG-51 and CG-35(b) rewrite the same `KEY_FILE` handling in the
 same two files** — the CG-11+CG-20 and CG-22+CG-9 reasoning. CG-50 and CG-52 rode
@@ -482,21 +511,47 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-**Remaining: NOTHING. The board is empty.**
+**The production-readiness arc — CG-53 … CG-59, filed 2026-07-31 by Planner.**
+Shared [spec](superpowers/specs/2026-07-31-production-readiness-arc-design.md) ·
+[plan](superpowers/plans/2026-07-31-production-readiness-arc.md); the plan's
+Parts A–G map one-to-one onto these rows, one PR each.
 
 | Item | State | Note |
 |---|---|---|
-| _(none)_ | | CG-51, CG-35, CG-50 and CG-52 were the last four, shipped together as [PR #42](https://github.com/mmackelprang/chat-gateway/pull/42) |
+| **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
+| **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | 📋 queued | Part B. The one hard prerequisite for an always-on deploy |
+| **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **USER-EXECUTED**. Depends on CG-53, CG-54. Part C |
+| **CG-56** · inbox delivery semantics: at-most-once → ack | ⏸ **blocked** | **needs user sign-off** — changes a published contract. Part D |
+| **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54; **reads better after CG-56 resolves either way**. Part E |
+| **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
+| **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
 
-**Everything has shipped.** CG-1 through CG-13, CG-19 through CG-37, CG-42 and
-CG-50 through CG-52 — 31 items on 2026-07-29/30, suite 37 → **202**.
+**Recommended order is the table order, and it is NOT the order the arc was
+briefed in.** The brief had deploy first. Two rows move ahead of it:
 
-⚠ **PR #42 is OPEN and NOT merged** at the time of writing, held by a user-imposed
-gate on the IaC / secret-handling path (the same gate CG-23, CG-33 and CG-34 got).
-The four rows are marked shipped because the work is done and reviewed; **if the
-gate resolves any way other than a merge, these rows are the ones to reopen.**
-Recorded rather than glossed, because CG-33's banner was written in exactly this
-state and said so, and then needed correcting once it merged.
+- **CG-53 first** because its unknowns are the largest *and* it carries the
+  secret-redaction finding above. That finding should not wait behind two code
+  PRs.
+- **CG-54 before the deploy** because it is the **only hard prerequisite** for an
+  always-on instance. `restart: unless-stopped` means the thing restarts by
+  itself, and today every restart silently empties both queues. A trusted
+  always-on service that loses work on restart is worse than a hand-run one that
+  does, because nobody is watching. It is also fully offline-testable, so it
+  costs no live time.
+- **CG-58 after the deploy**, against the brief's order, because it needs no
+  running instance to test — Google cannot be made to return 429 on demand either
+  way, so a fake transport is the *only* way to exercise it.
+
+**The deploy sits third rather than last on purpose: the soak clock starts
+there**, so CG-59 harvests days of real uptime instead of beginning a wait.
+
+**Nothing in this arc widens any tenant's inbound surface.** `aitrader` stays
+`allow_inbound: false`; CG-57 **narrows** jobhunt's, per the user's decision.
+
+**Previously: everything had shipped.** CG-1 through CG-13, CG-19 through CG-37,
+CG-42 and CG-50 through CG-52 — 31 items on 2026-07-29/30, suite 37 → **202**.
+PR #42 was open under a gate when the last banner was written and **has since
+merged** (2026-07-31); its four rows stand as shipped.
 
 **Three rows are closed rather than shipped**, each with its premise recorded so
 "obsolete" is never a bare status word: **CG-14** (the migration removed the
@@ -839,6 +894,454 @@ counter. Reproducing the table here creates a second thing to drift.
 
 ⚠ **Do not record a line number.** It was 109, then 114 under CG-36's merge. Find
 the paragraph by its text.
+
+---
+
+### CG-53 · Deployment artifacts and the secret-safety proof (**no deploy**)  📋 queued
+
+| | |
+|---|---|
+| **Origin** | Planner 2026-07-31, from the production-readiness brief — **surveyed against the homelab repo, not assumed** |
+| **Depends on** | nothing |
+| **Touches** | `src/chat_gateway/env_file.py` (new), `__main__.py`, `.env.example`, `docker-compose.yml` (header + one comment), `docs/deploy/nas.md` (new) |
+| **Merge gate** | ⏸ **YES — secret-handling path, IaC-adjacent.** The gate CG-23, CG-33, CG-34 and CG-51 carried |
+| **Spec / plan** | [spec §4.1](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part A](superpowers/plans/2026-07-31-production-readiness-arc.md) |
+
+**Ships no deploy.** It ships the artifacts, the on-box layout, one small code
+change that makes hard rule #2 hold on the NAS, and a runbook.
+
+**The finding that makes this row first, and gated.** The homelab capture script
+decides a key is secret by **upper-cased suffix match** — `…PASSWORD`, `…TOKEN`,
+`…API_KEY`, `…CREDENTIALS` and a handful more. Match that against this project's
+env-var shapes:
+
+| Env var | Ends with | Redacted? |
+|---|---|---|
+| `CHAT_GATEWAY_API_KEY__<APP>` | the app id | ❌ **NO** |
+| `GOOGLE_CHAT_WEBHOOK_URL__<IDENTITY>` | the identity name | ❌ **NO** |
+| `GOOGLE_APPLICATION_CREDENTIALS` | `CREDENTIALS` | ✅ yes — and it is only a path |
+
+The `__<SUFFIX>` convention this project uses to get one env var per app and per
+identity **defeats the suffix rule**, and it does so on exactly the two families
+that are real credentials. A webhook URL embeds `key`+`token`, *is* a bearer
+credential, and has **no rotate-in-place** — recovery is delete-and-recreate by
+hand (`docs/google-cloud-setup.md` §8a), and this project already burned every
+webhook it owns once, on 2026-07-29, for a smaller mistake.
+
+So the house-style deploy (inline `environment:`, then `capture.sh`) ends with
+**every API key and every webhook URL committed in plaintext to a sibling repo,
+under a script that printed `clean. safe to commit.`** That is the CG-23 / CG-34
+defect class, one repo over.
+
+**The answer is structural, not a reminder.** Secrets never enter the compose
+document at all: `__main__` gains `CHAT_GATEWAY_ENV_FILE`, naming an off-repo
+file (mode 600) that the compose only *points at*. The capture is then clean **by
+construction** and the redactor's suffix list stops being load-bearing for us.
+
+⚠ **The fix belongs in our code, not in compose's `env_file:`.** No homelab
+service uses `env_file`, and whether the TrueNAS renderer honours it is
+unverified. **Do not put a hard-rule-#2 guarantee on an unverified property of
+someone else's compose renderer.**
+
+Four properties the loader must have, each with a reason: **the environment wins**
+over the file (an operator's override is never silently replaced, and it makes
+this a no-op in all 202 existing tests); **no new dependency** (~20 lines);
+**a missing file is fatal** — a gateway that boots with no credentials answers
+`degraded` on an *unauthenticated* endpoint and otherwise looks alive, which is
+the shape rule #5 exists for; and **values are never logged**, only a count.
+
+**Also settled here, and each one is a correction to the brief:**
+
+- **There is no `nas/compose/<service>.yaml` to write.** NAS services are TrueNAS
+  **custom apps** created via the middleware API with an inline
+  `custom_compose_config`, and *then* captured to
+  `nas/compose/<name>.config.json`. **`docker-compose.yml` cannot deploy as
+  written** — `build:` has no build context there, relative mounts have no
+  meaning, and `env_file` is used by no service in that repo. It is **not
+  deleted**; it is scoped as the dev-box path, which is what `build:` is for.
+- **`SECRETS.md` is gitignored and holds real values.** The tracked pointer file
+  is `SECRETS.template.md`. That is the one a PR adds a row to.
+- **The SA key filename is deliberately NOT pinned** in the compose or the
+  runbook. CG-51 made the setup scripts *derive* it from `PROJECT_ID`; a filename
+  in a comment is exactly what CG-19 found stale. Mount the `secrets/`
+  **directory**; `docs/google-cloud-setup.md` records the name.
+  **`iac/chat-gateway-sa.json` is DEAD** — deleted project.
+- **Port `8085` is free** on that box. In use: `3000, 5800, 8081, 8090, 8098,
+  30013, 31067, 32015, 32016, 37877`; `80`/`443` are the TrueNAS UI's and `53` is
+  its dnsmasq.
+- **The NAS is "backup target only" today — this is a role change**, not just a
+  deploy. Blast-radius controls are named in the runbook: distinct port, **no
+  `network_mode: host`**, no added capabilities, mounts confined to one app
+  directory, no change to any existing app.
+
+**State plainly in `docs/deploy/nas.md` what per-app keys do and do not protect.**
+They protect every `/v1/*` endpoint (hard rule #4). They do **not** protect
+`/healthz`, which is **unauthenticated by design** — CG-12's bare-counter decision
+rests on that — and which enumerates app ids, identity names, per-identity mode,
+env-var resolvability and every counter to anyone who can reach the port. And the
+homelab's **restricting tailnet ACL is drafted but NOT applied** (recorded there
+2026-07-28), so the live policy is default allow-all today. Neither is a blocker;
+both belong in Gotchas so the exposure is a decision rather than a discovery.
+
+⚠ **Two things to verify on the box, not assume** — recorded in the runbook as
+decision points so they are not discovered live: that the middleware accepts a
+locally-built image with `pull_policy: missing` (every existing custom app pulls a
+public image, so this is first-of-its-kind there), and that the nested registry
+path resolves under the read-only `/config` mount.
+
+**Terraform is not in scope** and cannot be validated here — not installed, never
+applied. Same scope call CG-51 made.
+
+---
+
+### CG-54 · Queue **and inbox** durability — append-only JSONL under `CHAT_GATEWAY_STATE_DIR`  📋 queued
+
+| | |
+|---|---|
+| **Decision** | **user, 2026-07-31** — JSONL matching the existing delivery log; one persistence idiom, no new dependency, operator-readable during an incident |
+| **Depends on** | nothing (ships before the deploy on purpose — see below) |
+| **Touches** | `journal.py` (new), `delivery.py`, `inbox.py`, `__main__.py`, `service.py` (`/healthz`) |
+| **Merge gate** | no |
+| **Spec / plan** | [spec §4.2](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part B](superpowers/plans/2026-07-31-production-readiness-arc.md) |
+
+`delivery.py:10` — *"a gateway restart drops undelivered jobs"* — accepted for
+v0, and volume plus restarts is when it stops being acceptable.
+
+**⚠ The brief scoped this to `delivery.py`. That scope is too narrow, and the
+correction is the point of the row.** `inbox.py:22` holds its pending replies in a
+`defaultdict(deque)` — **in memory too**. Under push, an inbound tap left the
+gateway within ~10s. Under **decision A** it becomes jobhunt's *only* inbound
+path, polled by a consumer **whose host sleeps**, so a tap can sit in that deque
+for hours — and a restart in that window drops it. The JSONL audit keeps a copy
+but nothing reads it back; recovery is an operator reading newline-delimited JSON
+by hand. **Decision A points jobhunt's only inbound path at an in-memory queue**,
+so durability must cover `Inbox` as well as `Dispatcher`.
+
+**Why this ships before the deploy.** `restart: unless-stopped` means the thing
+restarts by itself, and a NAS-resident always-on service is *trusted* in a way a
+hand-run one is not. It is fully offline-testable, so it costs no live time.
+
+**Reuse the idiom, do not invent a third.** `heartbeat.py` already persists JSON
+atomically (`.tmp` + `os.replace`) and `delivery.py`/`inbox.py` already append
+JSONL. One new module applies both primitives to queue *state*.
+
+**Not the audit trail, and not a replacement for it.** The audit files are
+per-app-per-day, never pruned, and carry **no terminal records** — they say what
+ARRIVED, never what LEFT, so pending state cannot be reconstructed from them.
+Different question, different file; both stay. Say this in the module docstring,
+because "we already write JSONL" is the obvious wrong conclusion.
+
+**The replay-on-boot rule — settled here, not left to Builder:**
+
+- **Replayed:** every id with an `open` and no `close`, **attempt count
+  preserved**. Not a detail: without it a crash-loop resets the backoff ladder
+  every boot and hammers Google forever — **a durability feature turned into an
+  outage amplifier**.
+- **Discarded:** every id with a `close`, whatever its status.
+- **Mid-flight at kill time** — an `open` with no `close` whose request may or may
+  not have reached Google — is **replayed, and may therefore deliver twice.**
+  Stated, not hidden: Chat has no idempotency key, notify dedupe collapses
+  repeats within its window, and losing an alert is the worse failure.
+- **Older than `REPLAY_MAX_AGE_S` (24h) is closed as `expired` at boot** — not
+  silently dropped, not blindly sent. An alert from three days ago posted now
+  actively misleads; both outcomes are bad and this is the visible one.
+- **A torn trailing line is skipped and counted, never fatal.** A partial write at
+  power loss is the *expected* shape, and **a gateway that refuses to boot over a
+  half-written byte is a crash loop** on a host running `restart: unless-stopped`.
+  The count goes to `/healthz` — and it adds a `reasons` entry, because a
+  mechanism whose whole purpose is surviving something nobody watched must say
+  when it lost something (rule #5).
+
+**Compaction — settled:** on boot after replay (the only time the file is read,
+so this suffices for correctness), **plus** an inline threshold, because the
+deployed process is meant to run for weeks and **boot-only compaction on a process
+that never boots is no compaction at all**. Atomic, via the heartbeat idiom.
+
+**Both journals are optional constructor arguments defaulting to `None`**, so
+every existing offline test constructs an unchanged in-memory object and the
+202-test suite does not need rewriting to accommodate persistence.
+
+**Re-resolve identities from the registry on replay, never from the journal.**
+The journal stores an identity *name*; only the registry knows whether that app
+may still send as it (hard rule #4). A job whose grant has since been withdrawn is
+closed as `unroutable` — **never sent on the strength of a permission the registry
+no longer grants.**
+
+**UAT must include a real restart**, not only unit tests: SIGKILL a serving
+gateway with work queued, read the journal by eye (it must be readable during an
+incident — that is half the reason for the format), restart, and confirm
+`/healthz` agrees with the boot line.
+
+---
+
+### CG-55 · First NAS deploy and live smoke  📋 queued · **USER-EXECUTED**
+
+| | |
+|---|---|
+| **Depends on** | **CG-53** (artifacts) and **CG-54** (durability) |
+| **Touches** | `docs/deploy/nas.md` § *Executed* only. The homelab-side artifacts land in **that** repo |
+| **Merge gate** | ⏸ **YES — deploy + secret-handling path** |
+| **Spec / plan** | [spec §4.3](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part C](superpowers/plans/2026-07-31-production-readiness-arc.md) |
+
+**User-executed, in the CG-15 / CG-16 pattern** — Builder prepares the exact
+commands and the observation checklist; the user runs them against real hardware.
+Builder does not deploy to production hardware unattended, and this queue has no
+precedent for it.
+
+**Deploy-then-document is the homelab convention** — *"the repo documents reality;
+it does not declare intent."* Its artifacts (the four-header `nas/services/`
+doc, the `SECRETS.template.md` row, the Homepage tile with `siteMonitor` on the
+**LAN IP**, the `DASHBOARDS.md` row, `restore-chat-gateway.sh`, and the captured
+config) are produced **after** the box is running, from observed facts, in **that
+repo**. This row's chat-gateway-side deliverable is the runbook's *Executed*
+section filled in with what actually happened — **including anything that
+differed from plan.**
+
+**The gate that decides success:** `capture.sh` run, and then the captured JSON
+**read by eye**, containing **zero** secret values. ⚠ **Do not accept
+`clean. safe to commit.` as the answer** — CG-53 establishes that the script's
+suffix rule cannot see this project's secret shapes, so that assurance is worth
+nothing here.
+
+Five facts to observe (not boxes to tick): `/healthz` `status` + `reasons`
+**verbatim**; one tier-1 webhook send through the deployed instance; tier-2
+subscriber alive with `seconds_since_last_poll` moving — **the first evidence
+that any host but the dev box can reach Pub/Sub**; a restart proving CG-54's
+replay on real hardware; and the capture.
+
+**Must not happen:** a secret in `custom_compose_config` (stop and fix the layout
+*before* capturing — a capture commits it to a sibling repo); `network_mode:
+host`; any change to an existing NAS app; or reaching for the dead
+`iac/chat-gateway-sa.json`.
+
+---
+
+### CG-56 · Inbox delivery semantics: at-most-once → ack-based at-least-once  ⏸ BLOCKED — needs user sign-off
+
+| | |
+|---|---|
+| **Blocked on** | **the user's answer.** It changes a *published* contract, so Planner recommends and does not decide |
+| **Depends on** | CG-54 |
+| **Touches** | `inbox.py`, `service.py`, `client.py`, `README.md`, `docs/integration-guide.md`, `docs/consumers/aitrader.md` (a row citing line numbers), `tests/test_service.py` |
+| **Merge gate** | no — but **do not dispatch** until answered |
+| **Spec / plan** | [spec §4.4](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part D](superpowers/plans/2026-07-31-production-readiness-arc.md) |
+
+`Inbox.poll()` **clears on read** (`inbox.py:37-42`) — at-most-once, documented as
+such and pinned by `tests/test_service.py:99` (`# poll clears`). If the HTTP
+response carrying a batch is lost in flight, those events are **gone from the
+queue**, recoverable only by an operator reading the audit JSONL by hand.
+
+Defensible when the inbox was a secondary path and push was primary. **Decision A
+makes it jobhunt's only inbound path**, and a tap that silently vanishes is
+precisely the failure jobhunt's own J14 doctrine and this gateway's R7 exist to
+prevent.
+
+**Recommended:** `GET /v1/inbox` stops clearing when asked not to;
+`POST /v1/inbox/ack` removes by id. At-least-once is **what R3 already assumes** —
+it demanded a `dedupe_key` and committed jobhunt to idempotent handling precisely
+because Pub/Sub is at-least-once. The gateway already speaks this idiom in
+`PubSubPuller.pull()` / `.acknowledge()`; this is the same shape one layer out,
+not a new concept.
+
+**Keep clear-on-read as the DEFAULT and make ack-mode explicitly opt-in.**
+Flipping the default is cleaner but silently turns any non-acking caller's queue
+into one that grows forever — the worse failure on a host that now runs
+continuously.
+
+**If the user declines:** CG-57 documents at-most-once **explicitly, with this
+risk stated in the jobhunt contract**, so jobhunt builds its poller knowing it.
+Either answer is workable. What is not workable is jobhunt building a poller
+against an unstated guarantee.
+
+⚠ `docs/consumers/aitrader.md`'s comparison row cites `service.py` line numbers
+that **will move**. Re-derive them by reading the file; do not adjust by
+arithmetic.
+
+---
+
+### CG-57 · jobhunt: `callback_url` → passive inbox polling  📋 queued
+
+| | |
+|---|---|
+| **Decision** | **user, 2026-07-31** — final, do not re-litigate |
+| **Depends on** | **CG-54**; reads better after **CG-56** resolves *either way*, so the contract doc is written once |
+| **Touches** | `config/registry.example.yaml`, `docs/consumers/jobhunt.md`, `docs/consumers/jobhunt-handoff.md`, `docs/integration-guide.md` |
+| **Merge gate** | no — but **hard rule #6 territory**, narrowing only |
+| **Spec / plan** | [spec §4.5](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part E](superpowers/plans/2026-07-31-production-readiness-arc.md) |
+
+**Registry and documentation only. No code path is deleted.**
+`CallbackForwarder` and its R7 path **stay** — `allow_inbound` + `callback_url`
+remains supported for any future always-on tenant, and hard rule #6 names **both**
+inbound paths. Do not rip it out.
+
+**jobhunt's receiver was never built** — no route, no listener, no code
+(`review_ui.py`'s route table has ten entries and none is it). So this is a
+**contract correction before first use**, not a migration: nothing to delete on
+either side. **The `8710` vs `8763` port mismatch (CG-42's finding) becomes
+moot** — there is no receiver to point at. Do not "fix" the port; delete the
+question.
+
+**What `allowed_users` and `unreachable_message` still mean — decided, not left
+inferable:**
+
+- **`allowed_users` (R4) is UNCHANGED in force.** It is evaluated at **ingress**,
+  in the subscriber's authorization block, before anything is enqueued — which is
+  exactly what `/healthz`'s `suppressed_not_authorized` counter already
+  describes. An unauthorized tap is still refused in-thread and still never
+  reaches any queue, so it never appears in the inbox to be polled. **Only the
+  verb changes: "never forwarded" → "never enqueued."**
+- **`unreachable_message` (R7) becomes inert for this tenant and is REMOVED from
+  its entry** rather than left as decoration. R7's notice fires from callback
+  exhaustion; with no callback there is no exhaustion, so the field would read as
+  active while never being able to fire. **This repo has corrected that exact
+  shape three times** (CG-37, CG-50, CG-52). The **field and R7 stay in the
+  schema and the contract** for push-path tenants.
+- **What replaces R7's guarantee under polling: nothing at the gateway, and that
+  is correct.** The gateway cannot distinguish "jobhunt is asleep" from "jobhunt
+  crashed" — both look like nobody polling — and a detector would mean the gateway
+  holding an expectation about a consumer's schedule, which is consumer semantics
+  and **against hard rule #1**. The gap moves to jobhunt, whose own J14 doctrine
+  already demands it. The gateway-side observable is `/healthz` →
+  `inbox.pending`, which rises when nobody drains: **operator material, not a
+  tenant guarantee.** Write that into the handoff; do not leave it implicit.
+
+**⚠ Record, do not act on, jobhunt's side.** `D:\prj\jobhunt` is **READ ONLY**.
+Its R1, R3, R6, R7, R8 and R9 all need revision and **its own project must do
+it** — the list is in the plan's E4.
+
+**⚠ A premise worth recording, in the CG-14 tradition.** Decision A's stated
+reason is that jobhunt's receiver would live on `marksdevbox`, **which sleeps** —
+true of jobhunt's *accepted* topology ADR. But jobhunt has a **newer, proposed**
+one (2026-07-30, awaiting sign-off) that would collapse the database, review UI
+and receiver onto its **always-on** host, which would falsify that premise within
+days. **The decision stands — but on its stronger reason:** *push couples the
+gateway to a consumer's deployment topology (address, port, liveness); polling
+couples it to nothing.* That survives either topology. Write **that** as the
+justification, and the sleeping host as the occasion. A spec whose stated reason
+is falsified a week later, with nothing recorded, is how CG-21 happened.
+
+**`docs/consumers/aitrader.md` is checked and left alone** unless its wording
+forces otherwise — aitrader's guarantee rests on `allow_inbound: false` locking it
+out of *every* path, untouched by narrowing another tenant. **CG-27 already had to
+remove a false claim from that file about this mechanism's existence; do not
+introduce its mirror image.**
+
+One test must prove the push path **still works**, through the real
+`CallbackForwarder` rather than a stub. Its whole job is to prove nothing was
+ripped out.
+
+---
+
+### CG-58 · Structured adapter failures and `Retry-After`  📋 queued
+
+| | |
+|---|---|
+| **Origin** | the production-readiness brief — **both retry paths confirmed to ignore `Retry-After`**, and the reason found to be larger |
+| **Depends on** | CG-54 (touches the same `process_due` branch — sequence to avoid a collision) |
+| **Touches** | `retry_policy.py` (new), `adapters/webhook.py`, `adapters/chat_api.py`, `delivery.py`, `forwarder.py` |
+| **Merge gate** | no — **but it touches `adapters/`: no ⚠ flag may be cleared, added or reworded** |
+| **Spec / plan** | [spec §4.6](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part F](superpowers/plans/2026-07-31-production-readiness-arc.md) |
+
+Confirmed: `delivery.py`'s `BACKOFF_S = (0, 30, 120, 600, 3600)` and
+`forwarder.py`'s `(0, 3, 7)` both ignore `Retry-After`; a 429 is treated as a
+generic failure and retried on our schedule, not Google's.
+
+**But the reason is structural, and fixing the reason fixes more than the
+symptom.** The adapters do not carry the status anywhere a retry policy can reach
+it: `WebhookDeliveryError` and `ChatApiError` render it into a *message string*
+and keep no attribute, and `Dispatcher.process_due` catches a bare `Exception`.
+(`PubSubError` already carries `.status_code` — it is the model for the others,
+and the direction CG-23 and CG-33 already moved this family.)
+
+**The headline defect is not the missing `Retry-After`:**
+
+| | today | should be |
+|---|---|---|
+| `429` + `Retry-After: 120` | generic failure, **our** schedule | wait what Google asked |
+| `503` | generic failure | retry, ladder |
+| **`403`** — webhook deleted, app removed from space, key revoked | **burns the full ladder: 30s, 2m, 10m, 1h — over an hour of calls that can never succeed** before reporting `failed` | **permanent; fail on attempt 1** |
+
+That 4xx row is a **current, observable defect in our own logic**, needs no Google
+error response to demonstrate, and makes the gateway noisiest exactly when a
+credential has been revoked.
+
+**Rules, each with its reason:** non-retryable 4xx is permanent; `Retry-After` is
+honoured as **`max(ladder, retry_after)`** — never *shorter*, so a hostile or
+buggy `Retry-After: 0` cannot turn a retry into a hot loop against Google;
+clamped to a ceiling; and in `forwarder.py` a value beyond that path's short
+horizon counts as **exhaustion**, firing R7 — a human tapped a button, and a
+tenant asking the gateway to wait an hour has for this purpose failed.
+
+⚠ **`Retry-After` is server-controlled bytes. Parse it to a float and never carry
+the raw string into any message, log or attribute.** This is **CG-33's exact
+lesson** applied on first use rather than after the fact: `PubSubError` read
+`resp.reason_phrase` off the wire and had to be corrected to a local lookup. A new
+header read is a new instance of the same hazard, and a test must prove a hostile
+value reaches nowhere.
+
+**Preserve the exhausted-ladder log string byte for byte** — existing tests assert
+on it. The permanent case gets its own wording rather than one message carrying
+two meanings.
+
+⚠ **`send_text`'s documented non-200 asymmetry** (status only, no reason phrase)
+is **deliberate** and CG-23 explicitly declined to change it. Add the attributes
+without touching the message.
+
+**Say in the PR body, in these words: every branch this touches is one no Google
+error response has ever exercised.** The tests drive fakes. That is a stronger
+suite, **not** evidence against Google, and it clears nothing. For the current
+residue, **link `CLAUDE.md`'s verification ledger — do not restate it.**
+
+---
+
+### CG-59 · Long-run observation, and what a **deployed** `/healthz` needs  📋 queued
+
+| | |
+|---|---|
+| **Depends on** | **CG-55** — the soak clock starts when it lands |
+| **Touches** | `service.py` (`?strict=1`), `docs/deploy/nas.md` (the observation section) |
+| **Merge gate** | no for the code; **any ledger change needs explicit hard-rule-#3 sign-off** |
+| **Spec / plan** | [spec §4.7](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part G](superpowers/plans/2026-07-31-production-readiness-arc.md) |
+
+`CLAUDE.md`'s verification ledger records that **no multi-hour live run has
+happened** for `SubscriberLoop`. This row is that run.
+
+**The deployed-only finding.** `service.py:469-471` returns
+`status_code=200` **hardcoded**, including when `status` is `degraded`. Correct
+for a hand-run gateway — you read the JSON. A real gap for a deployed one,
+because Homepage's `siteMonitor` and container health checks judge by **status
+code**: the tile is **green while inbound is dead**. That is the claude-mem
+hardcoded-health-check failure — the one hard rule #5 exists because of, which hid
+11 days of silent capture failure — occurring **one layer up**, at the dashboard,
+against an endpoint that is itself scrupulously honest. `/healthz` is not lying;
+the dashboard reading it cannot hear it.
+
+**Recommended: add `GET /healthz?strict=1`**, returning **503** when `reasons` is
+non-empty and 200 otherwise, with an **identical body**. Additive — no existing
+consumer changes — and the Homepage tile points `siteMonitor` at the strict form.
+Chosen over flipping the default because the plain form is a published contract
+with existing readers, and because a 503 from a *container* health check would
+make Docker restart a gateway that is degraded but **working** (one unresolved env
+var on a tier-1-only host). Opt-in puts the choice with the reader.
+
+**The soak:** sample `/healthz` for **≥24h, targeting ≥72h**, recording
+`seconds_since_last_poll` (**max, not mean** — a mean hides a wedge),
+`poll_failures` / `consecutive_poll_failures`, `thread_alive` / `thread_started`,
+`events_seen`, `dispatch_errors`, container RSS, journal size **across at least one
+compaction**, and `inbox.pending` / `inbox.dropped`.
+
+⚠ **Whether this clears the ledger's `SubscriberLoop` long-run row is a hard rule
+#3 question and needs the user's explicit sign-off**, on CG-35's precedent. The row
+**presents evidence and proposes**; it does not clear a flag on its own authority.
+**A quiet subscription running for three days proves the thread survives; it
+proves little about behaviour under load** — say which of those the evidence
+reaches.
+
+**Disk growth: measure and propose, do not implement.** The audit JSONL files
+(`inbox-data/`, `state/deliveries/`) are per-app-per-day and **never pruned** —
+invisible on the dev box, a slow leak on a host meant to run for years. A
+retention policy on an audit trail whose stated purpose is that *"nothing is ever
+silently lost"* is a rule-#5-flavoured decision and **belongs to the user**.
 
 ---
 
