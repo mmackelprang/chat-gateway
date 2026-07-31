@@ -51,6 +51,17 @@ apps:
   aiteam-harness:
     key_env: CHAT_GATEWAY_API_KEY__AITEAM_HARNESS
     identities: [pm-familyworkspace]
+    # Inbound was on only because `true` is the DEFAULT — this app never asked
+    # for it. It has no callback_url, no allowed_users, and CLAUDE.md describes
+    # it as a notify.py OUTBOUND transport. Hard rule #6 is default-deny in
+    # spirit; this makes it so in fact, and that space's content never reaches
+    # disk: an opted-out owner's event is discarded entirely — it cannot even
+    # land under `_unrouted`, because that fallback only fires for a space with
+    # NO owner.
+    #
+    # A DEFAULT CORRECTED, NOT A VERDICT about this consumer. Reversible in this
+    # one line if aiteam ever wants inbound.
+    allow_inbound: false
 
   job-hunter:
     key_env: CHAT_GATEWAY_API_KEY__JOB_HUNTER
