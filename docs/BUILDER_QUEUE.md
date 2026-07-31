@@ -572,7 +572,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-60** · repo-wide correction of the one-space premise | 🚀 in-flight · [PR #44](https://github.com/mmackelprang/chat-gateway/pull/44) | ⏸ **merge gate — OPEN, NOT MERGED**, awaiting the user. Consumer contracts. **Sequenced FIRST.** Plan Part H. Filed **CG-62** |
 | **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 📋 queued | ⏸ **merge gate**. **Must land before CG-55.** Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
-| **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | 📋 queued | Part B. The one hard prerequisite for an always-on deploy |
+| **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | 🚀 in-flight | Part B. The one hard prerequisite for an always-on deploy |
 | **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, and ⚠ an **external homelab-repo prerequisite (D2)**. Part C |
 | **CG-56** · inbox delivery semantics: at-most-once → ack | 📋 queued | ✅ **APPROVED (D3)** — opt-in per request; default path unchanged. Part D |
 | **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
@@ -1260,7 +1260,7 @@ applied. Same scope call CG-51 made.
 
 ---
 
-### CG-54 · Queue **and inbox** durability — append-only JSONL under `CHAT_GATEWAY_STATE_DIR`  📋 queued
+### CG-54 · Queue **and inbox** durability — append-only JSONL under `CHAT_GATEWAY_STATE_DIR`  🚀 in-flight
 
 | | |
 |---|---|
