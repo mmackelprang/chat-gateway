@@ -349,37 +349,71 @@ the guarantee from that. **The premise is true only of the committed template.**
 | Registry | `apps_for_space("spaces/…")` for either aitrader space | Effect |
 |---|---|---|
 | `registry.example.yaml` (committed) | `[]` | never nominated |
-| `registry.yaml` (**live**) | `['aitrader']`, `allow_inbound: false` | **would increment `suppressed_opt_out`** |
+| `registry.yaml` (**live**) | `['aitrader']`, `allow_inbound: false` | **increments `suppressed_opt_out`** — present tense as of 2026-07-31; see below |
 
 Verified by running the real `apps_for_space` against both files, not by reading
-them. This is the second time in one day a claim about this project was derived
-from the committed example while the live registry said otherwise — check which
-file you are looking at.
+them, and **re-run 2026-07-31 with the same result**. This is the second time in
+one day a claim about this project was derived from the committed example while
+the live registry said otherwise — check which file you are looking at.
 
-**What actually holds today, and why.** No inbound event has ever named aitrader
-as a candidate, but the reason is **not** the registry — it is that the tier-2
-Chat app is not in aitrader's spaces, so no Pub/Sub event originates from them.
-Those identities are `mode: webhook`, and a webhook is one-way: it needs no app
-membership to deliver, and produces no inbound events. That is a **console**
-fact, not a config one, and it is not verifiable from this repo.
+**What used to hold, and why that reason has expired — updated 2026-07-31.**
+Until 2026-07-31 no inbound event had ever named aitrader as a candidate, and the
+stated reason was **not** the registry: the tier-2 Chat app was not in aitrader's
+spaces, so no Pub/Sub event originated from them. The half of that reasoning
+about *outbound* still stands and always will — those identities are
+`mode: webhook`, and a webhook is one-way: it needs no app membership to deliver,
+and produces no inbound events of its own.
 
-So the safeguard is **one step away, not two.** The original text said this
+⚠ **The other half is now false.** Per a **user statement dated 2026-07-31**
+about the Google Chat console — not something this repository can prove, and not
+something it has measured — the app that was in the JobHunt space only, then
+named **"Agent Comms"**, is **deprecated** (it was workspace-specific). It is
+replaced by an app named **"Chat Gateway"**, which participates in **four**
+spaces — **both aitrader spaces among them**. No source file, no registry entry
+and no test records which spaces an app has been added to, so treat this as a
+console snapshot that goes stale the moment somebody changes it: re-check the
+console, not this line.
+
+So the safeguard was **one step away, not two.** The original text said this
 changes only if an operator both fills in a `space:` *and* adds the Chat app to
 that space. In the live registry the `space:` is **already filled** — adding the
 Chat app to an aitrader space would be sufficient on its own, and it is a console
 action that leaves no trace in version control.
 
-In that configuration each event in that space would add 1 to
+**That prediction fired.** The paragraph above is kept in the words it was
+written in, before the fact, because it named the trigger correctly and the
+trigger was then pulled. A warning deleted the moment it comes true teaches a
+reader to skim the next one.
+
+**So, live as of 2026-07-31:** each event in either aitrader space adds 1 to
 `suppressed_opt_out` — a bare volume integer, pooled with any other opted-out
 tenant, on an unauthenticated endpoint. Still no attribution, still nothing
 persisted, and marginal next to `events_seen`, which already publishes total
-inbound volume on the same endpoint. **`allow_inbound: false` is unaffected
-throughout** — nothing crosses to aitrader in any of these configurations; the
-only question is whether a bare integer moves.
+inbound volume on the same endpoint.
+
+**What has NOT changed — in the same breath, because this is the half that
+matters most to you.** `allow_inbound: false` is doing precisely its job. The
+`continue` in `dispatch()` fires **before** any `inbox.put`, so **nothing crosses
+to aitrader**: no inbox entry, no callback, no `_unrouted` audit record, nothing
+written to disk anywhere. Gateway hard rule #6 holds absolutely, and all four
+enforcement points in the table at the top of this section are unaffected. What
+changed is that **a bare counter moves on an unauthenticated endpoint** — a
+volume signal, not a data path.
+
+**And that exposure is not being silently accepted.** It re-priced the `/healthz`
+exposure question for the production-readiness arc: no longer app-id enumeration,
+but another tenant's live traffic volume and timing, on the one system whose whole
+contract is that it takes no inbound path. The user's decision (**D2**, [arc spec
+§7](../superpowers/specs/2026-07-31-production-readiness-arc-design.md)) is that
+the drafted homelab tailnet ACL lands **before** this gateway is deployed, so
+`/healthz` is fenced from the first minute rather than afterwards. **Named
+residual, because a fence with an unstated gap is worse than none:** that ACL
+governs the tailnet, not the LAN.
 
 Recorded because "nothing about aitrader is observable" should be true for a
-**stated and correct** reason, not by assumption — and the first stated reason
-was wrong.
+**stated and correct** reason, not by assumption — the first stated reason was
+wrong, and the second has now expired. The claim that survived both, and the one
+your contract actually rests on, is the narrow one:
 
 **Nothing about aitrader's traffic is persisted anywhere, in any configuration.**
 

@@ -179,8 +179,10 @@ Console → **APIs & Services → Google Chat API → Configuration**:
   reversible right up until you save, but **the choice you save is permanent**
   — a saved add-on app can never be turned back into a classic one. Read the
   callout below **before** you save anything on this page.
-- **App name:** `Agent Comms` (or your pick — this is the tier-2 sender
-  identity users see), avatar URL, description.
+- **App name:** `Chat Gateway` (or your pick — this is the tier-2 sender
+  identity users see), avatar URL, description. *This guide suggested
+  `Agent Comms` until 2026-07-31; that app is deprecated — see the dated console
+  note in step 6. The name is cosmetic to the gateway, which never reads it.*
 - **Interactive features:** enable; check *Receive 1:1 messages* and *Join
   spaces and group conversations*.
 - **Connection settings:** **Cloud Pub/Sub** → topic
@@ -226,17 +228,31 @@ For each project/app that gets a space: create the space in Chat, then
 **space ID** (open the space in a browser — the URL ends
 `/room/AAAA...` → the ID is `spaces/AAAA...`).
 
-> **What is deployed today — a console observation dated 2026-07-30, not
-> something this repository can prove.** The live Chat app is the **classic** app
-> named **"Agent Comms"** on `chat-gateway-gw`, and it has been added to the
-> **JobHunt space only**. That is a fact about the Google Chat console and is
-> readable nowhere in this repo: no source file, no registry entry and no test
-> records which spaces an app has been added to. (The registry does carry a
-> `space` per identity — but that is a *posting target*, where the gateway sends;
-> it is not a record of which spaces the Chat app has been **added to**, and the
-> two can disagree in either direction.) Treat it as a snapshot that goes
-> stale the moment somebody adds the app to a second space — re-check the
-> console, not this line.
+> **What is deployed today — a user statement about the console dated
+> 2026-07-31, not something this repository can prove or has measured.** The live
+> Chat app on `chat-gateway-gw` is the **classic** app named **"Chat Gateway"**,
+> and it participates in **four** spaces: FamilyWorkspace, Ai Trader, Ai Trader
+> Reports and JobHunt. It replaces an earlier app named **"Agent Comms"**, which
+> is **deprecated** — that one was workspace-specific; the replacement has the
+> same functionality with better interaction support in the space.
+>
+> That is a fact about the Google Chat console and is readable nowhere in this
+> repo: no source file, no registry entry and no test records which spaces an app
+> has been added to. (The registry does carry a `space` per identity — but that
+> is a *posting target*, where the gateway sends; it is not a record of which
+> spaces the Chat app has been **added to**, and the two can disagree in either
+> direction.) Treat it as a snapshot that goes stale the moment somebody changes
+> it — re-check the console, not this line.
+>
+> **This block previously carried a 2026-07-30 observation reading "Agent Comms …
+> added to the JobHunt space only", and it went stale in exactly the way the
+> sentence above warns about — in one day.** That is recorded rather than
+> overwritten silently, because it is the evidence for why this block is worded
+> as a dated snapshot instead of a fact. The consequence was not cosmetic: the
+> app's absence from the other spaces was the only thing holding a `/healthz`
+> counter at zero for an opted-out tenant, which
+> [`consumers/aitrader.md`](consumers/aitrader.md) §8 had predicted and now
+> records as live.
 
 ### 7. Tier-1 named webhooks (per identity, console only, ~1 min each)
 Space → **⚙ → Apps & integrations → Webhooks → Add webhook** → name it as
@@ -324,6 +340,14 @@ avatar URL → copy the webhook URL.
   | `sender` in Google's response | `null` | real: `{displayName: "Agent Comms", type: "BOT"}` |
   | What Chat displays | the webhook's configured name + avatar | the app's configured name + avatar |
   | Inbound events | none | Pub/Sub |
+
+  **The `sender` cell is the response body observed on 2026-07-29 and is left as
+  observed.** The app it names has since been replaced — per the dated console
+  note in step 6, **"Agent Comms" is deprecated and the live app is "Chat
+  Gateway"** — so a response captured today would carry the new `displayName`.
+  What the row is evidence *for* is unchanged and is the point of the table: tier
+  2 returns a real sender object where tier 1 returns `null`. The gateway never
+  reads `displayName`, so nothing in this repo depends on which name it is.
 
   Neither tier dominates. Tier 1 buys per-agent names at the cost of any sender
   identity in the response and any inbound path at all; tier 2 buys a real,

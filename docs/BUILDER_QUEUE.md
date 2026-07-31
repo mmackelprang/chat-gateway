@@ -1,6 +1,30 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-31 (Planner — **the production-readiness arc is filed
+**Last updated:** 2026-07-31 (Builder — **CG-60 is in flight and PAUSED AT ITS
+MERGE GATE**: the PR is open and deliberately **not merged**, per a user-imposed
+gate, because it touches consumer contracts and works in the verification
+ledger's neighbourhood.
+
+**What it is:** the repo-wide correction of the one-space premise. Documentation
+plus **one dated docstring note** in `adapters/chat_api.py`; suite **202 → 202**,
+unmoved; **no ⚠ flag cleared, added or reworded**, proven by reading the diff
+rather than by memory.
+
+**The premise was re-derived, not taken on trust** — the real `apps_for_space`
+run against the **live** gitignored `config/registry.yaml` returned exactly what
+the plan predicted: four distinct spaces, two → `['aitrader']` with
+`allow_inbound: false`, one → `['job-hunter']`, one → `['aiteam-harness']`.
+Re-deriving also turned up **two locations the brief's list did not name**
+(`docs/assets/README.md`), which is the whole reason CG-52's find-by-text rule
+exists.
+
+⚠ **It filed CG-62 rather than answering it.** Every ⚠ flag in this repo was
+cleared through the Chat app that is now deprecated. Whether those clears survive
+the app's replacement is a **hard-rule-#3 question needing the user's sign-off** —
+so CG-60 shipped currency pointers beside untouched observations (the CG-50
+shape) and left every flag where it found it.
+
+Previously 2026-07-31 (Planner — **the production-readiness arc is filed
 and DISPATCHABLE: CG-53 … CG-61**, one shared
 [spec](superpowers/specs/2026-07-31-production-readiness-arc-design.md) ·
 [plan](superpowers/plans/2026-07-31-production-readiness-arc.md), Parts A–G
@@ -545,7 +569,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 
 | Item | State | Note |
 |---|---|---|
-| **CG-60** · repo-wide correction of the one-space premise | 📋 queued | ⏸ **merge gate** — consumer contracts. **Sequenced FIRST.** Plan Part H |
+| **CG-60** · repo-wide correction of the one-space premise | 🚀 in-flight · [PR #44](https://github.com/mmackelprang/chat-gateway/pull/44) | ⏸ **merge gate — OPEN, NOT MERGED**, awaiting the user. Consumer contracts. **Sequenced FIRST.** Plan Part H. Filed **CG-62** |
 | **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 📋 queued | ⏸ **merge gate**. **Must land before CG-55.** Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | 📋 queued | Part B. The one hard prerequisite for an always-on deploy |
@@ -554,6 +578,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
 | **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
+| **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
 
 **Recommended order is the table order, and it is NOT the order the arc was
 briefed in.** The brief had deploy first. Three rows move ahead of it:
@@ -945,7 +970,7 @@ the paragraph by its text.
 |---|---|
 | **Origin** | user correction 2026-07-31, relayed via Coordinator. The `apps_for_space` consequence was **re-derived against the live registry**, not taken on description |
 | **Depends on** | nothing |
-| **Touches** | `docs/consumers/aitrader.md` (**highest priority**), `docs/google-cloud-setup.md`, `docs/integration-guide.md`, `docs/consumers/jobhunt.md`, `docs/consumers/jobhunt-handoff.md`, `CLAUDE.md` + `adapters/chat_api.py` (**a dated note only** — see below), `docs/BUILDER_QUEUE.md` |
+| **Touches** | `docs/consumers/aitrader.md` (**highest priority**), `docs/google-cloud-setup.md`, `docs/integration-guide.md`, `docs/consumers/jobhunt.md`, `docs/consumers/jobhunt-handoff.md`, **`docs/assets/README.md`** (added by Builder — the re-derivation found it; the list was not exhaustive, which is the point of H0), `CLAUDE.md` + `adapters/chat_api.py` (**a dated note only** — see below), `docs/BUILDER_QUEUE.md` |
 | **Merge gate** | ⏸ **YES — consumer contracts, and it works in the ledger's neighbourhood** |
 | **Spec / plan** | [spec §0.1 + §4.0](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part H](superpowers/plans/2026-07-31-production-readiness-arc.md) |
 
@@ -1013,6 +1038,50 @@ tailnet). It is no longer app-id enumeration — it is another tenant's live
 traffic volume and timing, on a real-money system whose whole contract is that it
 takes no inbound path. See the spec; the recommendation there **changed** as a
 result.
+
+---
+
+### CG-62 · Does replacing the Chat app re-price the verification ledger?  📋 queued · **needs user sign-off**
+
+| | |
+|---|---|
+| **Origin** | **filed by CG-60's Builder, 2026-07-31**, from a question CG-60 raised and deliberately did not answer |
+| **Depends on** | nothing in code. Depends on a **user decision** |
+| **Touches** | potentially `CLAUDE.md`'s verification ledger and `adapters/chat_api.py`'s ⚠ blocks — **nothing until the decision exists** |
+| **Merge gate** | ⏸ **YES** — hard rule #3, the CG-35 precedent |
+
+**The question, stated once and not answered here.** Every ⚠ flag this repo has
+cleared against Google was cleared through the classic Chat app then named
+**"Agent Comms"** — `send()` and `send_text()` on 2026-07-29/30, `PubSubPuller`'s
+`pull()`/`acknowledge()` on 2026-07-30. That app is now **deprecated**, replaced
+by one named **"Chat Gateway"** (user statement about the console, 2026-07-31).
+**Does a clear obtained through the old app still hold for the new one?**
+
+**Why CG-60 refused to decide it, rather than merely running out of scope.**
+Hard rule #3 says a flag clears *only* after a real round-trip, and CG-35(a) set
+the precedent that even removing a **misapplied** flag needed the user's explicit
+sign-off on exact terms. Answering this either way *is* a flag decision:
+
+- If the answer is *"the clears still hold"*, that is an assertion that the two
+  apps are equivalent for these code paths — which this repo **cannot observe**.
+  Nothing in the console is readable from here, including whether "Chat Gateway"
+  is a new Chat app resource on the same project or a rename of the same one.
+  Those two possibilities have **different** answers and the difference is not
+  derivable from any file in this repo.
+- If the answer is *"they need re-verification"*, that **adds** flags — equally
+  out of a Builder's authority, and it would land on `adapters/` mid-arc.
+
+So CG-60 shipped the **naming notes** (currency pointers beside untouched
+observations, the CG-50 shape) and left every flag exactly where it found it.
+The notes in `CLAUDE.md` and `adapters/chat_api.py` both say in terms that they
+decide nothing and point here.
+
+⚠ **This row must NOT be picked up by a Builder without the user's sign-off
+naming hard rule #3.** It is filed so the question is visible and dated, not so
+it gets cleared by whoever reaches it. **A tenable third answer** — that a
+display-name change is cosmetic and touches no verified code path, since nothing
+in this repo reads `displayName` — is the *likely* one and is **still a user
+call**, because "likely" is the exact word rule #3 exists to refuse.
 
 ---
 
