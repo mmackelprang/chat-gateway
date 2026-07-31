@@ -25,8 +25,9 @@ build/
 # holds an inbound reply's text, sender_email and raw event (inbox.py).
 # Unanchored deliberately: the working directory is not knowable from here, and
 # a `state/` one level down leaks exactly as much as one at the root. Deployment
-# points both env vars at absolute paths outside any checkout; these patterns
-# are the guard for local runs, not the mechanism.
+# is PLANNED to point both env vars at absolute paths outside any checkout
+# (CG-53/CG-55) — but nothing has been deployed yet, so until then these
+# patterns are the whole guard, not a backstop to one.
 # No .gitkeep placeholder: every writer already does
 # `mkdir(parents=True, exist_ok=True)`, so one would buy nothing and would put
 # the directory back into the worktree it is being kept out of.
