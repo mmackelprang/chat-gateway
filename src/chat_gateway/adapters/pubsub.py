@@ -25,8 +25,12 @@ interaction live — both captures were pulled with an ad-hoc client, not
 PubSubPuller.
 
 The interaction capture found a DEFECT rather than confirming the mapping: the
-real event yields action.id == "" (see ADDON_ACTION_KEY below and queue item
-CG-10). Nothing about jobhunt R3/R4 is verified by it.
+card's routing pattern consumed Google's action-identity slot, so no identity
+reached us (see ADDON_ACTION_KEY below). CG-10 FIXED that, and this same fixture
+driven through normalize_event today yields action.id None and id_source None —
+never "", which is precisely the ambiguity CG-10 removed. The finding stands;
+the value it used to produce does not, and it is no longer open work.
+Nothing about jobhunt R3/R4 is verified by it.
 
 ⚠ SHAPE-VERIFIED 2026-07-30: the CLASSIC envelope, for two event types —
 CARD_CLICKED (both trigger kinds: a button tap and a selection widget's

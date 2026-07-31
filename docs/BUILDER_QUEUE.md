@@ -1,6 +1,56 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-30 (Builder — **CG-37 shipped,
+**Last updated:** 2026-07-30 (Builder — **CG-51, CG-35, CG-50 and CG-52 shipped as
+ONE PR, [PR #42](https://github.com/mmackelprang/chat-gateway/pull/42) — OPEN and
+NOT merged**, per a user-imposed gate on the IaC / secret-handling path. **The
+board is now empty.**
+
+**One PR because CG-51 and CG-35(b) rewrite the same `KEY_FILE` handling in the
+same two files** — the CG-11+CG-20 and CG-22+CG-9 reasoning. CG-50 and CG-52 rode
+along as independent one-file docs fixes.
+
+**CG-51 changes emitted behaviour, so CG-19's byte-identical-output proof was NOT
+reused.** The key filename derives from `PROJECT_ID` now, and CG-19's objection —
+any *fixed* new default mints a SECOND key on a host holding the old one — is
+answered by a **guard**, not by the derivation: derived name absent + sibling
+`<SA_NAME>-sa*.json` present ⇒ refuse, name the file found, **exit 3**, with
+`ALLOW_SECOND_KEY=1` as the deliberate hatch. Measured against a stubbed `gcloud`:
+the trap scenario went from *"already exists — not minting another"* + **exit 0** +
+a `.env` pointing at the **dead** `chat-gateway-prod` credential, to a refusal that
+cannot pass unnoticed.
+
+**CG-35(a) removed a MISAPPLIED flag, and that is not a precedent for clearing a
+real one** — user sign-off 2026-07-30 on exact terms. Rule #3's flag marks *code
+not yet exercised against real Google endpoints*; this marked an unanswerable
+question about which principal published, which `CLAUDE.md` records as CLOSED BY
+CIRCUMSTANCE. **Reworded, never deleted** — the both-principals explanation is
+load-bearing for a fresh-project operator. The matching `(VERIFY principal — see
+comment)` in the emitted echo went with it, or the output would contradict the
+comment it points at.
+
+**Parity proven mechanically across EIGHT scenarios per script**, not asserted:
+normalized `.sh` and `.ps1` output is byte-identical. CG-35(b)'s
+`/srv/chat-gateway/C:/…/key.json` is now `/srv/chat-gateway/<basename>`; the `.sh`
+is the half that moved. **The comparison carries a non-vacuous-output guard,
+because an earlier run of this same check passed by diffing two EMPTY files.**
+
+**Pre-merge review's one HIGH was real but its stated mechanism was wrong**, and
+the defect underneath was worse: `[A-Za-z]:\\*` does not match `C:\x` at all in a
+bash case arm, so a backslash path fell through to the *relative* branch. Two UAT
+scenarios added for the gap that let it through.
+
+**CG-50 measured, not read** — the fixture through the real `normalize_event`
+gives `action.id` `None`, not `""`; the finding is kept, the value and the
+open-work pointer are what changed, and the diff is confined to three lines
+between two untouched ⚠ SHAPE-VERIFIED blocks. **CG-52 added ZERO figures** — it
+qualifies `~10s` as *"by contract"* and links jobhunt-handoff §7, whose anchor was
+verified against GitHub's own rendering rather than derived by hand.
+
+Suite **202 → 202**, unmoved; no test added, and the reason is stated in the PR
+rather than left implicit. Two flag removals branch-wide, both CG-35(a); none
+added, none reworded. `CLAUDE.md`'s verification ledger is linked, not restated.
+
+Previously: **CG-37 shipped,
 [PR #40](https://github.com/mmackelprang/chat-gateway/pull/40)**: two source
 comments, and nothing else. Both still named the **add-ons** runtime as the one
 we are deployed on; production has been a **classic** Chat app since
@@ -432,17 +482,21 @@ pinning test CG-3 lands, and CG-3's fixture is the only real-data evidence
 CG-10's behaviour change can be tested against). A declared dependency
 outranks a preference; nothing else was resequenced. CG-3 has since shipped.
 
-**Remaining, and the prioritized list is empty — the user sets the order:**
+**Remaining: NOTHING. The board is empty.**
 
 | Item | State | Note |
 |---|---|---|
-| **CG-51** | 📋 queued · ⏸ merge gate | derive `KEY_FILE` from `PROJECT_ID` (**user decision 2026-07-30**) — changes emitted script behaviour |
-| **CG-35** | 📋 queued · ⏸ merge gate | two IaC leftovers CG-19 was forbidden to touch |
-| **CG-50** | 📋 queued | `pubsub.py`'s module docstring states CG-10's defect as current |
-| **CG-52** | 📋 queued | `integration-guide.md`'s *"retries span ~10s"* |
+| _(none)_ | | CG-51, CG-35, CG-50 and CG-52 were the last four, shipped together as [PR #42](https://github.com/mmackelprang/chat-gateway/pull/42) |
 
-**Everything else has shipped.** CG-1 through CG-13, CG-19 through CG-34, CG-36,
-CG-37 and CG-42 — 27 items on 2026-07-29/30, suite 37 → **202**.
+**Everything has shipped.** CG-1 through CG-13, CG-19 through CG-37, CG-42 and
+CG-50 through CG-52 — 31 items on 2026-07-29/30, suite 37 → **202**.
+
+⚠ **PR #42 is OPEN and NOT merged** at the time of writing, held by a user-imposed
+gate on the IaC / secret-handling path (the same gate CG-23, CG-33 and CG-34 got).
+The four rows are marked shipped because the work is done and reviewed; **if the
+gate resolves any way other than a merge, these rows are the ones to reopen.**
+Recorded rather than glossed, because CG-33's banner was written in exactly this
+state and said so, and then needed correcting once it merged.
 
 **Three rows are closed rather than shipped**, each with its premise recorded so
 "obsolete" is never a bare status word: **CG-14** (the migration removed the
@@ -450,11 +504,13 @@ failure mode its detector was designed for), and **CG-17 / CG-18** (user decisio
 2026-07-30 — both probe the add-ons runtime, which is deleted, so neither can be
 run as written; see their rows for what was worth keeping).
 
-⚠ **Both remaining gated rows are IaC.** CG-51 and CG-35 touch the same two setup
-scripts and CG-35 additionally needs **explicit hard-rule-#3 sign-off to reword a
-⚠ flag**, so it is not Builder-claimable without the user. If both are dispatched
-at once they will collide — CG-51 changes emitted behaviour in the files CG-35
-comments.
+✅ **The two gated IaC rows are done — and the collision this note predicted was
+avoided by shipping them together.** CG-51 and CG-35 touched the same two setup
+scripts, and CG-35 additionally needed explicit hard-rule-#3 sign-off to reword a
+⚠ flag. The user granted that sign-off on exact terms and dispatched both in one
+PR, so the predicted collision never happened. **The note is kept, not deleted:
+its prediction was correct, and the next pair of rows touching one file pair
+should be read the same way.**
 
 > **CG-34 carried a merge gate its row did not declare.** The Coordinator imposed
 > one at dispatch, on the ground that it is the **secret-handling path** — the same
@@ -569,7 +625,13 @@ detector, or close it as obsoleted by E1 + CG-7. Builder should not decide this.
 ---
 
 
-### CG-35 · Two IaC leftovers CG-19 was forbidden to touch  📋 queued · ⏸ merge gate
+### CG-35 · Two IaC leftovers CG-19 was forbidden to touch  ✅ shipped 2026-07-30 · [PR #42](https://github.com/mmackelprang/chat-gateway/pull/42) · ⏸ gate held
+
+> **Shipped with CG-51 in one PR.** (a) landed on the user's exact sign-off terms
+> — **the flag word dropped, the explanation kept, and the PR says in those words
+> that this is removing a MISAPPLIED flag, not clearing a real one.** (b) landed
+> as *"the `.sh` adopts basename"*: the row left that choice open, and the `.env`
+> block being a **host** path settles it. Both re-measured here, not cited.
 
 | | |
 |---|---|
@@ -632,7 +694,13 @@ there on the host"*. Filed with the observation, not the answer.
 ---
 
 
-### CG-50 · `pubsub.py`'s module docstring states CG-10's defect as current, and CG-10 shipped  📋 queued
+### CG-50 · `pubsub.py`'s module docstring states CG-10's defect as current, and CG-10 shipped  ✅ shipped 2026-07-30 · [PR #42](https://github.com/mmackelprang/chat-gateway/pull/42)
+
+> **Verified by running the fixture, as the row required, not by trusting it:**
+> `action.id` is `None` and `id_source` is `None`. The **finding** is kept — the
+> capture did find a defect rather than confirm the mapping; the **value** and the
+> open-work pointer are what changed. The diff is confined to those three lines
+> and both adjacent ⚠ SHAPE-VERIFIED blocks are untouched.
 
 | | |
 |---|---|
@@ -674,7 +742,22 @@ pointer**, not the finding. **No flag may be cleared, added or reworded**;
 
 ---
 
-### CG-51 · Derive `KEY_FILE` from `PROJECT_ID` in both setup scripts  📋 queued · ⏸ merge gate
+### CG-51 · Derive `KEY_FILE` from `PROJECT_ID` in both setup scripts  ✅ shipped 2026-07-30 · [PR #42](https://github.com/mmackelprang/chat-gateway/pull/42) · ⏸ gate held
+
+> **All three of the row's requirements were met and evidenced.** (1) The new
+> emitted output is shown in the PR with a before/after table — CG-19's
+> byte-identical proof was **not** reused. (2) The script does not silently mint:
+> derived name absent + plausible predecessor present ⇒ refuse, name it, **exit
+> 3**, with `ALLOW_SECOND_KEY=1` as the deliberate hatch. (3) `.sh`/`.ps1` parity
+> is proven mechanically across **eight** scenarios rather than claimed — and the
+> row's *"if the two rows collide, say so"* did not arise, because the user
+> dispatched them as one PR.
+>
+> **One thing the row did not anticipate, recorded because it is the interesting
+> half:** the guard is only as good as the directory it scans, so the `.sh` also
+> had to start resolving a relative `KEY_FILE` against the script's own directory
+> — which the `.ps1` has always done. That is a **behaviour change beyond the
+> row's literal text**, and it is a no-op for the documented invocation.
 
 | | |
 |---|---|
@@ -716,7 +799,15 @@ installed on this box and that path has never been applied.
 
 ---
 
-### CG-52 · `integration-guide.md`'s *"retries span ~10s"* is the same defect one audience up  📋 queued
+### CG-52 · `integration-guide.md`'s *"retries span ~10s"* is the same defect one audience up  ✅ shipped 2026-07-30 · [PR #42](https://github.com/mmackelprang/chat-gateway/pull/42)
+
+> **Shipped with ZERO figures carried up**, which is stricter than the row's
+> *"qualify in a clause and point there"* and deliberately so: the row's own table
+> was tempting to quote, and quoting even one number would have created the second
+> thing to drift it warns about. `~10s` stays, re-labelled *"by contract"*. The
+> paragraph was found by its text — **no line number recorded**, per the row — and
+> it is the interaction paragraph, not the `/v1/notify` one CG-36 fixed. The
+> anchor into jobhunt-handoff §7 was verified against GitHub's own rendering.
 
 | | |
 |---|---|
