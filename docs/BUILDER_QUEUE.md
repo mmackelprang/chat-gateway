@@ -1,6 +1,29 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-31 (Builder — **CG-60 is in flight and PAUSED AT ITS
+**Last updated:** 2026-07-31 (Builder — **CG-54 shipped as #45**: both queues
+are durable. `journal.py` is new, the replay rule and the mid-flight
+double-send answer are written down rather than implied, and the suite is
+**202 → 246**.
+
+**Proven by killing a process, not by asserting a file exists** — a serving
+gateway was SIGKILLed with three jobs queued, the journal read by eye, and the
+restarted process agreed with `/healthz`. The torn-line, expired and unroutable
+paths were each driven against a live process too, and each produced `degraded`
+with a `reasons` entry rather than a silent number (rule #5).
+
+**Pre-merge review caught one HIGH and it was real:** `Inbox.restore()` dropped
+a journalled reply that no longer parsed — silently — and boot compaction then
+erased it. The drop is right; the silence was not, and the asymmetry with the
+outbound twin (`unroutable`, which had a counter, a log record and a reason
+from the start) was the actual defect. Fixed and mutation-verified.
+
+**It filed CG-64 rather than racing CG-60.** `CLAUDE.md` still says the queue is
+in-memory and still reports 202 tests, and `docs/integration-guide.md`'s inbox
+section still makes the audit-versus-queue conflation this row exists to
+correct — but both files are CG-60's, so the correction is a row, not a gamble.
+**No ⚠ flag cleared, added or reworded**: CG-54 touched no Google seam.
+
+Also 2026-07-31 (Builder — **CG-60 is in flight and PAUSED AT ITS
 MERGE GATE**: the PR is open and deliberately **not merged**, per a user-imposed
 gate, because it touches consumer contracts and works in the verification
 ledger's neighbourhood.
@@ -572,7 +595,8 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-60** · repo-wide correction of the one-space premise | 🚀 in-flight · [PR #44](https://github.com/mmackelprang/chat-gateway/pull/44) | ⏸ **merge gate — OPEN, NOT MERGED**, awaiting the user. Consumer contracts. **Sequenced FIRST.** Plan Part H. Filed **CG-62** |
 | **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 📋 queued | ⏸ **merge gate**. **Must land before CG-55.** Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
-| **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | 📋 queued | Part B. The one hard prerequisite for an always-on deploy |
+| **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
+| **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | 📋 queued | Filed by CG-54's Builder. Small, doc-only, but the claims are now FALSE — do after CG-60 lands, same files |
 | **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, and ⚠ an **external homelab-repo prerequisite (D2)**. Part C |
 | **CG-56** · inbox delivery semantics: at-most-once → ack | 📋 queued | ✅ **APPROVED (D3)** — opt-in per request; default path unchanged. Part D |
 | **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
@@ -1260,7 +1284,7 @@ applied. Same scope call CG-51 made.
 
 ---
 
-### CG-54 · Queue **and inbox** durability — append-only JSONL under `CHAT_GATEWAY_STATE_DIR`  📋 queued
+### CG-54 · Queue **and inbox** durability — append-only JSONL under `CHAT_GATEWAY_STATE_DIR`  ✅ done (#45)
 
 | | |
 |---|---|
@@ -1337,6 +1361,66 @@ no longer grants.**
 gateway with work queued, read the journal by eye (it must be readable during an
 incident — that is half the reason for the format), restart, and confirm
 `/healthz` agrees with the boot line.
+
+**Shipped 2026-07-31 (#45).** `journal.py` (new) + both queues + `/healthz`.
+202 → **246 tests**. The UAT above was performed as written: a real
+`python -m chat_gateway serve` was SIGKILLed with three jobs queued, the journal
+was read by eye, and the restarted process reported
+`queue: restored 3 outbound job(s), 0 expired or unroutable` with `/healthz`
+agreeing (`replayed_at_boot: 3`). The torn-line, expired and unroutable paths
+were each exercised against a serving process too, and each produced `degraded`
+with a `reasons` entry rather than a silent number.
+
+**Three deviations from the plan, all deliberate and all in the PR body:**
+`Journal.close_many()` (a per-id close loop could lose a SUBSET of one poll on a
+crash — the one outcome this row exists to prevent); `_journal_write()` guards
+that swallow-and-count on terminal paths (a `close` that RAISED inside `_finish`
+would leave the job queued and the 1s loop would re-send it every second — a
+full disk becoming a re-send storm against Google); and `expired` vs
+`unroutable` counted separately, because they are different investigations.
+
+⚠ **`CLAUDE.md` and `docs/integration-guide.md` were deliberately NOT
+updated** — they are CG-60's files and CG-60 was running concurrently. Both now
+carry claims this row falsified. Filed as **CG-64**.
+
+---
+
+### CG-64 · Stale durability claims left behind by CG-54  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by CG-54's Builder, 2026-07-31, rather than raced |
+| **Depends on** | **CG-60** — same two files, and CG-60 is the larger rewrite |
+| **Touches** | `CLAUDE.md`, `docs/integration-guide.md` |
+| **Merge gate** | no |
+
+CG-54 made both queues durable. Two documents still describe the system it
+replaced, and **CG-54's Builder did not fix them because both files belong to
+CG-60, which was running concurrently** — racing a doc rewrite to correct three
+sentences is how a merge conflict eats a careful edit.
+
+1. `CLAUDE.md`, status bullet: *"Queue is in-memory (restart drops undelivered
+   jobs — visible in the log; accepted v0)"*. **False as of #45.** Undelivered
+   jobs are journalled under `CHAT_GATEWAY_STATE_DIR/queue/` and replayed at
+   boot, with the attempt count preserved.
+2. `CLAUDE.md`, Layout: the test count reads `202 passing`; it is **246**. That
+   line is deliberately the ONLY place the number lives, which is exactly why a
+   stale copy of it there is worth one line of work.
+3. `docs/integration-guide.md`, `GET /v1/inbox`: *"Polling returns and clears
+   your app's replies… a JSONL audit keeps everything."* This is the
+   audit-versus-queue conflation CG-54 exists to correct — the audit says what
+   ARRIVED, the journal says what is still PENDING, and a consumer reading only
+   this sentence cannot tell whether a gateway restart drops their unpolled
+   replies. It no longer does; say so.
+4. `docs/integration-guide.md`, the `/healthz` field list gains seven entries:
+   `delivery.{replayed_at_boot, expired_at_boot, unroutable_at_boot,
+   journal_skipped_lines, journal_write_errors}` and
+   `inbox.{replayed_at_boot, unrevivable_at_boot}`. **Four** of them can make
+   `/healthz` report `degraded`, so a consumer that alarms on `status` should
+   know what they mean.
+
+⚠ **Do not restate the verification ledger while in `CLAUDE.md`** — nothing
+here clears, adds or rewords a ⚠ flag. CG-54 touched no Google seam.
 
 ---
 

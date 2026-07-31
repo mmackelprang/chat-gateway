@@ -7,8 +7,17 @@ the alert actually reach Chat?" per source.
 
 Privacy: the log stores titles and statuses, never bodies or cards (titles
 may reference sensitive state; bodies definitely can — aitrader Feature 3).
-Queue state is in-memory: a gateway restart drops undelivered jobs, visible
-in the log as enqueued-without-terminal-status. Documented, accepted for v0.
+
+Queue state PERSISTS when a `Journal` is supplied (`state/queue/delivery.jsonl`),
+which is what the deployed gateway does; without one it stays in-memory, which is
+what every offline test does. Replay is open-minus-close with the attempt count
+preserved. A job whose send may or may not have reached Google at kill time is
+REPLAYED and may therefore deliver twice — Chat has no idempotency key, notify
+dedupe collapses repeats within its window, and losing an alert is the worse
+failure. A job older than `REPLAY_MAX_AGE_S` is closed as `expired` at boot
+rather than posted: an alert from three days ago, delivered now, actively
+misleads. The journal holds whole payloads and this log does not — that
+asymmetry is deliberate, and journal.py explains it.
 """
 
 from __future__ import annotations
@@ -27,9 +36,33 @@ from .registry import Identity
 
 BACKOFF_S = (0, 30, 120, 600, 3600)  # attempt spacing; after the last -> failed
 
+#: Replayed jobs older than this are closed as `expired` at boot, not sent. Both
+#: outcomes are bad; this is the visible one.
+REPLAY_MAX_AGE_S = 86400.0
+
 
 def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
+
+
+def _parse_ts(value, fallback: dt.datetime) -> dt.datetime:
+    """An ISO timestamp out of the journal, or `fallback`.
+
+    Tolerant on purpose: the journal is a file an operator may have looked at,
+    and a boot path that raises on a malformed timestamp is a crash loop for the
+    same reason a torn line is (journal.py). A naive timestamp is read as UTC —
+    subtracting one from an aware `now` raises TypeError, which is exactly the
+    boot-time failure this must not have.
+    """
+    if not isinstance(value, str) or not value:
+        return fallback
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except ValueError:
+        return fallback
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed
 
 
 class DeliveryLog:
@@ -61,6 +94,17 @@ class DeliveryLog:
         with self._lock:
             return list(self._entries[source])[-limit:]
 
+    def advance_ids_past(self, highest: int) -> None:
+        """Continue the id sequence past anything the journal already used.
+
+        Without this a restarted gateway mints id 1 for its first new
+        notification while a replayed job is still carrying id 1, and the two
+        share a line in the delivery log an operator is reading to find out what
+        the restart did.
+        """
+        if highest > 0:
+            self._ids = itertools.count(highest + 1)
+
 
 @dataclass
 class Job:
@@ -82,23 +126,74 @@ class Dispatcher:
 
     def __init__(self, adapters: dict, log: DeliveryLog,
                  now_fn: Callable[[], dt.datetime] | None = None,
-                 backoff: tuple = BACKOFF_S):
+                 backoff: tuple = BACKOFF_S,
+                 journal=None,
+                 replay_max_age_s: float = REPLAY_MAX_AGE_S):
         self._adapters = adapters
         self._log = log
         self._now = now_fn or _utcnow
         self._backoff = backoff
+        # None keeps this object exactly what it was before persistence existed,
+        # which is what every existing test constructs. Opt-in, not opt-out.
+        self._journal = journal
+        self._replay_max_age_s = replay_max_age_s
         self._jobs: list[Job] = []
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self.replayed = 0
+        self.expired = 0
+        self.unroutable = 0
+        #: Journal writes that FAILED on a path where raising would be worse.
+        #: Surfaced at /healthz: a durable queue whose durability has silently
+        #: stopped working is worse than an in-memory one, because it is
+        #: trusted (hard rule #5).
+        self.journal_write_errors = 0
+
+    @property
+    def journal(self):
+        """The journal, or None. Public so /healthz can read its counters
+        without reaching into a private attribute across a module boundary."""
+        return self._journal
+
+    def _journal_write(self, fn: Callable[[], None], op: str) -> None:
+        """Best-effort journal write on a path where raising is the worse bug.
+
+        A failed `close` must NEVER propagate: `_finish` would abort before
+        removing the job from `_jobs`, the loop would retry the same job a
+        second later, and a full disk would become an unbounded re-send storm
+        against Google. Counting it instead costs at most one duplicate on the
+        next boot — the same at-least-once outcome replay already has — and the
+        counter is what keeps the degradation visible.
+        """
+        if self._journal is None:
+            return
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001 — durability degrades, delivery does not stop
+            self.journal_write_errors += 1
+            print(f"dispatcher: journal {op} failed ({exc}); "
+                  "queue durability is degraded for this entry", flush=True)
 
     def enqueue(self, source: str, kind: str, identity: Identity,
                 message: OutboundMessage, title: str) -> int:
         entry_id = self._log.record(source, kind, title, "enqueued")
+        now = self._now()
+        # Deliberately NOT wrapped in _journal_write: if the journal cannot
+        # accept the job, the honest answer is to refuse it, so the caller's 5xx
+        # tells the consumer its alert was not accepted and the consumer's own
+        # fallback log takes over (the aitrader contract). Accepting work we
+        # cannot persist, on a queue advertised as durable, is the silent
+        # failure this row exists to remove.
+        if self._journal is not None:
+            self._journal.open(entry_id, kind, {
+                "source": source, "kind": kind, "identity": identity.name,
+                "message": message.model_dump(mode="json"), "title": title,
+            })
         with self._lock:
             self._jobs.append(Job(entry_id=entry_id, source=source, kind=kind,
                                   identity=identity, message=message, title=title,
-                                  next_attempt_at=self._now()))
+                                  next_attempt_at=now))
         return entry_id
 
     def pending(self) -> int:
@@ -124,6 +219,10 @@ class Dispatcher:
                     self._finish(job, "failed", f"gave up after {job.attempts} attempts: {exc}")
                 else:
                     job.next_attempt_at = now + dt.timedelta(seconds=self._backoff[job.attempts])
+                    self._journal_write(
+                        lambda j=job: self._journal.update(
+                            j.entry_id, j.attempts, j.next_attempt_at.isoformat()),
+                        "update")
                     self._log.record(job.source, job.kind, job.title, "retrying",
                                      f"attempt {job.attempts}: {exc}", entry_id=job.entry_id)
             else:
@@ -133,9 +232,77 @@ class Dispatcher:
     def _finish(self, job: Job, status: str, detail: str) -> None:
         self._log.record(job.source, job.kind, job.title, status, detail,
                          entry_id=job.entry_id)
+        # THE MID-FLIGHT WINDOW, stated rather than hidden: the send has
+        # returned, the log record is written, and the `close` is not. A process
+        # killed here replays the job and delivers it TWICE. Deliberate — Chat
+        # gives us no idempotency key, so the alternative is a two-phase commit
+        # we are not building, and losing an alert is the worse failure.
+        self._journal_write(lambda: self._journal.close(job.entry_id, status), "close")
         with self._lock:
             if job in self._jobs:
                 self._jobs.remove(job)
+
+    def restore(self, registry) -> tuple[int, int]:
+        """Re-queue what the journal says never finished.
+
+        Returns `(restored, not_restored)`, where `not_restored` is `expired +
+        unroutable`. The two are counted separately on the instance because they
+        mean different things to an operator: one is age, the other is a
+        permission the registry no longer grants.
+
+        Identities are RE-RESOLVED from the registry rather than revived from
+        the journal: the journal stores an identity NAME, and the registry is
+        the only thing that knows whether that app may still send as it (hard
+        rule #4). A job whose app or identity has since been removed, or whose
+        allowlist no longer covers it, is closed as `unroutable` — never sent on
+        the strength of a permission the registry no longer grants.
+        """
+        if self._journal is None:
+            return (0, 0)
+        now = self._now()
+        restored = expired = unroutable = 0
+        highest = 0
+        survivors: list[dict] = []
+        for rec in self._journal.replay():
+            payload = rec["payload"]
+            entry_id = rec["id"]
+            if isinstance(entry_id, int):
+                highest = max(highest, entry_id)
+            source = payload.get("source", "")
+            title = payload.get("title", "")
+            kind = payload.get("kind", rec.get("kind", ""))
+            opened = _parse_ts(rec.get("opened_at"), now)
+            if (now - opened).total_seconds() > self._replay_max_age_s:
+                self._log.record(source, kind, title, "expired",
+                                 f"older than {self._replay_max_age_s:.0f}s at restart "
+                                 "— not delivered", entry_id=entry_id)
+                self._journal_write(lambda i=entry_id: self._journal.close(i, "expired"),
+                                    "close")
+                expired += 1
+                continue
+            try:
+                identity = registry.identity_for(source, payload.get("identity", ""))
+                message = OutboundMessage(**payload["message"])
+            except Exception as exc:  # noqa: BLE001 — config drift, not a bug
+                self._log.record(source, kind, title, "unroutable",
+                                 f"not restored after restart: {exc}", entry_id=entry_id)
+                self._journal_write(lambda i=entry_id: self._journal.close(i, "unroutable"),
+                                    "close")
+                unroutable += 1
+                continue
+            job = Job(entry_id=entry_id, source=source, kind=kind, identity=identity,
+                      message=message, title=title, attempts=rec["attempts"],
+                      next_attempt_at=_parse_ts(rec.get("next_attempt_at"), now))
+            with self._lock:
+                self._jobs.append(job)
+            survivors.append(rec)
+            restored += 1
+        # Boot-time compaction: the file is only READ here, so this is the point
+        # at which everything terminal can go.
+        self._journal_write(lambda: self._journal.compact(survivors), "compact")
+        self._log.advance_ids_past(highest)
+        self.replayed, self.expired, self.unroutable = restored, expired, unroutable
+        return (restored, expired + unroutable)
 
     def _run(self) -> None:
         while not self._stop.is_set():
