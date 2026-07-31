@@ -596,7 +596,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 📋 queued | ⏸ **merge gate**. **Must land before CG-55.** Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
-| **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | 📋 queued | Filed by CG-54's Builder. Small, doc-only, but the claims are now FALSE — do after CG-60 lands, same files |
+| **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | 🚀 in-flight | Filed by CG-54's Builder. Small, doc-only, but the claims are now FALSE. Dependency CG-60 has landed (#44) |
 | **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, and ⚠ an **external homelab-repo prerequisite (D2)**. Part C |
 | **CG-56** · inbox delivery semantics: at-most-once → ack | 📋 queued | ✅ **APPROVED (D3)** — opt-in per request; default path unchanged. Part D |
 | **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
@@ -1385,7 +1385,7 @@ carry claims this row falsified. Filed as **CG-64**.
 
 ---
 
-### CG-64 · Stale durability claims left behind by CG-54  📋 queued
+### CG-64 · Stale durability claims left behind by CG-54  🚀 in-flight
 
 | | |
 |---|---|
