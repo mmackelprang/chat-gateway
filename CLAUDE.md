@@ -62,7 +62,7 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
 `python` is 3.13.7) — offline, 202 passing.
 
-## Current status (2026-07-30)
+## Current status (2026-07-31)
 
 - **First real Chat event received 2026-07-29.** It arrived in the Workspace
   Add-ons envelope (`commonEventObject` + `chat.messagePayload`), which the

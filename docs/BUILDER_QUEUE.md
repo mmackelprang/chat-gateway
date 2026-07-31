@@ -970,7 +970,7 @@ the paragraph by its text.
 |---|---|
 | **Origin** | user correction 2026-07-31, relayed via Coordinator. The `apps_for_space` consequence was **re-derived against the live registry**, not taken on description |
 | **Depends on** | nothing |
-| **Touches** | `docs/consumers/aitrader.md` (**highest priority**), `docs/google-cloud-setup.md`, `docs/integration-guide.md`, `docs/consumers/jobhunt.md`, `docs/consumers/jobhunt-handoff.md`, `CLAUDE.md` + `adapters/chat_api.py` (**a dated note only** — see below), `docs/BUILDER_QUEUE.md` |
+| **Touches** | `docs/consumers/aitrader.md` (**highest priority**), `docs/google-cloud-setup.md`, `docs/integration-guide.md`, `docs/consumers/jobhunt.md`, `docs/consumers/jobhunt-handoff.md`, **`docs/assets/README.md`** (added by Builder — the re-derivation found it; the list was not exhaustive, which is the point of H0), `CLAUDE.md` + `adapters/chat_api.py` (**a dated note only** — see below), `docs/BUILDER_QUEUE.md` |
 | **Merge gate** | ⏸ **YES — consumer contracts, and it works in the ledger's neighbourhood** |
 | **Spec / plan** | [spec §0.1 + §4.0](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part H](superpowers/plans/2026-07-31-production-readiness-arc.md) |
 
