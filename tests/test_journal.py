@@ -5,9 +5,10 @@ real identity or a real credential — the CG-26 guard scans `tests/**/*.py`.
 """
 
 import json
-import stat
 
 from chat_gateway.journal import Journal, chmod_owner_only
+
+from conftest import assert_owner_only
 
 
 def test_open_then_close_leaves_nothing_to_replay(tmp_path):
@@ -225,9 +226,9 @@ def test_the_journal_is_owner_only_from_the_first_byte_and_across_compaction(tmp
     path = tmp_path / "q.jsonl"
     j = Journal(path)
     j.open(1, "notify", {"title": "t"})
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert_owner_only(path)
     j.compact()
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert_owner_only(path)
 
 
 def test_chmod_owner_only_is_never_fatal_on_a_path_it_cannot_touch(tmp_path):

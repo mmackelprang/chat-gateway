@@ -495,8 +495,8 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 + (", which is never pruned and is the recovery record"
                    if preserved else
                    " — so the per-app JSONL audit under the inbox dir is the "
-                   "only record of what arrived, and it is subject to the "
-                   "retention window")
+                   "only record of what arrived, and it carries no retention "
+                   "guarantee")
                 + "; the ids are on the boot console"
             )
         if body["inbox"]["quarantine_write_errors"]:
@@ -504,8 +504,8 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 f"inbox quarantine: {body['inbox']['quarantine_write_errors']} "
                 "write(s) FAILED — at least one unrevivable reply has no "
                 "preserved copy, so the per-app JSONL audit under the inbox dir "
-                "is its only record and the retention window applies to it. "
-                "Check free space and the state dir's permissions"
+                "is its only record and that file carries no retention "
+                "guarantee. Check free space and the state dir's permissions"
             )
         if queue["expired_at_boot"] or queue["unroutable_at_boot"]:
             reasons.append(

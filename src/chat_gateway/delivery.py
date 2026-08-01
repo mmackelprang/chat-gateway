@@ -279,11 +279,24 @@ class Dispatcher:
         # because the set never empties. Bounded by the ~73-minute retry ladder,
         # or by REPLAY_MAX_AGE_S (24h) across gateway downtime.
         #
-        # Gated on `closed` as well: if the `close` above did not land, this
-        # job's `open` line is still the queue's record of it, and truncating
-        # would turn a counted durability failure into a silent loss.
+        # ⚠ `compact()` RECOMPUTES its survivors — it is NOT `compact([])`, and
+        # that difference is a data-loss bug, not a style choice. `enqueue`
+        # writes its `open` to disk BEFORE taking `self._lock` (deliberately —
+        # a job we cannot persist must be refused, not queued), so a record can
+        # be on disk while `drained` is being computed from `_jobs`. Asserting
+        # an empty survivor set from that snapshot would erase a job that
+        # `enqueue` had already 202'd. Recomputing reads open-minus-close under
+        # the JOURNAL's own lock, which `Journal.open` also holds, so the two
+        # serialize: the racing record is either a survivor and is rewritten,
+        # or it lands after the `os.replace`. On a genuine drain it still
+        # truncates to zero lines, because everything is closed.
+        #
+        # Same reasoning covers a FAILED `close`: that entry is still
+        # open-minus-close, so it survives rather than being truncated away —
+        # which is the point of counting the failure instead of raising.
+        # `closed` is kept as the cheap first gate.
         if drained and closed:
-            self._journal_write(lambda: self._journal.compact([]), "compact")
+            self._journal_write(lambda: self._journal.compact(), "compact")
 
     def restore(self, registry) -> tuple[int, int]:
         """Re-queue what the journal says never finished.

@@ -132,8 +132,22 @@ class Inbox:
         # here would turn that counted duplicate into a silent loss.
         # `Dispatcher._finish` needs no `ids` equivalent: it is only ever called
         # with a job that just terminated.
+        #
+        # ⚠ And `compact()` RECOMPUTES its survivors — it is NOT `compact([])`.
+        # `put` writes its `open` to disk BEFORE taking `self._lock`
+        # (deliberately — an unpersisted tap must not be acked), so ANOTHER
+        # app's reply can be on disk while `drained` is being read from
+        # `_pending`. Asserting an empty survivor set from that snapshot would
+        # erase a tap that was already journalled and is about to be queued —
+        # the same one-file trap as the comment above, reached by a different
+        # route, and the `drained` check alone does not close it because the
+        # racing record is not yet IN `_pending`. Recomputing reads
+        # open-minus-close under the JOURNAL's own lock, which `Journal.open`
+        # also holds, so the two serialize. A genuine drain still truncates to
+        # zero lines, and a FAILED `close_many` survives rather than being
+        # truncated away.
         if ids and drained and closed:
-            self._journal_write(lambda: self._journal.compact([]), "compact")
+            self._journal_write(lambda: self._journal.compact(), "compact")
         return items
 
     def restore(self) -> int:
@@ -149,8 +163,11 @@ class Inbox:
         **The quarantine file under the state dir is the recovery record** — the
         whole journal record, payload included, is written there before boot
         compaction erases it, and it is never pruned. The per-app JSONL audit
-        beside this queue also holds what arrived, but it is subject to a
-        retention window (CG-68) and cannot be relied on as the only copy.
+        beside this queue also holds what arrived, but it carries no retention
+        guarantee and must not be relied on as the only copy: CG-68 puts it on a
+        time-bounded window. **Future tense deliberately** — that row has not
+        shipped, and this repo already carries one open defect (CG-66) for a
+        docstring that cites an unshipped control in the present tense.
 
         The console line names the id and the exception TYPE, never the record.
         A pydantic `ValidationError` embeds the input it rejected, and an
@@ -178,8 +195,8 @@ class Inbox:
                              "under the state dir, which is never pruned"
                              if preserved else
                              "NO quarantine copy was written — the per-app JSONL "
-                             "audit under the inbox dir is the only recovery record, "
-                             "and it is subject to the retention window"),
+                             "audit under the inbox dir is the only recovery "
+                             "record, and it carries no retention guarantee"),
                           flush=True)
                     continue
                 q = self._pending[reply.app]
@@ -246,8 +263,11 @@ class Inbox:
         so preserving it costs one append. Without it, `restore` drops the
         record and `compact` erases the journal's copy moments later.
 
-        Never swept — `retention.py` does not look in this directory, and that
-        is the point of it existing.
+        Never swept: CG-68's retention sweeper must not look in this directory,
+        and that is the point of it existing. **Future tense on purpose** — that
+        row is gated behind this one merging, so there is no sweeper in this
+        tree yet; its plan pins the rule with
+        `test_the_quarantine_dir_is_never_swept`.
 
         Best-effort, and counted rather than raised: a quarantine write that
         fails must not stop a boot. The console line below says which branch

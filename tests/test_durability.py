@@ -14,7 +14,6 @@ journal wrote; only killing a process proves the queue survives.
 import datetime as dt
 import json
 import os
-import stat
 import subprocess
 import sys
 import textwrap
@@ -25,6 +24,8 @@ from chat_gateway.envelope import InboundReply, OutboundMessage
 from chat_gateway.inbox import Inbox
 from chat_gateway.journal import Journal
 from chat_gateway.registry import App, Identity, Registry
+
+from conftest import assert_owner_only
 
 SRC = str(Path(__file__).resolve().parents[1] / "src")
 
@@ -404,10 +405,10 @@ def test_delivery_audit_file_is_owner_only(tmp_path):
     log = DeliveryLog(audit_dir=tmp_path / "deliveries")
     log.record("app-a", "notify", "HALT: SYNTHETIC-TICKER", "enqueued")
     audit = next((tmp_path / "deliveries").glob("*.jsonl"))
-    assert stat.S_IMODE(audit.stat().st_mode) == 0o600
+    assert_owner_only(audit)
     # and the mode survives a second append rather than being reset
     log.record("app-a", "notify", "HALT: SYNTHETIC-TICKER", "delivered")
-    assert stat.S_IMODE(audit.stat().st_mode) == 0o600
+    assert_owner_only(audit)
 
 
 def test_delivered_body_is_erased_when_the_queue_drains(tmp_path):
@@ -651,10 +652,10 @@ def test_inbox_audit_file_is_owner_only_from_the_first_byte(tmp_path):
     ibx = Inbox(audit_dir=tmp_path / "inbox-data")
     ibx.put(_reply(text="APPROVE synthetic-role-42"))
     audit = next((tmp_path / "inbox-data").glob("*.jsonl"))
-    assert stat.S_IMODE(audit.stat().st_mode) == 0o600
+    assert_owner_only(audit)
     # and the mode survives a second append rather than being reset
     ibx.put(_reply(text="DECLINE synthetic-role-43"))
-    assert stat.S_IMODE(audit.stat().st_mode) == 0o600
+    assert_owner_only(audit)
 
 
 def test_polled_reply_body_is_erased_when_the_inbox_drains(tmp_path):
@@ -730,7 +731,7 @@ def test_unrevivable_reply_is_preserved_in_quarantine(tmp_path):
     assert ibx.unrevivable == 1 and ibx.quarantined == 1
     qfile = next((tmp_path / "quarantine").glob("unrevivable-*.jsonl"))
     assert "NOT" in qfile.read_text(encoding="utf-8")
-    assert stat.S_IMODE(qfile.stat().st_mode) == 0o600
+    assert_owner_only(qfile)
     assert jpath.read_text(encoding="utf-8") == ""   # journal's own copy is gone, as before
 
 
@@ -781,3 +782,72 @@ def test_without_a_journal_the_inbox_is_exactly_what_it_was():
     assert inbox.restore() == 0
     assert len(inbox.poll("app-a")) == 1
     assert inbox.journal is None
+
+
+# -- the drain-compaction race (CG-65 pre-merge review, finding H1) ------------
+#
+# BOTH producers write their journal `open` to disk BEFORE taking the queue
+# lock, and that ordering is deliberate on both sides: a job we cannot persist
+# must be refused rather than queued, and a tap we cannot persist must not be
+# acked. The consequence is that a record can be ON DISK while a drain check is
+# reading in-memory state that does not contain it yet. Compacting with an
+# ASSERTED empty survivor set then erases work the gateway has already accepted
+# — a 202'd alert, or an acked inbound tap.
+#
+# These two tests drive that interleaving DETERMINISTICALLY, by having the
+# terminal journal write itself open a racing record — which is precisely the
+# window — rather than racing real threads and hoping to lose.
+#
+# Both fail if `compact()` is written as `compact([])`.
+
+
+def test_a_reply_journalled_during_a_poll_survives_the_drain_compaction(tmp_path):
+    jpath = tmp_path / "inbox.jsonl"
+    journal = Journal(jpath)
+    ibx = Inbox(journal=journal)
+    ibx.put(_reply(app="app-a", text="POLLED AND DONE"))
+
+    racer = _reply(app="app-b", text="JOURNALLED MID POLL")
+    real_close_many = journal.close_many
+
+    def close_many_then_race(ids, status):
+        real_close_many(ids, status)
+        # `Inbox.put` for app-b reaches exactly here: on disk, not yet in
+        # `_pending`, so the drain check has already read "everything empty".
+        journal.open(999, "inbound", racer.model_dump(mode="json"))
+
+    journal.close_many = close_many_then_race
+    ibx.poll("app-a")
+
+    assert "JOURNALLED MID POLL" in jpath.read_text(encoding="utf-8")
+    revived = Inbox(journal=Journal(jpath))
+    assert revived.restore() == 1
+    assert revived.pending_counts() == {"app-b": 1}
+
+
+def test_a_job_journalled_during_a_finish_survives_the_drain_compaction(tmp_path):
+    reg = _registry()
+    jpath = tmp_path / "delivery.jsonl"
+    journal = Journal(jpath)
+    d = Dispatcher({"webhook": OkAdapter()}, DeliveryLog(), journal=journal)
+    d.enqueue("app-a", "notify", reg.identities["ident-a"],
+              _message("DELIVERED AND DONE"), "done")
+
+    real_close = journal.close
+
+    def close_then_race(entry_id, status):
+        real_close(entry_id, status)
+        # `Dispatcher.enqueue` for a second job reaches exactly here.
+        journal.open(999, "notify", {
+            "source": "app-a", "kind": "notify", "identity": "ident-a",
+            "title": "racer",
+            "message": _message("ENQUEUED MID FINISH").model_dump(mode="json"),
+        })
+
+    journal.close = close_then_race
+    d.process_due()
+
+    assert d.pending() == 0                       # the first job really drained
+    assert "ENQUEUED MID FINISH" in jpath.read_text(encoding="utf-8")
+    revived = Dispatcher({"webhook": OkAdapter()}, DeliveryLog(), journal=Journal(jpath))
+    assert revived.restore(reg) == (1, 0)
