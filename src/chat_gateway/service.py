@@ -477,14 +477,27 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             )
         if body["inbox"]["unrevivable_at_boot"]:
             preserved = body["inbox"]["quarantined_at_boot"]
+            # CG-65. The tail BRANCHES on `preserved`, and that is hard rule #5,
+            # not phrasing. This line is spec §2.5's promise site 6 — the one
+            # that made pruning a rule-#5 problem rather than a docs problem —
+            # and it earned that status by naming an artifact the reader could
+            # be sent to in vain. Asserting "the quarantine dir is the recovery
+            # record" when nothing was preserved (no `quarantine_dir` wired, or
+            # every write failed) would reproduce the exact defect on the exact
+            # line, pointing an operator at a directory that may not even exist.
             reasons.append(
                 f"inbox replay dropped {body['inbox']['unrevivable_at_boot']} "
                 "journalled reply(ies) that no longer parse as an InboundReply — "
                 "they were NOT delivered to the owning app and are gone from the "
                 "queue journal. An envelope change across a deploy looks like "
                 f"this. {preserved} of them were preserved in full under the "
-                "state dir's quarantine dir, which is never pruned and is the "
-                "recovery record; the ids are on the boot console"
+                "state dir's quarantine dir"
+                + (", which is never pruned and is the recovery record"
+                   if preserved else
+                   " — so the per-app JSONL audit under the inbox dir is the "
+                   "only record of what arrived, and it is subject to the "
+                   "retention window")
+                + "; the ids are on the boot console"
             )
         if body["inbox"]["quarantine_write_errors"]:
             reasons.append(

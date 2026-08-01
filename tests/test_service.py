@@ -420,9 +420,15 @@ def test_healthz_degrades_when_a_quarantine_write_FAILED(tmp_path, monkeypatch):
     assert body["inbox"]["quarantine_write_errors"] == 1
     assert body["status"] == "degraded"
     assert any("quarantine" in r and "FAILED" in r for r in body["reasons"])
-    # the unrevivable line stays honest about how many were preserved: none
+    # The unrevivable line stays honest about how many were preserved: none.
+    # And it must not go on to call the quarantine "the recovery record" — that
+    # claim is true only of a dir that actually received the bytes, and site 6
+    # became a rule-#5 problem precisely by pointing an operator somewhere they
+    # would find nothing.
     line = next(r for r in body["reasons"] if "no longer parse" in r)
     assert "0 of them were preserved" in line
+    assert "is the recovery record" not in line
+    assert "the per-app JSONL audit under the inbox dir" in line
 
 
 def test_healthz_inbox_quarantine_fields_exist_without_a_quarantine_dir(env):
