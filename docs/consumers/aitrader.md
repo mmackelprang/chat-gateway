@@ -207,18 +207,50 @@ mirrored to append-only JSONL under `<CHAT_GATEWAY_STATE_DIR>/deliveries/`.
 
 **Bodies are never logged on this path, structurally — not by convention.**
 `DeliveryLog.record()` has **no body or card parameter at all**
-(`delivery.py:44-50`); there is nowhere to put one. The rendered message goes to
-the adapter, only `title` goes to the log.
+(`delivery.py:78-100`); there is nowhere to put one. The rendered message goes to
+the adapter, only `title` goes to the log. The method name is the durable pointer
+— that line range has drifted twice.
 
-> **One honest scope note.** That guarantee covers the `/v1/notify` and
-> `/v1/heartbeat` path — everything in your contract. The separate raw-envelope
-> endpoint `/v1/messages`, which your key *can* also call but your contract does
-> not use, logs `text[:80]` as its title. If you never call `/v1/messages`, no
-> body text of yours is ever written anywhere.
+> **One honest scope note, and it now points the other way.** `/v1/messages` —
+> which your key can call but your contract does not use — logs `text[:80]` as a
+> delivery-log title, and that log is **permanent**. `/v1/notify`, the endpoint
+> your contract is built on, writes **more** and keeps it for **less**: since
+> 2026-07-31 the durable queue journals the whole rendered message — `text` and
+> `cards` — to `<CHAT_GATEWAY_STATE_DIR>/queue/delivery.jsonl`, file mode `0600`.
+>
+> **How long: only while the alert is undelivered.** Normally well under a
+> second. Up to ~73 minutes if it is working through the retry ladder, and up to
+> 24 hours if the gateway is down (past that it is closed as `expired` rather
+> than sent). The journal is erased the moment the outbound queue drains.
+> **One caveat, stated rather than buried:** a single stuck job anywhere on the
+> gateway holds that drain open, so a delivered body of yours can persist until
+> the stuck job terminates — bounded by the same ~73 minutes, or 24 hours across
+> downtime.
+>
+> **No credential is written.** The journal stores the identity **name** and
+> re-resolves it through the registry at boot, so no webhook URL and no API key
+> reaches it (hard rule #2).
+>
+> ⚠ **This replaces a sentence that promised the opposite.** Until 2026-07-31
+> this note read *"if you never call `/v1/messages`, no body text of yours is
+> ever written anywhere."* That became false when the queue was made durable.
+> The decision to keep the durability and rewrite the promise — rather than stop
+> journalling your bodies and lose replay for the one tenant with no fallback
+> channel — is recorded in
+> [ADR-0002](../architecture/decisions/2026-07-31-journalled-message-bodies.md).
 
-**Restart drops undelivered jobs.** The queue is in-memory. Those entries stay
-`enqueued`/`retrying` in the log with no terminal status — visible, not silent.
-Keep your local fallback log; the contract already assumes you do.
+**The queue is durable — a restart no longer drops undelivered jobs.** Undelivered
+work is journalled and **replayed at boot with its attempt count preserved**, so a
+crash does not reset the backoff ladder. Three consequences are yours to plan for:
+a job older than 24h at boot is closed **`expired`** rather than posted (a
+three-day-old alert delivered now actively misleads); a job whose identity the
+registry no longer grants is closed **`unroutable`** rather than sent on a stale
+permission (hard rule #4); and a job killed **mid-flight** — after the send
+returned, before the close landed — is replayed and may therefore be **delivered
+twice**. Chat gives the gateway no idempotency key, and losing an alert was judged
+the worse failure. The full replay rule has one home and this is not it:
+`delivery.py`'s module docstring. Keep your local fallback log; the contract
+already assumes you do.
 
 ---
 
@@ -413,9 +445,31 @@ governs the tailnet, not the LAN.
 Recorded because "nothing about aitrader is observable" should be true for a
 **stated and correct** reason, not by assumption — the first stated reason was
 wrong, and the second has now expired. The claim that survived both, and the one
-your contract actually rests on, is the narrow one:
+your contract actually rests on, is the narrow one — **and it has now survived a
+third correction, which is why it is stated with its scope rather than as an
+absolute:**
 
-**Nothing about aitrader's traffic is persisted anywhere, in any configuration.**
+**No inbound event from an Ai Trader space ever crosses to a consumer or is
+persisted *as aitrader's*, in any configuration.** `dispatch` hits `continue`
+before any `inbox.put`, so there is no inbox record, no callback, and no per-app
+audit line under your app id. Hard rule #6 is what makes that structural rather
+than careful.
+
+**Two named exceptions, because a fourth correction is not worth the tidier
+sentence:**
+
+1. **Your outbound bodies.** Since 2026-07-31 the durable queue journals the
+   whole rendered message of every `/v1/notify` — see §6, which states the
+   contents, the mode and the window. That is your traffic and it is on disk,
+   briefly. The old wording said *"nothing … anywhere, in any configuration"* and
+   that word was already false the moment the queue became durable.
+2. **An event the gateway cannot parse at all.** It has no attributable space, so
+   it cannot be authorized against anything and cannot be attributed to you — it
+   is audited under the gateway's own `_unrouted` bucket with its `raw` intact.
+   That is not attributed to aitrader and by construction cannot be; it is named
+   here only because the previous sentence's *"in any configuration"* invited a
+   literal reading that this path defeats. It predates the durable queue by
+   months.
 
 ---
 
@@ -439,9 +493,31 @@ independence from the rest of the system *is* the reliability argument.
 
 Practical consequence for your runbook: if `/healthz` reports `degraded` for a
 tier-2 reason (`subscriber.*`), **your alerting is unaffected**. The two fields
-that actually gate your path are
+that actually gate your **readiness** are still
 `registry.identities["aitrader-alerts"].env_resolved` and
 `registry.apps["aitrader"].key_configured`.
+
+⚠ **But `degraded` is no longer only a tier-2 word, and this paragraph used to
+train you to ignore exactly the counters that concern you.** Since the queues
+became durable, **six** fields can degrade `/healthz` on the delivery side,
+across **five** `reasons` lines — `expired_at_boot` and `unroutable_at_boot`
+share one. **Four of the six can be about an aitrader alert:**
+
+| Field | What it means for you |
+|---|---|
+| `delivery.expired_at_boot` | a queued alert was **older than 24h at boot and was NOT posted** |
+| `delivery.unroutable_at_boot` | a queued alert was **dropped** because the registry no longer grants its identity |
+| `delivery.journal_skipped_lines` | a torn or corrupt journal line — **at least one queued item was lost** |
+| `delivery.journal_write_errors` | the queues are running but **no longer durable**: a restart will lose or double-send affected entries |
+
+Each of those means an alert of yours was dropped, or will be sent twice. The
+delivery log names which one by id — that is where to look, not here.
+
+**The other two cannot be yours, and the reason is structural rather than
+reassuring:** `inbox.unrevivable_at_boot` and `inbox.quarantine_write_errors` are
+**inbound** fields, and you never reach the inbox at all (§8, hard rule #6). If
+they are non-zero, they belong to a two-way tenant. Chasing them is wasted
+runbook time.
 
 ---
 
@@ -544,8 +620,14 @@ smoke test.
 
 - **US market holidays are not modeled** — widen `grace`; `74h` covers a Monday
   holiday from a Friday run (§7).
-- **The queue is in-memory** — a restart drops undelivered jobs, visibly (§6).
-  Keep your local fallback log.
+- **A mid-flight restart may deliver an alert twice** — the queue is durable and
+  replays what never finished, so a process killed between the send returning and
+  the close landing re-sends (§6). Chat has no idempotency key, and losing an
+  alert was judged the worse failure. Keep your local fallback log.
+  ⚠ This bullet read *"the queue is in-memory — a restart drops undelivered
+  jobs"* until 2026-07-31. That was true of v0 and became false when the queue
+  was made durable; it is corrected rather than deleted because it sat under
+  *"agreed in the contract"*, where a stale line reads as a negotiated term.
 - **Webhooks cannot edit a posted message**, so a dedupe window shows its
   collapsed count on the *next* delivered message rather than by mutating the
   first (§5).
@@ -566,7 +648,7 @@ or in an assistant prompt.
 | `CHAT_GATEWAY_API_KEY__AITRADER` | aitrader's bearer key. **Rotate this to revoke** — that is the whole revocation mechanism, and it is per-app. |
 | `GOOGLE_CHAT_WEBHOOK_URL__AITRADER_ALERTS` | the loud, phone-visible space |
 | `GOOGLE_CHAT_WEBHOOK_URL__AITRADER_REPORTS` | the quiet reports space |
-| `CHAT_GATEWAY_STATE_DIR` | heartbeat checks + delivery JSONL (default `state`) |
+| `CHAT_GATEWAY_STATE_DIR` | heartbeat checks, the delivery log JSONL, **the queue journals (message bodies — yours included — file mode `0600`, §6)** and the quarantine dir for inbound replies that could not be revived. Default `state` |
 | `CHAT_GATEWAY_REGISTRY` | identities + apps config (default `config/registry.yaml`) |
 
 Mint a key with `python3 -m chat_gateway mint-key`. Confirm readiness without

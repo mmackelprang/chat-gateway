@@ -101,6 +101,14 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   `journal.py`'s says why the per-app audit files cannot answer the same
   question — they record what ARRIVED, never what LEFT. Do not restate either
   here; a second copy of this is exactly what the test count above did.
+  **Retention, not just durability (CG-65, 2026-07-31):** a journalled body now
+  lives exactly as long as its job is replayable — the journal compacts when the
+  queue drains, so a *delivered* body's residency fell from the weeks ADR-0002
+  §2.2 measured to seconds. Both audit trails are created `0600`. An unrevivable
+  reply is preserved under `<state_dir>/quarantine/`, which is never pruned,
+  because the per-app audit trail should never have been *"the only copy"* of a
+  record the gateway was holding in its own hands at the moment it dropped it.
+  Numbers and reasoning: ADR-0002 — **not restated here.**
 - **The live project is `chat-gateway-gw` (`#860649224827`), and it is the only
   one.** `chat-gateway-prod` — which every "Cloud resources now exist" note in
   this file used to describe — was **deleted 2026-07-30**, along with E1's
