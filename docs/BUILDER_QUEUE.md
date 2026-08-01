@@ -1,10 +1,11 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-31 (Planner — **CG-65's spec + plan are written and
-APPROVED; CG-68 and CG-69 filed**). CG-65 is **rescoped from doc-only to source +
-docs** by ADR-0002 (#49) `D + A + D5`: compact-on-drain, `0600` on both audit
-trails, the unrevivable quarantine, and the contract correction. **Nothing is
-implemented** —
+**Last updated:** 2026-07-31 (Builder — **CG-65 shipped as #52; CG-70 filed**).
+Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine** and
+the contract correction are in. Suite **247 → 268**. **CG-68 is now unblocked on
+sequencing** — the quarantine it waits for exists — but read CG-65's row first:
+its pre-merge review found a data-loss race in compact-on-drain that the plan's
+literal code contained, and CG-68 touches the same paths.
 [spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) ·
 [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md).
 
@@ -741,9 +742,10 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
 | **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
-| **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | 🚀 in-flight | ⚠ **No longer doc-only — rescoped by ADR-0002 (#49) `D + A + D5`.** Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
+| **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | ✅ done (#52) | Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. Pre-merge review found a **data-loss race** in compact-on-drain — both producers journal the `open` before taking the queue lock, so `compact([])` could erase a record already on disk; fixed by recomputing survivors under the journal's own lock. Suite **247 → 268**. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
 | **CG-68** · time-bounded pruning of the inbound audit trail | 📋 queued | ✅ **decisions approved** (30/7/0, unlink, amend the contract). ⏸ **Sequenced behind CG-65** — the quarantine is what makes pruning safe. Answers ADR-0002 §9 **Q6** by amending a **published** guarantee. Plan Tasks 10–13 |
 | **CG-69** · published-promise inventory (process control) | 📋 queued | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. No plan yet |
+| **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued | Filed by CG-65's Builder from its own pre-merge review (LOW), **deferred rather than folded in**. No plan yet |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
 | **CG-67** · `.gitignore` — stop `state/` from ever being committed | ✅ done (#48) | **Split out of CG-66 and promoted by the user**, because it is a live path to committing message bodies and CG-53/CG-55 are the rows that first run the gateway from the repo root. Config-only |
 
@@ -1604,7 +1606,27 @@ itself a copy — would have reproduced the exact defect this item corrects.
 
 ---
 
-### CG-65 · shrink the journal's body window, harden both audit trails, and correct `aitrader.md`  🚀 in-flight
+### CG-65 · shrink the journal's body window, harden both audit trails, and correct `aitrader.md`  ✅ done (#52)
+
+> **Shipped 2026-07-31 as #52.** Suite **247 → 268** (`/usr/bin/python3` 3.10.12,
+> pytest 9.0.2). Tasks 1–9; **nothing was pruned** — CG-68 stays gated behind
+> this merging.
+>
+> ⚠ **The pre-merge review found a data-loss race that the plan's literal code
+> contained**, and it is worth reading before CG-68 touches these paths. Both
+> producers write their journal `open` to disk **before** taking the queue lock
+> (deliberately, on both sides), so a record can be on disk while the drain check
+> reads in-memory state that does not contain it yet — and `compact([])` then
+> erased it. `compact()` recomputes open-minus-close under the **journal's own**
+> lock, which `Journal.open` also holds, so the two serialize. Pinned by two
+> tests that were confirmed to FAIL against `compact([])`.
+>
+> Three smaller review findings were also fixed: three `/healthz`/docstring
+> strings asserted a retention window and a `retention.py` in the **present**
+> tense when neither ships until CG-68 (the CG-66 defect shape, and two of them
+> on the unauthenticated endpoint); exact-mode assertions would have gone red on
+> the Windows dev box CLAUDE.md documents as supported; and the Layout line's
+> test count. One finding was **deferred and filed as CG-70**.
 
 | | |
 |---|---|
@@ -1794,6 +1816,38 @@ claim 3 names `inbox.py::_audit`, which CG-68 modifies.
 ⚠ **Filed, not folded into CG-65.** Folding a good idea into an open row is the
 scope creep this queue keeps correcting — and it would be a fourth instance of
 shipping something whose consequences nobody had written down.
+
+---
+
+### CG-70 · The `0600` chmod is create-only, so a pre-existing `0644` file keeps its mode  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by **CG-65's Builder**, 2026-07-31, out of that PR's own pre-merge review (finding L3) |
+| **Depends on** | nothing — CG-65 (#52) shipped the create-time half |
+| **Touches** | `src/chat_gateway/inbox.py::_audit`, `src/chat_gateway/delivery.py::DeliveryLog.record`, or the CG-53 deploy runbook |
+| **Merge gate** | no |
+
+CG-65 applies `chmod_owner_only` **only when the file did not already exist** —
+that guard is what keeps the chmod off the hot path, one syscall per *file*
+rather than per *append*. The consequence is that a day-file created by an
+earlier build, by a different umask, or by anything else, **keeps `0644`
+forever**. Only files created after CG-65 are `0600`.
+
+**Why this is LOW and was deferred rather than folded in:** the gateway has
+never been deployed (ADR-0002 §8), so no such file exists in production, and the
+window is bounded by one day — the filename is date-sharded, so tomorrow's file
+is created fresh at `0600`. The queue journals escape the problem entirely
+because compaction replaces the inode (`journal.py`), which also upgrades a
+legacy `0644` journal for free.
+
+**Two candidate fixes, not chosen here.** (a) `stat` the existing file and chmod
+when the mode is wrong — correct and self-healing, but adds a `stat` per append
+to a path that deliberately has none. (b) A one-time `chmod 0600` line in the
+CG-53 deploy runbook, beside the `install -d -m 0750` that already owns the
+directory modes — no hot-path cost, but it does not help a dev box. **(b) looks
+right given the runbook already owns this class of control**, but it is a
+Planner call, not a Builder's.
 
 ---
 
