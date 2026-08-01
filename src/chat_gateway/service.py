@@ -343,7 +343,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                       # and boot compaction then removes it for good, so
                       # this counter is the only thing standing between a
                       # lost tap and nobody knowing. Rule #5.
-                      "unrevivable_at_boot": getattr(inbox, "unrevivable", 0)},
+                      "unrevivable_at_boot": getattr(inbox, "unrevivable", 0),
+                      # CG-65. How many of those were preserved. Two numbers,
+                      # not one: `unrevivable` is what was lost from the queue,
+                      # `quarantined` is what is recoverable, and an operator
+                      # reading the first needs the second to know whether to
+                      # go looking.
+                      "quarantined_at_boot": getattr(inbox, "quarantined", 0),
+                      "quarantine_write_errors": getattr(inbox, "quarantine_write_errors", 0)},
             "delivery": {"pending_jobs": dispatch.pending(),
                          "replayed_at_boot": getattr(dispatch, "replayed", 0),
                          "expired_at_boot": getattr(dispatch, "expired", 0),
@@ -469,14 +476,23 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "entries. Check free space and the state dir's permissions"
             )
         if body["inbox"]["unrevivable_at_boot"]:
+            preserved = body["inbox"]["quarantined_at_boot"]
             reasons.append(
                 f"inbox replay dropped {body['inbox']['unrevivable_at_boot']} "
                 "journalled reply(ies) that no longer parse as an InboundReply — "
                 "they were NOT delivered to the owning app and are gone from the "
                 "queue journal. An envelope change across a deploy looks like "
-                "this. The per-app JSONL audit under the inbox dir holds what "
-                "arrived and is the recovery record; the ids are on the boot "
-                "console"
+                f"this. {preserved} of them were preserved in full under the "
+                "state dir's quarantine dir, which is never pruned and is the "
+                "recovery record; the ids are on the boot console"
+            )
+        if body["inbox"]["quarantine_write_errors"]:
+            reasons.append(
+                f"inbox quarantine: {body['inbox']['quarantine_write_errors']} "
+                "write(s) FAILED — at least one unrevivable reply has no "
+                "preserved copy, so the per-app JSONL audit under the inbox dir "
+                "is its only record and the retention window applies to it. "
+                "Check free space and the state dir's permissions"
             )
         if queue["expired_at_boot"] or queue["unroutable_at_boot"]:
             reasons.append(

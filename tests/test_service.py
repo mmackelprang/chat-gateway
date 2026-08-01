@@ -367,6 +367,74 @@ def test_healthz_reasons_explain_a_degraded_registry(env, monkeypatch):
     assert any("does not resolve" in r for r in body["reasons"])
 
 
+def test_healthz_names_the_quarantine_as_the_recovery_record(tmp_path, monkeypatch):
+    """Promise site 6: this reasons line told an operator to read a file the
+    sweeper is about to delete. It now names an artifact the gateway keeps."""
+    from chat_gateway.inbox import Inbox
+    from chat_gateway.journal import Journal
+
+    monkeypatch.setenv("SVC_KEY_AITEAM", "cgk_test_key")
+    monkeypatch.setenv("SVC_HOOK_FW", "https://x.example/hook")
+    p = tmp_path / "r.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+
+    jpath = tmp_path / "inbox.jsonl"
+    Journal(jpath).open(1, "inbound", {"app": "aiteam-harness", "NOT": "an InboundReply"})
+    inbox = Inbox(journal=Journal(jpath), quarantine_dir=tmp_path / "quarantine")
+    inbox.restore()
+    client = TestClient(create_app(load_registry(p), inbox, {"webhook": FakeAdapter()}))
+
+    body = client.get("/healthz").json()
+    assert body["inbox"]["unrevivable_at_boot"] == 1
+    assert body["inbox"]["quarantined_at_boot"] == 1
+    assert body["inbox"]["quarantine_write_errors"] == 0
+    assert body["status"] == "degraded"
+    line = next(r for r in body["reasons"] if "no longer parse" in r)
+    assert "quarantine" in line and "never pruned" in line
+    # ...and it must NOT still point at the per-app audit trail as the only copy
+    assert "the per-app JSONL audit under the inbox dir" not in line
+
+
+def test_healthz_degrades_when_a_quarantine_write_FAILED(tmp_path, monkeypatch):
+    """Rule #5. A recovery mechanism that has silently stopped working is worse
+    than none, because it is trusted — so the failure gets its own reason, not
+    just its own number. Two counters, two investigations."""
+    from chat_gateway.inbox import Inbox
+    from chat_gateway.journal import Journal
+
+    monkeypatch.setenv("SVC_KEY_AITEAM", "cgk_test_key")
+    monkeypatch.setenv("SVC_HOOK_FW", "https://x.example/hook")
+    p = tmp_path / "r.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+
+    jpath = tmp_path / "inbox.jsonl"
+    Journal(jpath).open(1, "inbound", {"app": "aiteam-harness", "NOT": "an InboundReply"})
+    blocker = tmp_path / "blocked"
+    blocker.write_text("I am a file, not a directory", encoding="utf-8")
+    inbox = Inbox(journal=Journal(jpath), quarantine_dir=blocker / "quarantine")
+    inbox.restore()
+    client = TestClient(create_app(load_registry(p), inbox, {"webhook": FakeAdapter()}))
+
+    body = client.get("/healthz").json()
+    assert body["inbox"]["quarantined_at_boot"] == 0
+    assert body["inbox"]["quarantine_write_errors"] == 1
+    assert body["status"] == "degraded"
+    assert any("quarantine" in r and "FAILED" in r for r in body["reasons"])
+    # the unrevivable line stays honest about how many were preserved: none
+    line = next(r for r in body["reasons"] if "no longer parse" in r)
+    assert "0 of them were preserved" in line
+
+
+def test_healthz_inbox_quarantine_fields_exist_without_a_quarantine_dir(env):
+    """Every offline caller builds an `Inbox()` with no quarantine dir, and the
+    block must still report real zeros rather than vanish — a field that
+    disappears is a field an operator's dashboard reads as null forever."""
+    client, _, _ = env
+    inbox_block = client.get("/healthz").json()["inbox"]
+    assert inbox_block["quarantined_at_boot"] == 0
+    assert inbox_block["quarantine_write_errors"] == 0
+
+
 # --- CG-12: suppression is visible, bare, and not a fault --------------------
 
 # A registry whose only owner of `spaces/SECRETSPACE` will never serve it — the
