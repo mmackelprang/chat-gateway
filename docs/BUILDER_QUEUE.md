@@ -1,11 +1,53 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-31 (Builder — **CG-61 is at [PR #50](https://github.com/mmackelprang/chat-gateway/pull/50)
-and PAUSED AT ITS MERGE GATE — open, NOT merged.** It narrows a tenant's inbound
-surface, which hard rule #6 says needs explicit sign-off naming that rule;
-narrowing is still a change to the surface.
+**Last updated:** 2026-07-31 (Planner — **CG-65's spec + plan are written and
+APPROVED; CG-68 and CG-69 filed**). CG-65 is **rescoped from doc-only to source +
+docs** by ADR-0002 (#49) `D + A + D5`: compact-on-drain, `0600` on both audit
+trails, the unrevivable quarantine, and the contract correction. **Nothing is
+implemented** —
+[spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) ·
+[plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md).
 
-⚠ **The row is not finished when the PR merges.** `config/registry.yaml` is
+✅ **All four sign-offs granted by the user, 2026-07-31** — the quarantine as
+ADR-0002 §9 Q6's answer; the **30 / 7 / 0** window via
+`CHAT_GATEWAY_INBOX_RETENTION_DAYS`; **unlink** rather than redact; and amending
+the contract owed to every consumer. Spec §9 and plan Tasks 10–13 record each
+with its reasoning, not just its verdict. **CG-68's merge gate is now only
+"CG-65 must merge first"** — the quarantine is what makes pruning safe.
+
+⚠ **The pruning half was SPLIT OUT as CG-68, deliberately.** ADR-0002 §9 Q6 asked
+whether pruning `inbox-data/` breaches `docs/integration-guide.md:366`'s *"never
+pruned"*. Planning found the promise has **six live homes — and one is a
+`/healthz` `reasons` string** (`service.py:478`), which makes it a
+hard-rule-**#5** problem rather than a docs problem: a sweeper would leave an
+unauthenticated health endpoint telling an operator to read a file the gateway
+itself deleted. **CG-65 answers it with a mechanism before CG-68 deletes
+anything** — an unrevivable reply's whole record is preserved under
+`<state_dir>/quarantine/`, never swept. Measured while planning: `restore` is
+**holding** that record when it declares it lost, and boot compaction erases it
+moments later, so preserving it costs one append.
+
+**Two measurements that killed two plausible designs:** the per-app audit line
+carries **no journal id** (written before the id is minted), so "prune only what
+was polled" is not implementable without a schema change consumers read; and
+**`Inbox.restore` has no age ceiling** where `Dispatcher` has a 24h one — a
+400-day-old unpolled reply restores cleanly, so a finite audit window truncates a
+recovery path that is unbounded on the other side.
+
+**CG-69 files the process finding rather than repeating it:** three changes in
+one day invalidated a guarantee recorded in a file nobody in the loop was
+reading. **No ⚠ flag cleared, added or reworded**; `docs/architecture/` untouched.
+
+Previously 2026-07-31 (Builder — **CG-61 shipped as [PR #50](https://github.com/mmackelprang/chat-gateway/pull/50)**,
+`dced002`. It narrows a tenant's inbound surface, which hard rule #6 says needs
+explicit sign-off naming that rule; narrowing is still a change to the surface.
+**The gate was released by the user and the PR merged.**
+
+⚠ **The banner below was written PRE-MERGE and said "open, NOT merged". That
+half is now stale and is corrected here rather than preserved verbatim — but its
+second half is NOT stale and is the reason this row is not simply done:**
+
+⚠ **The row is not finished now that the PR has merged.** `config/registry.yaml` is
 gitignored, so the PR changes only the EXAMPLE. Measured today with the real
 `load_registry` against the real live file: `aiteam-harness` is still
 `allow_inbound=True`, and the **key is absent** — the default is doing the work,
@@ -689,7 +731,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | Item | State | Note |
 |---|---|---|
 | **CG-60** · repo-wide correction of the one-space premise | ✅ done (#44) | Plan Part H. Merge gate **released by the user 2026-07-31**; merged the same day. Consumer contracts. **Sequenced FIRST.** Filed **CG-62** |
-| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | 🚀 in-flight · [PR #50](https://github.com/mmackelprang/chat-gateway/pull/50) | ⏸ **merge gate — OPEN, NOT MERGED**, awaiting the user. **Must land before CG-55**, and ⚠ the **live registry edit is a separate operator action the PR cannot make**. Plan Part I |
+| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | ✅ merged (#50) · ⏸ **operator action outstanding** | Gate released by the user; merged 2026-07-31 as `dced002`. ⚠ **Merging is not finishing** — the PR changed only `registry.example.yaml`; the **live gitignored registry edit is a separate operator action**, and **CG-55 depends on the live file**. Suite 246 → 247. Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
 | **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | ✅ done (#46) | Filed by CG-54's Builder. Shipped 2026-07-31 after CG-60 (#44) cleared the way. Item 4's "four fields degrade" was **five** — measured, and the row records both |
@@ -699,7 +741,9 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
 | **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
-| **CG-65** · `docs/consumers/aitrader.md` — four post-#45 falsehoods, one of them a **privacy** guarantee | 📋 queued | **Filed by CG-64's Builder rather than raced.** A live-false claim in a consumer contract; ranks with CG-60 by the same argument. Doc-only |
+| **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | 📋 queued | ⚠ **No longer doc-only — rescoped by ADR-0002 (#49) `D + A + D5`.** Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
+| **CG-68** · time-bounded pruning of the inbound audit trail | 📋 queued | ✅ **decisions approved** (30/7/0, unlink, amend the contract). ⏸ **Sequenced behind CG-65** — the quarantine is what makes pruning safe. Answers ADR-0002 §9 **Q6** by amending a **published** guarantee. Plan Tasks 10–13 |
+| **CG-69** · published-promise inventory (process control) | 📋 queued | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. No plan yet |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
 | **CG-67** · `.gitignore` — stop `state/` from ever being committed | ✅ done (#48) | **Split out of CG-66 and promoted by the user**, because it is a live path to committing message bodies and CG-53/CG-55 are the rows that first run the gateway from the repo root. Config-only |
 
@@ -1208,7 +1252,7 @@ call**, because "likely" is the exact word rule #3 exists to refuse.
 
 ---
 
-### CG-61 · Close `aiteam-harness`'s inbound path  🚀 in-flight · [PR #50](https://github.com/mmackelprang/chat-gateway/pull/50) — **NOT MERGED** · **MUST LAND BEFORE CG-55**
+### CG-61 · Close `aiteam-harness`'s inbound path  ✅ merged ([#50](https://github.com/mmackelprang/chat-gateway/pull/50), `dced002`) · ⏸ **OPERATOR ACTION OUTSTANDING** · **BEFORE CG-55**
 
 | | |
 |---|---|
@@ -1262,7 +1306,9 @@ warning does not bite. Recorded so a reader need not re-derive it.
 app's inbox nor `_unrouted` nor disk, so a refactor cannot quietly undo it.
 
 **Builder, 2026-07-31 — [PR #50](https://github.com/mmackelprang/chat-gateway/pull/50)
-is open at the gate.** Two notes for whoever releases it:
+MERGED as `dced002`** (written pre-merge as *"open at the gate"*; the gate was
+released by the user and the tense is corrected here, not the content). Two notes,
+and the second is why this row is **not** closed:
 
 - **The pre-state was re-measured, not copied from this row.** The real
   `load_registry` against the real live file returns `aiteam-harness
@@ -1558,14 +1604,56 @@ itself a copy — would have reproduced the exact defect this item corrects.
 
 ---
 
-### CG-65 · `aitrader.md` still describes the pre-#45 gateway — and one of the four is a PRIVACY claim  📋 queued
+### CG-65 · shrink the journal's body window, harden both audit trails, and correct `aitrader.md`  📋 queued
 
 | | |
 |---|---|
 | **Origin** | filed by CG-64's Builder, 2026-07-31, rather than raced |
+| **Rescoped** | **2026-07-31 by ADR-0002 (#49)** — `D + A + D5`. Was doc-only; is now source **and** docs |
 | **Depends on** | nothing |
-| **Touches** | `docs/consumers/aitrader.md` |
+| **Touches** | `delivery.py`, `inbox.py`, `journal.py`, `service.py`, `__main__.py`, `docs/consumers/aitrader.md`, `docs/integration-guide.md`, `CLAUDE.md` |
+| **Spec / plan** | [spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) **Tasks 1–9** |
 | **Merge gate** | no |
+
+> ⚠ **The row grew, and the original filing is kept below rather than rewritten.**
+> It was filed as four stale sentences in a consumer contract. ADR-0002 measured
+> *why* they were stale, the user decided `D + A` (keep the durability, rewrite
+> the promise) and then **widened the row a second time** to cover the
+> `inbox-data/` exposure as well. So the doc correction below is now **item 6 of
+> 6**, not the whole row — and it is the last task, because the contract text has
+> to describe the retention the first five tasks create.
+>
+> **What the row now ships, in order:**
+> 1. **Compact on drain** (`delivery.py`, `inbox.py`) — a *delivered* body's
+>    residency falls from the weeks ADR-0002 §2.2 measured to seconds. ⚠ The
+>    inbox half carries a trap the outbound half does not: there is **one**
+>    `inbox.jsonl` for the whole gateway, so the drain check must be across
+>    **every** app or polling one app truncates another's pending replies.
+> 2. **`0600` at create** on `inbox-data/*.jsonl` and `deliveries/*.jsonl` — both
+>    were `0644` by doing nothing, beside a journal holding strictly less at
+>    `0600`. A straight lift of `journal.py`'s existing primitive, promoted to
+>    one public home rather than copied.
+> 3. ⚠ **The unrevivable quarantine — the gate, and the reason CG-68 is a
+>    separate row.** Six places in this repo tell an operator the per-app audit
+>    trail is *"the recovery record"* / *"the only copy"*, and **one of them is a
+>    live `/healthz` `reasons` string** (`service.py:478`) — which makes pruning
+>    a hard-rule-**#5** problem, not just a docs problem. Measured while
+>    planning: at the moment `restore` declares a record lost it is **holding
+>    that record** (`rec["payload"]`), and boot compaction erases it moments
+>    later. So the gateway keeps it instead — `<state_dir>/quarantine/`, `0600`,
+>    never swept. **Stronger than the promise it retires.**
+> 4. `/healthz` fields for the quarantine (rule #5).
+> 5. — *(the sweeper is NOT here; it is CG-68)*
+> 6. The contract correction below, **plus** three defects the original filing
+>    did not list: `:209`'s drifted line pointer, the `/v1/messages` **inversion**
+>    (ADR §2.8 — correct it, do not delete it), and `CLAUDE.md`'s CG-54 bullet,
+>    which should name the *retention* property and not just "durable".
+>
+> **Two planning measurements a Builder should not have to rediscover:** the
+> per-app audit line carries **no journal id** (it is written before the id is
+> minted), so "prune only what was polled" is not implementable without a schema
+> change; and **`Inbox.restore` has no age ceiling** where `Dispatcher` has a 24h
+> one — a 400-day-old unpolled reply restores cleanly. Both are in spec §2.
 
 CG-64 was scoped to `CLAUDE.md` + `docs/integration-guide.md`. A sweep run
 beside it found the same staleness concentrated somewhere worse: **a consumer
@@ -1608,6 +1696,104 @@ through the registry — but a tenant was told its message bodies are never
 written down, and they now are. That is the tenant's decision to re-take, not a
 Builder's to paper over. **Do not soften the correction into "the journal is
 secure"; state what reaches disk, for how long, and at what mode.**
+
+---
+
+### CG-68 · Time-bounded pruning of the inbound audit trail  📋 queued  ⏸ MERGE GATE
+
+| | |
+|---|---|
+| **Origin** | filed by CG-65's Planner, 2026-07-31. Answers ADR-0002 §9 **Q6**, which that ADR raised and explicitly did not resolve |
+| **Depends on** | ⚠ **CG-65 must be MERGED first** — its quarantine is what makes pruning safe |
+| **Touches** | new `src/chat_gateway/retention.py`, `__main__.py`, `service.py`, `journal.py:10`, `docs/integration-guide.md:366`, `docs/consumers/jobhunt.md`, `.env.example` |
+| **Spec / plan** | [spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) §4 · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) **Tasks 10–13** |
+| **Merge gate** | ⏸ **sequencing only** — the user's decisions are ✅ granted (2026-07-31); **CG-65 must merge first** |
+
+`inbox-data/<app>-<date>.jsonl` holds a human's `text`, `sender_email` and whole
+`raw` event, and has held them **forever**. CG-65 fixes the mode; this fixes the
+"forever."
+
+⚠ **Why this is its own row and not the tail of CG-65.** It is the only part that
+**deletes a tenant's content**, the only part whose correctness depends on a
+number the user has not yet approved, and the only part that **breaches a
+published guarantee**: `docs/integration-guide.md:366` promises *every* consumer
+that this file is *"never pruned."* The user has elected to amend the shared
+contract rather than accept unbounded growth — but amending a published promise
+is a decision that deserves its own reviewable diff, not a paragraph buried in a
+nine-file PR. **ADR-0002 §9 Q6 pre-authorizes exactly this split:** *"the mode
+half (`0600`) is unaffected and can proceed."*
+
+✅ **All three of this row's decisions were granted by the user, 2026-07-31**
+(spec §9, plan A1–A4). Recorded with their reasoning, not just their verdict:
+
+1. ✅ **Retention window: 30 days** for tenant buckets, **7 days** for
+   `_unrouted`, **`0` disables** — via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`. The
+   gateway does **not** need to hold a consumer's decision history, because
+   `integration-guide.md:370` already tells consumers this file is *"a forensic
+   record on the gateway host, not something you can re-poll."*
+2. ✅ **Unlink, not redact.** ADR-0002 §4.1 left this open. The filename is the
+   retention key, so pruning needs no parsing and never opens a file holding
+   message bodies. Redaction needs field-by-field judgements about which parts of
+   a person's message are sensitive, which is rule-#1 territory.
+3. ✅ **Amending the shared contract is signed off**, on the basis that it is
+   owed to every consumer rather than to jobhunt alone.
+
+⚠ **What remains is sequencing, not approval:** **CG-65 must merge first.**
+
+**Rule #1 note, so it is not rediscovered in review:** the window is **global**.
+`_unrouted`'s shorter floor is the gateway governing **its own** reserved bucket
+(hard rule #6 reserves the `_` prefix), **not** per-app policy — a per-*tenant*
+window would be ADR-0002 Option C's shape and would re-open the question the user
+deliberately left **not reached** (D6).
+
+**Rule #5 note:** the sweeper deletes tenant content, so it must be counted at
+`/healthz` — rule #5 does not distinguish work *dropped* from work *deleted*. But
+`files_deleted` must **not** degrade `status`: a retention policy working is not
+a fault, and degrading on it teaches an operator to ignore `degraded` (the same
+reasoning `CLAUDE.md` records for `suppressed_opt_out`).
+
+---
+
+### CG-69 · A published-promise inventory — the process control  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by CG-65's Planner, 2026-07-31 |
+| **Depends on** | nothing |
+| **Touches** | `tests/` (a new guard), `docs/` |
+| **Merge gate** | no |
+| **Plan** | none yet — filed, deliberately not designed here |
+
+**Three changes in one day invalidated a guarantee recorded in a file nobody in
+the loop was reading.** The shape is identical in all three, and it is not
+carelessness — each change was correct in its own file:
+
+| # | Change | Promise it invalidated | Where the promise lived |
+|---|---|---|---|
+| 1 | **#45 / CG-54** — journalled bodies | *"no body text of yours is ever written anywhere"* | `docs/consumers/aitrader.md:217` |
+| 2 | **#45 / CG-67** — bodies moved into `state/` | `.gitignore`'s coverage: the ignore rule tracked where bodies **used to be** | `.gitignore` |
+| 3 | **CG-68's prune** — *would have* | *"never pruned"* / *"the only copy"* | `integration-guide.md:366`, `:382`, **and a `/healthz` string** |
+
+**None was caught by reviewing the diff, because the diff never contained the
+sentence it broke.** Instance 3 was caught only because ADR-0002 went looking —
+and CG-65's planning found that even that search **missed** `service.py:478`, the
+one site with a hard rule attached.
+
+**The proposed control, and it has precedent here.**
+`tests/test_error_surfaces.py` already reads *construction sites* to guard a
+property that lives in prose. Same idiom: a test-owned **inventory of absolute
+claims** in `docs/consumers/*.md` and `docs/integration-guide.md`, each paired
+with the code that makes it true, failing when a claim has no owner. It does not
+prove the claims — it makes the set **enumerable**, so a durability change can be
+checked against it in the minute before merge rather than in an ADR two PRs later.
+
+**Concretely, it would have caught all three:** claim 1 names `delivery.py`,
+which #45 rewrote; claim 2's owner is `.gitignore`, whose covered paths changed;
+claim 3 names `inbox.py::_audit`, which CG-68 modifies.
+
+⚠ **Filed, not folded into CG-65.** Folding a good idea into an open row is the
+scope creep this queue keeps correcting — and it would be a fourth instance of
+shipping something whose consequences nobody had written down.
 
 ---
 
