@@ -12,6 +12,7 @@ journal wrote; only killing a process proves the queue survives.
 """
 
 import datetime as dt
+import json
 import os
 import stat
 import subprocess
@@ -642,6 +643,136 @@ def test_a_failed_poll_close_redelivers_rather_than_losing_the_batch(tmp_path):
     assert len(first.poll("app-a")) == 1
     assert first.journal_write_errors == 1
     assert Inbox(journal=Journal(path)).restore() == 1
+
+
+def test_inbox_audit_file_is_owner_only_from_the_first_byte(tmp_path):
+    """CG-65: the audit trail holds sender_email and raw; 0644 was the larger
+    of the two on-disk exposures ADR-0002 measured."""
+    ibx = Inbox(audit_dir=tmp_path / "inbox-data")
+    ibx.put(_reply(text="APPROVE synthetic-role-42"))
+    audit = next((tmp_path / "inbox-data").glob("*.jsonl"))
+    assert stat.S_IMODE(audit.stat().st_mode) == 0o600
+    # and the mode survives a second append rather than being reset
+    ibx.put(_reply(text="DECLINE synthetic-role-43"))
+    assert stat.S_IMODE(audit.stat().st_mode) == 0o600
+
+
+def test_polled_reply_body_is_erased_when_the_inbox_drains(tmp_path):
+    # The mirror image of the outbound side: a POLLED reply has no replay
+    # value, and a `close` does not erase its body — only compaction does.
+    jpath = tmp_path / "inbox.jsonl"
+    ibx = Inbox(journal=Journal(jpath))
+    ibx.put(_reply(text="APPROVE synthetic-role-42"))
+    assert "APPROVE synthetic-role-42" in jpath.read_text(encoding="utf-8")
+    ibx.poll("app-a")
+    assert jpath.read_text(encoding="utf-8") == ""
+
+
+def test_polling_one_app_never_erases_another_apps_pending_reply(tmp_path):
+    """The one-file trap: compaction is gateway-wide, the poll is per-app.
+
+    There is ONE inbox.jsonl, so compacting because the POLLED app's queue is
+    empty would truncate another app's still-pending replies out of existence —
+    a silent inbound loss, which is the exact failure the journal was added to
+    prevent. The outbound twin has no equivalent trap: `_jobs` is one flat list.
+    """
+    jpath = tmp_path / "inbox.jsonl"
+    ibx = Inbox(journal=Journal(jpath))
+    ibx.put(_reply(app="app-a", text="POLLED SOON"))
+    ibx.put(_reply(app="app-b", text="STILL PENDING"))
+    ibx.poll("app-a")
+    assert "STILL PENDING" in jpath.read_text(encoding="utf-8")
+    # and it survives a restart
+    revived = Inbox(journal=Journal(jpath))
+    assert revived.restore() == 1
+    assert revived.pending_counts() == {"app-b": 1}
+
+
+def test_a_failed_poll_close_does_not_let_compaction_erase_the_batch(tmp_path):
+    # The inbound half of the same gate as the dispatcher's. `close_many`
+    # failing leaves those ids open ON PURPOSE so they replay; a compaction
+    # fired on the same drain would delete them instead.
+    jpath = tmp_path / "inbox.jsonl"
+
+    class BrokenJournal(Journal):
+        def close_many(self, entry_ids, status):
+            raise OSError("no space left on device")
+
+    ibx = Inbox(journal=BrokenJournal(jpath))
+    ibx.put(_reply(text="REDELIVERED"))
+    assert len(ibx.poll("app-a")) == 1
+    assert ibx.journal_write_errors == 1
+    assert "REDELIVERED" in jpath.read_text(encoding="utf-8")
+    assert Inbox(journal=Journal(jpath)).restore() == 1
+
+
+def test_an_empty_poll_does_not_create_or_truncate_a_journal(tmp_path):
+    """Hard rule #6's "nothing reached disk" runs through here.
+
+    A poll that closed nothing has reclaimed nothing, and `compact` writes and
+    renames unconditionally — so compacting on an empty poll would create a
+    journal file for a gateway that has never queued a reply. An opted-out
+    space's suppressed event is exactly that shape.
+    """
+    jpath = tmp_path / "queue" / "inbox.jsonl"
+    ibx = Inbox(journal=Journal(jpath))
+    assert ibx.poll("app-a") == []
+    assert not jpath.exists()
+
+
+def test_unrevivable_reply_is_preserved_in_quarantine(tmp_path):
+    """CG-65 / ADR-0002 Q6: the gateway keeps the bytes it is holding instead of
+    pointing at a file the sweeper may delete."""
+    jpath = tmp_path / "inbox.jsonl"
+    Journal(jpath).open(1, "inbound", {"app": "app-a", "NOT": "an InboundReply"})
+    ibx = Inbox(journal=Journal(jpath), quarantine_dir=tmp_path / "quarantine")
+    assert ibx.restore() == 0
+    assert ibx.unrevivable == 1 and ibx.quarantined == 1
+    qfile = next((tmp_path / "quarantine").glob("unrevivable-*.jsonl"))
+    assert "NOT" in qfile.read_text(encoding="utf-8")
+    assert stat.S_IMODE(qfile.stat().st_mode) == 0o600
+    assert jpath.read_text(encoding="utf-8") == ""   # journal's own copy is gone, as before
+
+
+def test_the_quarantine_keeps_the_PAYLOAD_not_just_the_id(tmp_path):
+    # The whole point of Q6: the record is already in hand at the drop site, so
+    # preserving it costs one append. An id alone would point at nothing.
+    jpath = tmp_path / "inbox.jsonl"
+    Journal(jpath).open(7, "inbound",
+                        {"app": "app-a", "text": "APPROVE synthetic-role-42",
+                         "from_a_future_envelope": True})
+    ibx = Inbox(journal=Journal(jpath), quarantine_dir=tmp_path / "quarantine")
+    ibx.restore()
+    preserved = json.loads(
+        next((tmp_path / "quarantine").glob("*.jsonl")).read_text(encoding="utf-8"))
+    assert preserved["id"] == 7
+    assert preserved["payload"]["text"] == "APPROVE synthetic-role-42"
+
+
+def test_quarantine_is_opt_in_and_absence_is_reported_honestly(tmp_path, capsys):
+    jpath = tmp_path / "inbox.jsonl"
+    Journal(jpath).open(1, "inbound", {"bad": "record"})
+    ibx = Inbox(journal=Journal(jpath))          # no quarantine_dir
+    ibx.restore()
+    assert ibx.unrevivable == 1 and ibx.quarantined == 0
+    assert "NO quarantine copy" in capsys.readouterr().out
+
+
+def test_a_failed_quarantine_write_is_counted_and_never_stops_a_boot(tmp_path, capsys):
+    # A recovery mechanism that has silently stopped working is worse than
+    # none, because it is trusted. So: counted, said out loud, boot continues.
+    jpath = tmp_path / "inbox.jsonl"
+    Journal(jpath).open(1, "inbound", {"bad": "record"})
+    blocker = tmp_path / "blocked"
+    blocker.write_text("I am a file, not a directory", encoding="utf-8")
+
+    ibx = Inbox(journal=Journal(jpath), quarantine_dir=blocker / "quarantine")
+    assert ibx.restore() == 0                    # the boot completed
+    assert ibx.unrevivable == 1
+    assert (ibx.quarantined, ibx.quarantine_write_errors) == (0, 1)
+    out = capsys.readouterr().out
+    assert "quarantine write FAILED" in out
+    assert "NO quarantine copy" in out
 
 
 def test_without_a_journal_the_inbox_is_exactly_what_it_was():

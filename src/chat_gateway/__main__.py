@@ -42,7 +42,12 @@ def build_runtime():
     # ARRIVED, the journal says what is still UNPOLLED, and passive
     # polling is the only inbound path an opted-out tenant has.
     inbox = Inbox(audit_dir=os.environ.get("CHAT_GATEWAY_INBOX_DIR", "inbox-data"),
-                  journal=Journal(Path(state_dir) / "queue" / "inbox.jsonl"))
+                  journal=Journal(Path(state_dir) / "queue" / "inbox.jsonl"),
+                  # CG-65: unrevivable replies are preserved here rather than
+                  # only pointed at in another file. Under the state dir, beside
+                  # the journals, because it is queue-recovery material — not an
+                  # audit record of what arrived.
+                  quarantine_dir=Path(state_dir) / "quarantine")
 
     from .adapters.webhook import WebhookAdapter
 
