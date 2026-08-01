@@ -741,7 +741,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
 | **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
-| **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | 📋 queued | ⚠ **No longer doc-only — rescoped by ADR-0002 (#49) `D + A + D5`.** Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
+| **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | 🚀 in-flight | ⚠ **No longer doc-only — rescoped by ADR-0002 (#49) `D + A + D5`.** Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
 | **CG-68** · time-bounded pruning of the inbound audit trail | 📋 queued | ✅ **decisions approved** (30/7/0, unlink, amend the contract). ⏸ **Sequenced behind CG-65** — the quarantine is what makes pruning safe. Answers ADR-0002 §9 **Q6** by amending a **published** guarantee. Plan Tasks 10–13 |
 | **CG-69** · published-promise inventory (process control) | 📋 queued | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. No plan yet |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
@@ -1604,7 +1604,7 @@ itself a copy — would have reproduced the exact defect this item corrects.
 
 ---
 
-### CG-65 · shrink the journal's body window, harden both audit trails, and correct `aitrader.md`  📋 queued
+### CG-65 · shrink the journal's body window, harden both audit trails, and correct `aitrader.md`  🚀 in-flight
 
 | | |
 |---|---|
