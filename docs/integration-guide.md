@@ -379,8 +379,17 @@ Both stay; neither substitutes for the other. One consequence is worth planning
 for: a journalled reply that no longer validates as an `InboundReply` at boot —
 an envelope change across a deploy looks precisely like this — is **dropped, not
 delivered**, and counted at `/healthz` → `inbox.unrevivable_at_boot`, which
-degrades the endpoint. It is not resent, and the audit file is then the only
-copy.
+degrades the endpoint. It is not resent. **The whole record is preserved**,
+payload included, under the state dir's `quarantine/` directory, which is
+**never pruned** and is the recovery record; `/healthz` →
+`inbox.quarantined_at_boot` says how many were preserved, and
+`inbox.quarantine_write_errors` is non-zero if that ever failed.
+
+⚠ **This replaced a weaker sentence on 2026-07-31.** It used to read *"and the
+audit file is then the only copy"* — which pointed you at a file the gateway
+merely happened not to delete, rather than at one it guarantees. The gateway is
+**holding** the lost record at the moment it declares it lost, so it now keeps
+it instead of pointing elsewhere.
 
 ## Identities + health
 
@@ -393,8 +402,8 @@ curl -s $GW/healthz                     # honest health — no auth required
 
 This is where the queue journals report themselves **to you**. A boot line on
 the gateway's console says some of it as well, but that is the operator's copy
-and you cannot read it. Seven fields arrived with the journals on 2026-07-31,
-and **five of them can flip `status` to `degraded`** — so a consumer that alarms
+and you cannot read it. **Nine** fields arrived with the journals on 2026-07-31,
+and **six of them can flip `status` to `degraded`** — so a consumer that alarms
 on `status` should know what they mean before one fires at 03:00. `status` is
 computed **from** `reasons`: anything that can degrade this endpoint says so in
 words, because a number nobody reads is not honest health.
@@ -406,6 +415,8 @@ words, because a number nobody reads is not honest health.
 | `delivery.expired_at_boot` | queued jobs older than the 24h replay ceiling, **closed rather than posted** — a three-day-old alert delivered now actively misleads | **yes** |
 | `delivery.unroutable_at_boot` | queued jobs that could not be rebuilt at boot: the registry no longer grants that identity (never sent on a withdrawn permission), **or** the stored payload no longer validates as an envelope — the outbound twin of `unrevivable` | **yes** |
 | `inbox.unrevivable_at_boot` | journalled replies that no longer parse as an `InboundReply`; dropped, not delivered | **yes** |
+| `inbox.quarantined_at_boot` | how many of those were preserved in full — payload included — under the state dir's `quarantine/`, which is never pruned. Read it **against** the field above: that one is what left the queue, this one is what you can still recover | no — the recovery mechanism working |
+| `inbox.quarantine_write_errors` | quarantine writes that **failed**. At least one unrevivable reply has **no preserved copy**, so only the per-app audit trail records that it ever arrived | **yes** |
 | `delivery.journal_skipped_lines` | journal lines that did not parse. A torn trailing line is the *expected* shape after a power loss and is deliberately not fatal — a gateway that refuses to boot over a half-written byte is a crash loop | **yes** |
 | `delivery.journal_write_errors` | journal writes that **failed** since start. The queues keep running — raising there would turn a full disk into a re-send storm — so while this is non-zero they are running **without** durability, and a reply you already polled can be delivered to you a second time after a restart | **yes** |
 
@@ -414,11 +425,14 @@ Three things the field names do not tell you:
 - **Two of the `delivery.*` fields count both queues.**
   `journal_skipped_lines` and `journal_write_errors` are sums across the
   outbound *and* inbox journals — despite the prefix. The other three
-  `delivery.*` fields, and both `inbox.*` fields, are per-queue exactly as
-  their prefixes say. Do not read the prefix as a guarantee on those two.
-- **Five fields, four `reasons` lines.** `expired_at_boot` and
+  `delivery.*` fields, and **all four** `inbox.*` fields, are per-queue exactly
+  as their prefixes say. Do not read the prefix as a guarantee on those two.
+- **Six fields, five `reasons` lines.** `expired_at_boot` and
   `unroutable_at_boot` share one entry: both mean "queued, then not delivered",
-  and one investigation reads them together.
+  and one investigation reads them together. (It was five and four until
+  2026-07-31; `quarantine_write_errors` added one of each. Recount against
+  `service.py` rather than trusting this sentence — a copied count is what
+  `CLAUDE.md`'s test-count note is about.)
 - **The `*_at_boot` reasons will not clear while the process runs.** They
   describe this boot, and boot compaction has already removed the records, so a
   restart clears them. `journal_write_errors` is the opposite — it is live, and

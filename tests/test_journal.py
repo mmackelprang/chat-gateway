@@ -6,7 +6,9 @@ real identity or a real credential — the CG-26 guard scans `tests/**/*.py`.
 
 import json
 
-from chat_gateway.journal import Journal
+from chat_gateway.journal import Journal, chmod_owner_only
+
+from conftest import assert_owner_only
 
 
 def test_open_then_close_leaves_nothing_to_replay(tmp_path):
@@ -211,6 +213,29 @@ def test_the_journal_is_readable_by_eye_during_an_incident(tmp_path):
     assert len(lines) == 2
     assert [json.loads(line)["op"] for line in lines] == ["open", "close"]
     assert json.loads(lines[0])["payload"]["title"] == "disk almost full"
+
+
+def test_the_journal_is_owner_only_from_the_first_byte_and_across_compaction(tmp_path):
+    """CG-65 promoted this primitive to `chmod_owner_only` for two more callers.
+
+    Pinned here because the rename moved a security control: the journal holds
+    whole payloads, the chmod happens inside the `open()` context before the
+    first write, and compaction REPLACES the file — so the mode has to be set on
+    the `.tmp` before the rename, not on the old inode.
+    """
+    path = tmp_path / "q.jsonl"
+    j = Journal(path)
+    j.open(1, "notify", {"title": "t"})
+    assert_owner_only(path)
+    j.compact()
+    assert_owner_only(path)
+
+
+def test_chmod_owner_only_is_never_fatal_on_a_path_it_cannot_touch(tmp_path):
+    # Best-effort by contract: a filesystem that cannot express the mode is not
+    # a reason to refuse to write. The deploy runbook's directory mode is the
+    # control that actually holds on the Linux target.
+    chmod_owner_only(tmp_path / "does-not-exist.jsonl")
 
 
 def test_a_write_failure_raises_rather_than_pretending_to_have_persisted(tmp_path):
