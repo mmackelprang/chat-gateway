@@ -4,9 +4,10 @@
 |---|---|
 | **Spec** | [`2026-07-31-body-retention-and-audit-hardening-design.md`](../specs/2026-07-31-body-retention-and-audit-hardening-design.md) |
 | **ADR** | [ADR-0002](../../architecture/decisions/2026-07-31-journalled-message-bodies.md) — `D + A + D5` |
-| **Base** | `dced002` (CG-61/#50), suite **247**. Rebased 2026-07-31 — drafted on `b8af699`/246 |
+| **Base** | Tasks 1–9: `dced002` (CG-61/#50), suite **247**. **Tasks 10–14: `4fbd634` (CG-65/#52), suite 268** |
 | **Approved** | ✅ **all four sign-offs granted by the user, 2026-07-31** — see the box below |
-| **Rows** | **CG-65** = Tasks 1–9 (ships on green). **CG-68** = Tasks 10–13 (⏸ merge-gated) |
+| **Rows** | **CG-65** = Tasks 1–9 — ✅ **shipped as #52**. **CG-68** = Tasks **10–14** — 📋 queued, gate released |
+| **Corrected** | **2026-08-01** — Tasks 4 & 5 rewritten to match what shipped (a data-loss race their literal code contained), Tasks 10–12 amended from a pre-execution audit, **Task 14 added**. See the two ⚠ CORRECTED boxes and § *CG-68 pre-execution audit* |
 
 > ## ✅ APPROVED — all four sign-offs granted by the user, 2026-07-31
 >
@@ -29,14 +30,26 @@
 
 > ⚠ **Builder: read this box first.**
 >
-> 1. **Tasks 10–13 are approved but still sequenced second: CG-65 must MERGE
->    first.** Task 6 (quarantine) is the gate that makes pruning safe. Shipping
->    the sweeper first deletes the last copy of a reply that was never delivered.
->    This is the one remaining gate — the four decisions above are settled.
+> 0. ⚠ **THIS DOCUMENT WAS CORRECTED ON 2026-08-01 AND TASKS 1–9 ARE ALREADY
+>    SHIPPED.** You are here for **Tasks 10–14** (CG-68). Tasks 1–9 are kept as
+>    the record of what #52 built, **including two ⚠ CORRECTED boxes recording
+>    that Tasks 4 and 5 shipped literal code that was wrong.** Read those boxes
+>    before Task 10: the defect they describe is a *shape*, CG-68 touches the
+>    same paths, and CG-68 **deletes tenant content** where CG-65 only compacted
+>    replayable state. Then read § *CG-68 pre-execution audit*, which is the
+>    verdict on whether Tasks 10–13 carried the same shape (**they did not**)
+>    and the six neighbouring findings that are now folded into them.
+> 1. ✅ **The sequencing gate is RELEASED.** It read *"CG-65 must MERGE first"*;
+>    CG-65 merged 2026-07-31 as **#52** (`4fbd634`). Task 6's quarantine exists.
+>    Nothing gates CG-68 now.
 > 2. **No ⚠ flag may be cleared, added or reworded.** Nothing here touches
 >    `adapters/` or any Google seam. Do not restate `CLAUDE.md`'s verification
 >    ledger — link to it.
 > 3. **Do not touch `docs/architecture/`.** The ADR is decided and is evidence.
+>    ⚠ This is why **ADR-0002:463 still shows `compact([])`** even though that
+>    line is now known to be a data-loss bug. It is labelled *"shape, not
+>    implementation"* and is a dated record of what was believed on 2026-07-31.
+>    **Do not fix it and do not copy from it.**
 > 4. **Do not re-open ADR-0002 §6.**
 > 5. Tests: `python3 -m pytest` on POSIX, `python -m pytest` on the Windows dev
 >    box. Measure the final count; do not copy the estimate below.
@@ -195,6 +208,48 @@ def test_delivery_audit_file_is_owner_only(tmp_path):
 
 ADR-0002 **D1**, off §4 Option D's sketch.
 
+> ## ⚠ CORRECTED 2026-08-01 — this task's literal code contained a data-loss race
+>
+> **What this task told a Builder to write was wrong, and it was caught in
+> review, not in production.** The correction is below; the wrong version and
+> its counterfactual are kept here rather than edited away, because CG-68's
+> Tasks 10–13 touch these same paths and a reader needs to know which pattern
+> was rejected and why.
+>
+> **What the plan said:** `self._journal.compact([])`, annotated *"`compact([])`
+> truncates the file to zero lines — measured, not assumed."* That measurement
+> was true. The **conclusion drawn from it** was not.
+>
+> **The race.** `Dispatcher.enqueue` writes its journal `open` to disk **before**
+> taking `self._lock` — deliberately, so a job that cannot be persisted is
+> refused rather than queued. So a record can already be on disk while `drained`
+> is being computed from the in-memory `_jobs`. `compact([])` **asserts** that
+> the survivor set is empty. Passing that stale assertion erases a job
+> `enqueue` had already answered `202` for.
+>
+> **The fix, shipped in #52:** `compact()` with **no argument** recomputes
+> open-minus-close from the file itself, under the **journal's own** `RLock`
+> (`journal.py:229` → `_compact_locked`), which `Journal.open` also holds. The
+> two serialize: the racing record is either recomputed as a survivor and
+> rewritten, or it lands after the `os.replace`. On a genuine drain it still
+> truncates to zero lines, because everything really is closed.
+>
+> **The general rule, since CG-68 gets to re-learn it or not:** *never assert an
+> emptiness or survivor set computed under one lock to a destructive operation
+> protected by a different one.* Recompute under the lock that guards the thing
+> you are about to destroy.
+>
+> **Two related things this correction did NOT change.** The honest-cost
+> paragraph about a stuck job pinning other tenants' bodies is untouched and
+> still true — it is a property of the drain gate, not of the survivor set.
+> And **`docs/architecture/decisions/2026-07-31-journalled-message-bodies.md:463`
+> still shows `compact([])`** — deliberately. That ADR block is labelled *"shape,
+> not implementation"* and is **dated evidence of what was believed on
+> 2026-07-31**, not instructions. Do not edit it (Builder box, item 3); do not
+> copy from it either.
+>
+> Pinned by two tests that were confirmed to **fail** against `compact([])`.
+
 **`src/chat_gateway/delivery.py::_finish`** — replace the whole method:
 
 ```python
@@ -206,7 +261,8 @@ ADR-0002 **D1**, off §4 Option D's sketch.
         # killed here replays the job and delivers it TWICE. Deliberate — Chat
         # gives us no idempotency key, so the alternative is a two-phase commit
         # we are not building, and losing an alert is the worse failure.
-        self._journal_write(lambda: self._journal.close(job.entry_id, status), "close")
+        closed = self._journal_write(lambda: self._journal.close(job.entry_id, status),
+                                     "close")
         with self._lock:
             if job in self._jobs:
                 self._jobs.remove(job)
@@ -229,13 +285,38 @@ ADR-0002 **D1**, off §4 Option D's sketch.
         # pins every other tenant's delivered body on disk until it terminates,
         # because the set never empties. Bounded by the ~73-minute retry ladder,
         # or by REPLAY_MAX_AGE_S (24h) across gateway downtime.
-        if drained:
-            self._journal_write(lambda: self._journal.compact([]), "compact")
+        #
+        # ⚠ `compact()` RECOMPUTES its survivors — it is NOT `compact([])`, and
+        # that difference is a data-loss bug, not a style choice. `enqueue`
+        # writes its `open` to disk BEFORE taking `self._lock` (deliberately —
+        # a job we cannot persist must be refused, not queued), so a record can
+        # be on disk while `drained` is being computed from `_jobs`. Asserting
+        # an empty survivor set from that snapshot would erase a job that
+        # `enqueue` had already 202'd. Recomputing reads open-minus-close under
+        # the JOURNAL's own lock, which `Journal.open` also holds, so the two
+        # serialize: the racing record is either a survivor and is rewritten,
+        # or it lands after the `os.replace`. On a genuine drain it still
+        # truncates to zero lines, because everything is closed.
+        #
+        # Same reasoning covers a FAILED `close`: that entry is still
+        # open-minus-close, so it survives rather than being truncated away —
+        # which is the point of counting the failure instead of raising.
+        # `closed` is kept as the cheap first gate.
+        if drained and closed:
+            self._journal_write(lambda: self._journal.compact(), "compact")
 ```
 
 ⚠ `drained` is computed **inside** the lock and acted on outside it, matching
 `_journal_write`'s existing posture (it must never be called under the lock — a
-journal write can block on fsync).
+journal write can block on fsync). That posture is *why* the survivor set must
+be recomputed rather than snapshotted: the gap between reading `_jobs` and
+touching the file is exactly where the racing `open` lands.
+
+⚠ **`closed` is a second gate the first draft did not have.** `_journal_write`
+returns `False` when the `close` failed, and a failed `close` leaves the entry
+open **on purpose** so it replays. Compacting anyway would recompute it as a
+survivor and rewrite it — correct, but the gate is kept as the cheap first
+check so the common failure path never touches the file at all.
 
 **Tests:**
 
@@ -281,6 +362,37 @@ def test_the_append_count_backstop_still_fires_for_a_queue_that_never_drains(tmp
 
 The mirror image, and it carries a trap the outbound side does not.
 
+> ## ⚠ CORRECTED 2026-08-01 — same race, reached by a different route
+>
+> **This task's first draft had the same `compact([])` defect as Task 4, plus
+> two gates it was missing entirely.** Recorded rather than quietly rewritten,
+> for the same reason: CG-68's sweeper touches this directory's neighbour and a
+> reader needs the rejected pattern, not just the accepted one.
+>
+> **Why `drained` alone does not close it here.** `Inbox.put` writes its `open`
+> to disk **before** taking `self._lock` (deliberately — an unpersisted tap must
+> not be acked), so **another app's** reply can be on disk while `drained` is
+> read from `_pending`. The `drained` check cannot see it, because the racing
+> record **is not yet in `_pending` at all**. This is the same one-file trap the
+> existing comment describes, arrived at from the other side.
+>
+> **Two further gates found by measurement, not reasoning** — both are in the
+> shipped code and neither was in the first draft:
+>
+> - **`ids`** — a poll that closed nothing has reclaimed nothing, and `compact`
+>   writes-and-renames unconditionally. An empty poll would therefore **create**
+>   a journal file for a gateway that has never queued a reply. That broke
+>   `test_an_opted_out_owner_reaches_neither_its_inbox_nor_unrouted_nor_disk`,
+>   which pins hard rule #6's *"nothing reached disk"* — so this gate is
+>   load-bearing on a hard rule, not a tidiness point. It would also truncate an
+>   unrestored journal.
+> - **`closed`** — a `close_many` that FAILED left those ids open on purpose so
+>   they replay. Truncating there turns the counted duplicate this method buys
+>   into the silent loss it exists to avoid.
+>
+> `Dispatcher._finish` needs no `ids` equivalent: it is only ever called with a
+> job that just terminated.
+
 **`src/chat_gateway/inbox.py::poll`** — replace the whole method:
 
 ```python
@@ -300,12 +412,40 @@ The mirror image, and it carries a trap the outbound side does not.
             drained = not any(self._pending.values())
         # One append for the whole batch, so a crash part-way cannot close some
         # of a poll's replies and replay the rest — see Journal.close_many.
-        self._journal_write(lambda: self._journal.close_many(ids, "polled"), "close_many")
+        closed = self._journal_write(lambda: self._journal.close_many(ids, "polled"),
+                                     "close_many")
         # CG-65 / ADR-0002 D1, the mirror image of `Dispatcher._finish`: a
         # POLLED reply has no replay value, and a `close` does not erase its
         # body — only compaction does.
-        if drained:
-            self._journal_write(lambda: self._journal.compact([]), "compact")
+        #
+        # Gated on `ids` and `closed` as well as on the drain, and both gates
+        # were MEASURED rather than reasoned about. `ids`: a poll that closed
+        # nothing has reclaimed nothing, and `compact` writes-and-renames
+        # unconditionally — so an empty poll would CREATE a journal file for a
+        # gateway that has never queued a reply (it broke
+        # `test_an_opted_out_owner_reaches_neither_its_inbox_nor_unrouted_nor_disk`,
+        # which pins hard rule #6's "nothing reached disk"), and would truncate
+        # an unrestored one. `closed`: a `close_many` that FAILED left those ids
+        # open ON PURPOSE so they replay — see `_journal_write` — and truncating
+        # here would turn that counted duplicate into a silent loss.
+        # `Dispatcher._finish` needs no `ids` equivalent: it is only ever called
+        # with a job that just terminated.
+        #
+        # ⚠ And `compact()` RECOMPUTES its survivors — it is NOT `compact([])`.
+        # `put` writes its `open` to disk BEFORE taking `self._lock`
+        # (deliberately — an unpersisted tap must not be acked), so ANOTHER
+        # app's reply can be on disk while `drained` is being read from
+        # `_pending`. Asserting an empty survivor set from that snapshot would
+        # erase a tap that was already journalled and is about to be queued —
+        # the same one-file trap as the comment above, reached by a different
+        # route, and the `drained` check alone does not close it because the
+        # racing record is not yet IN `_pending`. Recomputing reads
+        # open-minus-close under the JOURNAL's own lock, which `Journal.open`
+        # also holds, so the two serialize. A genuine drain still truncates to
+        # zero lines, and a FAILED `close_many` survives rather than being
+        # truncated away.
+        if ids and drained and closed:
+            self._journal_write(lambda: self._journal.compact(), "compact")
         return items
 ```
 
@@ -376,6 +516,13 @@ deletes the last copy of a reply that was never delivered.
 
         Never swept — `retention.py` does not look in this directory, and that
         is the point of it existing.
+
+        ⚠ SHIPPED DIFFERENTLY, and the shipped text is the one to edit. #52's
+        review rewrote this paragraph into the FUTURE tense ("CG-68's retention
+        sweeper must not look…; there is no sweeper in this tree yet") because
+        `retention.py` did not exist. It exists after Task 10, so the paragraph
+        inverts again — **that is Task 14, row 5**, which also has the stronger
+        wording now available ("cannot", not "must not").
 
         Best-effort, and counted rather than raised: a quarantine write that
         fails must not stop a boot. The console line below says which branch
@@ -475,6 +622,16 @@ def test_quarantine_is_opt_in_and_absence_is_reported_honestly(tmp_path, capsys)
 ## Task 7 — Surface the quarantine at `/healthz`
 
 Hard rule #5. This is also what makes promise **site 6** true again.
+
+> ⚠ **SHIPPED DIFFERENTLY in two ways; `service.py` on `4fbd634` is the text to
+> edit, not the block below.** #52's review (a) made the `reasons` tail
+> **branch on `preserved`**, because asserting *"the quarantine is the recovery
+> record"* when nothing was preserved reproduces the exact defect this task
+> exists to fix, on the exact line — the comment at `service.py:480-487` is that
+> reasoning's one home; and (b) rewrote both `else` branches to say the audit
+> trail *"carries no retention guarantee"* rather than *"is subject to the
+> retention window"*, since no window shipped. **(b) inverts when Task 10 lands
+> — that is Task 14, rows 1 and 2.** (a) does not change and must survive.
 
 **`src/chat_gateway/service.py`** — extend the `inbox` block:
 
@@ -688,14 +845,146 @@ is the argument against a third home. Suggested addition:
 
 ---
 
-# CG-68 — Tasks 10–13 ⏸ MERGE-GATED
+# CG-68 — Tasks 10–14
 
 > ✅ **The four decisions are made (A1–A4 above, user, 2026-07-31).** The window
 > is **30 / 7 / 0** and the constants in Task 10 are already written to it — they
-> and every doc number in Task 13 must not disagree.
+> and every doc number in Task 14 must not disagree.
 >
-> ⚠ **One gate remains and it is sequencing, not approval: CG-65 must be MERGED
-> before this row starts.** Task 6's quarantine is what makes pruning safe.
+> ✅ **The merge gate is RELEASED.** It read *"CG-65 must be MERGED before this
+> row starts"*; CG-65 merged **2026-07-31 as #52** (`4fbd634`), suite **268**.
+> The quarantine exists (`inbox.py:264`, `<state_dir>/quarantine/`). Kept as a
+> released gate rather than deleted, so a reader can tell the difference between
+> a gate that was satisfied and one that was never there.
+>
+> **Base for this row is `4fbd634`, suite 268** — not the `~266` the CG-68 gates
+> section estimated before CG-65 shipped. Measured, not copied.
+
+---
+
+## ⚠ CG-68 pre-execution audit — 2026-08-01
+
+Tasks 10–13 were audited before execution for the **CG-65 defect shape** — *an
+emptiness or survivor set computed under one lock, asserted to a destructive
+operation protected by a different one* — because CG-68 **deletes tenant
+content** where CG-65 only compacted replayable state. A stale read here is
+unrecoverable, not merely wasteful.
+
+### The headline: **NO. Tasks 10–13 do not carry that shape.**
+
+`RetentionSweeper.sweep()` derives **nothing** from in-memory state. It reads the
+directory — the authority itself — and decides each file independently from that
+file's **own name**. There is no global survivor assertion, so there is no
+snapshot that can go stale against the disk. The two designs are structurally
+different, and that difference is A3's *"the filename **is** the retention key"*
+paying off a second time: a per-file decision keyed on the file cannot be raced
+by the creation of a *different* file.
+
+**The one latent analogue, named so it is not rediscovered as a surprise:**
+`Inbox._audit` (`inbox.py:297`) and `sweep()` write and delete in the same
+directory with **no shared lock**. It is safe only because `_audit` writes
+**today's** file and `sweep()` never targets a file inside its window. That
+safety is arithmetic, not synchronization — and finding **F1** below is the one
+input that can make the arithmetic wrong.
+
+### What the audit DID find — six neighbours, folded into the tasks below
+
+| # | Sev | Where | Finding |
+|---|---|---|---|
+| **F0** | **HIGH** | Task 12 | `/healthz` raises **`KeyError`** whenever `sweeper is None` |
+| **F1** | MED | Task 10 vs `inbox.py:301` | The retention key is **written in local-time and read in UTC** — two calendars |
+| **F2** | MED | Task 10 | *"What this never touches"* is a **path arrangement, not a code property** — and the quarantine's filename matches the sweeper's own regex |
+| **F3** | MED | Task 10 / 12 | A sweeper that has **silently stopped** is invisible at `/healthz` — the exact rule-#5 founding failure |
+| **F4** | LOW | Task 10 | Two `print(... {exc})` sites bypass **CG-29's allowlist** |
+| **F5** | LOW | Task 12 | `unrouted_window_days` **re-derives** `window_for`'s rule instead of calling it |
+
+**F0 — `/healthz` KeyError when no sweeper is configured. HIGH; it takes the
+endpoint down.** Task 12 renders the `retention` block as
+`{...} if sweeper is not None else {"enabled": False, "note": ...}` — an
+else-branch with **no `delete_errors` key** — and then indexes
+`body["retention"]["delete_errors"]` unconditionally. Every offline test that
+builds an app without a sweeper, which Task 12 explicitly says is the point of
+the `None` default, would 500 on `/healthz`. The endpoint that hard rule #5
+exists to keep honest cannot answer at all. The existing `subscriber` block
+(`service.py:449-452`) has the identical two-branch shape and **guards it**:
+`sub = body["subscriber"]` then `if sub["enabled"]:`. Task 12 now copies that
+guard.
+
+**F1 — the retention key is written in one calendar and read in another.
+MED.** `Inbox._audit` names the file with `dt.date.today()` (`inbox.py:301`) —
+**local, naive**. `RetentionSweeper._now` defaults to
+`dt.datetime.now(dt.timezone.utc)` and compares against `.date()` — **UTC**. On
+any host west of UTC the local date lags the UTC date for part of every day, so
+a file is up to one day *older* by the sweeper's reckoning than by the reckoning
+that named it. At **30 / 7** this costs a few hours of window and nothing else.
+It matters because the *design* rests on the filename being an exact key, and a
+key produced by one clock and consumed by another is not exact — and because it
+is the one input that could put today's file inside the delete set, which is the
+only way the unlocked `_audit`/`sweep` pair above can collide. Fixed by giving
+`RetentionSweeper` the **same** calendar as the writer, with the mismatch
+recorded in the module rather than left for someone to re-derive.
+
+**F2 — *"what this never touches"* is true by path arrangement, not by code.
+MED.** Task 10's module docstring lists `quarantine/`, `deliveries/` and
+`queue/` under **WHAT THIS NEVER TOUCHES**, which reads as an enforced property.
+It is not. Measured:
+
+- `unrevivable-2026-07-31.jsonl` **matches** `_NAME` → `app='unrevivable'`.
+  That does not start with `_`, so it draws the **full 30-day tenant window**,
+  not the 7-day floor.
+- `deliveries-aitrader-2026-07-20.jsonl` **matches** too →
+  `app='deliveries-aitrader'`. ADR **D7**'s *"permanent by decision"* is
+  likewise unenforced.
+
+What actually protects both today is that `glob("*.jsonl")` is **non-recursive**
+and `__main__.py` puts them in sibling directories: the sweep dir is
+`CHAT_GATEWAY_INBOX_DIR` (default `inbox-data`), the quarantine is
+`<CHAT_GATEWAY_STATE_DIR>/quarantine` (`__main__.py:50`), the delivery log
+`<state_dir>/deliveries` (`__main__.py:104`). **So the plan's claim is true on
+the default configuration** — but it is one env-var away from false, and both
+vars are operator-settable with nothing comparing them. Given that quarantine
+files hold replies that were **never delivered** and are by construction *old*,
+that is the one deletion in this repo with no second copy anywhere. Task 10 now
+makes the guarantee a code property: refuse a sweep directory that is, contains,
+or sits inside the quarantine, and skip the quarantine's own filename outright.
+
+**F3 — a stopped sweeper is invisible. MED, hard rule #5.** Two gaps:
+`sweep()` sets `last_sweep_at` only *after* its early-return guard, so a
+deployment with no `inbox-data/` yet reports `enabled: true, last_sweep_at:
+null` **forever** — indistinguishable from a dead thread. And `_run` catches
+every sweep exception, prints it, and **counts nothing**, so a sweeper throwing
+every six hours reports `errors: 0` with a frozen `last_sweep_at` and never
+degrades `/healthz`. That is precisely the failure rule #5 was written after: a
+health check that reads plausible while the machinery behind it is dead. Task 10
+now records `last_sweep_at` on every completed pass and keeps a
+`last_sweep_error`; Task 12 surfaces both.
+
+**F4 — two print sites bypass CG-29's allowlist. LOW.** Task 10 prints
+`({exc})` for an unlink `OSError` and for a sweep failure. `str(OSError)` from
+`Path.unlink()` embeds the **absolute path** (`[Errno 13] Permission denied:
+'/srv/.../job-hunter-2026-06-01.jsonl'`), and `OSError` is not a class
+`errors.py` marks. No credential is exposed — hard rule #2 is not breached — but
+CLAUDE.md's CG-29/CG-33 rule is *"printed in full only if this repo wrote every
+byte of it"*, and the whole point of an **allowlist** is that the next
+unanticipated exception is not the one that teaches you. Task 10 now uses
+`describe_exception`. `path.name` is kept: it was already deliberately `.name`
+rather than the full path.
+
+**F5 — `window_for`'s rule gets a second home. LOW.** Task 12 computes
+`min(sweeper.days, UNROUTED_RETENTION_DAYS)` inline, duplicating `window_for`.
+If the floor rule ever changes, `/healthz` publishes the old one. This file's own
+history is the argument (CLAUDE.md's test count, twice). Task 12 now calls
+`window_for("_unrouted", sweeper.days)`.
+
+### What the audit found OUTSIDE Tasks 10–13 → new **Task 14**
+
+CG-65's pre-merge review rewrote three strings that asserted, in the **present**
+tense, a retention window and a `retention.py` that had not shipped. Those fixes
+are on `main` and are correct **today** — and each one becomes **false in the
+opposite direction the moment this row ships**. Five strings, **two of them on
+the unauthenticated `/healthz`**. Task 13 did not list any of them. See Task 14.
+
+---
 
 ## Task 10 — `src/chat_gateway/retention.py`
 
@@ -726,6 +1015,30 @@ WHAT THIS NEVER TOUCHES, and why each one is deliberate:
   - `<state_dir>/deliveries/` — titles-only and permanent by decision (D7).
   - `<state_dir>/queue/` — the journals compact themselves.
 
+⚠ THAT LIST USED TO BE TRUE ONLY BY WHERE THE PATHS HAPPEN TO POINT (audit F2,
+2026-08-01). It read as an enforced property and was not one. Measured: the
+quarantine's own `unrevivable-<date>.jsonl` MATCHES `_NAME` below with
+`app='unrevivable'` — which does not start with `_`, so it would draw the FULL
+tenant window, not the 7-day floor — and `deliveries-<source>-<date>.jsonl`
+matches too, with `app='deliveries-<source>'`. Nothing but a non-recursive glob
+and two sibling directories stood between a one-line env change and deleting the
+only copy of replies that were never delivered. It is now enforced twice, in
+code: `__init__` REFUSES a sweep directory that is, contains, or sits inside the
+quarantine, and the loop skips the quarantine's filename outright. Belt and
+braces on purpose — this is the one deletion in this repo with no second copy
+anywhere.
+
+THE RETENTION KEY IS WRITTEN IN LOCAL TIME, SO IT IS READ IN LOCAL TIME (audit
+F1). `Inbox._audit` names the file with `dt.date.today()` — naive, local. Reading
+it back against a UTC date, which the first draft did, makes a file up to one day
+OLDER by the reader's reckoning than by the reckoning that named it, on every
+host west of UTC. At 30/7 that costs hours and nothing else, but the design rests
+on the filename being an EXACT key, and a key minted by one clock and consumed by
+another is not exact. `today_fn` defaults to the identical call the writer makes,
+so the two cannot drift apart without someone changing both. The separate
+`now_fn` timestamps `last_sweep_at` for an operator and is tz-aware; they are
+different questions and are deliberately two parameters.
+
 A FILE WHOSE NAME THIS MODULE CANNOT PARSE IS LEFT ALONE, never guessed at.
 Deleting an unrecognized file from a directory that holds message bodies is the
 one failure mode worse than keeping it too long.
@@ -738,6 +1051,8 @@ import os
 import re
 import threading
 from pathlib import Path
+
+from .errors import describe_exception
 
 #: Default window for a tenant's bucket. A calendar month is the unit a privacy
 #: posture is written in. The gateway does NOT need to hold a consumer's own
@@ -760,6 +1075,34 @@ UNROUTED_RETENTION_DAYS = 7
 SWEEP_INTERVAL_S = 6 * 3600
 
 _NAME = re.compile(r"^(?P<app>.+)-(?P<date>\d{4}-\d{2}-\d{2})\.jsonl$")
+
+#: `inbox.py::_quarantine`'s filename stem. Skipped by name as well as by path
+#: (audit F2): `unrevivable-<date>.jsonl` matches `_NAME` cleanly as an app
+#: called "unrevivable", and it would draw the full tenant window. One home for
+#: the literal — if `_quarantine` ever renames its files, this constant is the
+#: thing that has to move with it, and a test pins the pair.
+QUARANTINE_STEM = "unrevivable-"
+
+
+class RetentionConfigError(ValueError):
+    """The sweep directory overlaps something that must never be swept.
+
+    Raised at construction, so it lands at boot and not six hours later on a
+    thread. `retention_days_from_env` deliberately does the OPPOSITE for a
+    malformed window — falls back and says so — and the asymmetry is the point:
+    a bad window over-retains, which is recoverable, while a bad directory
+    deletes the only copy of replies that were never delivered, which is not.
+
+    ⚠ Deliberately NOT a `GatewayAuthoredError`, and this is the reason so it is
+    not relitigated in review: it mirrors `RegistryError` (`registry.py:40`,
+    also a plain `ValueError`), it is raised at boot and printed by `main`'s
+    `config error:` path rather than through `describe_exception`, and CG-29's
+    marker set is a deliberately short allowlist. Marking it would also enlist
+    it in `tests/test_error_surfaces.py`'s raise-site guard, which is a real
+    benefit — but that is a change to the allowlist, and CLAUDE.md records that
+    the set has never been widened without a stated reason. If review wants it
+    marked, say so as its own decision; do not fold it in here.
+    """
 
 
 def retention_days_from_env(environ: dict | None = None) -> int:
@@ -806,20 +1149,64 @@ class RetentionSweeper:
     """
 
     def __init__(self, audit_dir: str | Path | None, days: int | None = None,
-                 now_fn=None, interval_s: float = SWEEP_INTERVAL_S):
+                 now_fn=None, interval_s: float = SWEEP_INTERVAL_S, *,
+                 quarantine_dir: str | Path | None = None, today_fn=None):
         self._dir = Path(audit_dir) if audit_dir else None
         self._days = DEFAULT_RETENTION_DAYS if days is None else days
+        #: Two clocks, two questions (audit F1). `today_fn` is the RETENTION
+        #: KEY's calendar and must stay identical to `Inbox._audit`'s
+        #: `dt.date.today()`. `now_fn` only timestamps `last_sweep_at` for an
+        #: operator, where tz-aware UTC is the right answer. Collapsing them is
+        #: what put a UTC reader on a local-time key in the first draft.
+        self._today = today_fn or dt.date.today
         self._now = now_fn or (lambda: dt.datetime.now(dt.timezone.utc))
+        self._quarantine = Path(quarantine_dir).resolve() if quarantine_dir else None
         self._interval_s = interval_s
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        #: Files deleted since start, and unlinks that failed. Both reach
-        #: /healthz: hard rule #5 does not distinguish work DROPPED from work
-        #: DELETED, and a silent deletion path on an artifact two documents
-        #: called "the only copy" is exactly the shape of failure it exists for.
+        #: Files deleted since start, unlinks that failed, and whole passes that
+        #: raised. All three reach /healthz: hard rule #5 does not distinguish
+        #: work DROPPED from work DELETED, and a silent deletion path on an
+        #: artifact two documents called "the only copy" is exactly the shape of
+        #: failure it exists for.
+        #:
+        #: THREE numbers rather than one, for CLAUDE.md's stated reason (the
+        #: `suppressed_opt_out` / `suppressed_not_authorized` split): they are
+        #: different investigations. `errors` is one file the OS refused to
+        #: delete — the trail grows past its window. `sweep_failures` is the
+        #: whole pass dying, which means NOTHING is being pruned and the counter
+        #: above will sit reassuringly at zero while it happens.
         self.deleted = 0
         self.errors = 0
+        self.sweep_failures = 0
         self.last_sweep_at: str | None = None
+        self.last_sweep_error: str | None = None
+        self._check_disjoint()
+
+    def _check_disjoint(self) -> None:
+        """Refuse a sweep directory that overlaps the quarantine (audit F2).
+
+        Both paths come from operator-settable env vars (`CHAT_GATEWAY_INBOX_DIR`
+        and `CHAT_GATEWAY_STATE_DIR`) and nothing else in the process compares
+        them. `resolve()` on both, so a symlink or a `..` cannot walk around it.
+
+        Checked in BOTH directions, and neither is hypothetical padding: the
+        sweep dir being the quarantine deletes preserved replies outright, and
+        the quarantine sitting under the sweep dir is one `rglob` refactor away
+        from the same thing.
+        """
+        if self._dir is None or self._quarantine is None:
+            return
+        swept = self._dir.resolve()
+        if swept == self._quarantine or self._quarantine in swept.parents \
+                or swept in self._quarantine.parents:
+            raise RetentionConfigError(
+                f"retention: refusing to sweep {swept} — it overlaps the "
+                f"quarantine at {self._quarantine}, which holds the only copy of "
+                "replies that were never delivered (CG-65). Point "
+                "CHAT_GATEWAY_INBOX_DIR and CHAT_GATEWAY_STATE_DIR at "
+                "directories that do not contain one another"
+            )
 
     @property
     def days(self) -> int:
@@ -827,11 +1214,30 @@ class RetentionSweeper:
 
     def sweep(self) -> int:
         """Unlink day-files past their bucket's window. Returns how many."""
-        if self._dir is None or self._days <= 0 or not self._dir.exists():
+        if self._dir is None or self._days <= 0:
             return 0
-        today = self._now().date()
+        # NOT folded into the guard above (audit F3). A directory that does not
+        # exist yet is a sweep that ran and found nothing — a normal state on a
+        # deployment with no inbound traffic — and it must still stamp
+        # `last_sweep_at`. Returning early without stamping made "the sweeper is
+        # working and idle" byte-identical to "the sweeper thread is dead" on an
+        # endpoint whose whole job is telling those two apart.
+        removed = self._sweep_dir() if self._dir.exists() else 0
+        self.last_sweep_at = self._now().isoformat()
+        return removed
+
+    def _sweep_dir(self) -> int:
+        today = self._today()
         removed = 0
         for path in sorted(self._dir.glob("*.jsonl")):
+            # Skipped by NAME as well as by path (audit F2). `unrevivable-<date>`
+            # parses cleanly as an app called "unrevivable" and would draw the
+            # full tenant window. `_check_disjoint` already makes this
+            # unreachable in a sane layout; it is here for the layout nobody
+            # predicted, because the cost of the check is one string compare and
+            # the cost of being wrong is unrecoverable.
+            if path.name.startswith(QUARANTINE_STEM):
+                continue
             match = _NAME.match(path.name)
             if match is None:
                 continue                      # never guess at a name we do not own
@@ -845,11 +1251,15 @@ class RetentionSweeper:
                 path.unlink()
             except OSError as exc:
                 self.errors += 1
-                print(f"retention: could not remove {path.name} ({exc})", flush=True)
+                # CG-29's allowlist, not an f-string on the exception (audit F4).
+                # `str(OSError)` from `unlink()` embeds the ABSOLUTE path, and
+                # `OSError` is not a class `errors.py` marks. `path.name` is kept
+                # deliberately — the file's own name is this repo's to print.
+                print(f"retention: could not remove {path.name} "
+                      f"({describe_exception(exc)})", flush=True)
                 continue
             removed += 1
         self.deleted += removed
-        self.last_sweep_at = self._now().isoformat()
         return removed
 
     def _run(self) -> None:
@@ -859,8 +1269,17 @@ class RetentionSweeper:
                 break
             try:
                 self.sweep()
+                self.last_sweep_error = None
             except Exception as exc:  # noqa: BLE001 — the loop must survive
-                print(f"retention: sweep error (will retry): {exc}", flush=True)
+                # COUNTED, not just printed (audit F3). The first draft printed
+                # and moved on, so a sweeper throwing every six hours reported
+                # `errors: 0` and a frozen `last_sweep_at`, and /healthz never
+                # degraded. That is the founding rule-#5 failure with a
+                # different noun.
+                self.sweep_failures += 1
+                self.last_sweep_error = describe_exception(exc)
+                print(f"retention: sweep FAILED (will retry): "
+                      f"{self.last_sweep_error}", flush=True)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="retention-sweeper",
@@ -873,18 +1292,44 @@ class RetentionSweeper:
             self._thread.join(timeout=5)
 ```
 
+⚠ **The split into `sweep()` / `_sweep_dir()` is deliberate and is audit F3's
+fix.** `sweep()` owns the *"a pass completed"* stamp; `_sweep_dir()` owns the
+work. Do not re-merge them — the whole defect was that the early return for a
+missing directory skipped the stamp, and a single method invites that back.
+
+⚠ **`_check_disjoint` is deliberately STRICTER than the glob requires, and one
+plausible config now fails at boot that would not have corrupted anything.**
+Measured on the three layouts plus the default: the default (`inbox-data` beside
+`state/quarantine`) is **not** refused, but setting
+`CHAT_GATEWAY_INBOX_DIR=state` — *"put everything in one place"*, a thing an
+operator might reasonably try — **is** refused, even though `glob("*.jsonl")` is
+non-recursive and would never have reached `state/quarantine/`. That is the
+intended trade: the non-recursive glob is a **property of one line of code**, and
+the guarantee it currently carries is the one deletion in this repo with no
+second copy. Refusing a layout that is safe-today-by-accident is cheaper than a
+future `rglob` making it unsafe silently. The error message names both env vars
+so the operator is not left guessing.
+
 **Tests** (new `tests/test_retention.py`):
 
 ```python
 import datetime as dt
 
-from chat_gateway.retention import (DEFAULT_RETENTION_DAYS, RetentionSweeper,
+import pytest
+
+from chat_gateway.inbox import Inbox
+from chat_gateway.retention import (DEFAULT_RETENTION_DAYS, QUARANTINE_STEM,
+                                    RetentionConfigError, RetentionSweeper,
                                     retention_days_from_env, window_for)
 
 
-def _at(iso_date: str):
-    """A fixed `now` — these tests are about date arithmetic, not the clock."""
-    return dt.datetime.fromisoformat(iso_date).replace(tzinfo=dt.timezone.utc)
+def _on(iso_date: str):
+    """A fixed retention-key calendar. These tests are about date arithmetic.
+
+    `today_fn`, NOT `now_fn` (audit F1): the window is measured against the same
+    calendar `Inbox._audit` names the file in.
+    """
+    return lambda: dt.date.fromisoformat(iso_date)
 
 
 def _touch(d, name, text="{}\n"):
@@ -896,7 +1341,7 @@ def test_prunes_past_the_window_and_keeps_inside_it(tmp_path):
     d = tmp_path / "inbox-data"
     _touch(d, "job-hunter-2026-06-01.jsonl")   # 60 days old
     _touch(d, "job-hunter-2026-07-20.jsonl")   # 11 days old
-    s = RetentionSweeper(d, days=30, now_fn=lambda: _at("2026-07-31"))
+    s = RetentionSweeper(d, days=30, today_fn=_on("2026-07-31"))
     assert s.sweep() == 1
     assert [p.name for p in d.glob("*.jsonl")] == ["job-hunter-2026-07-20.jsonl"]
 
@@ -905,7 +1350,7 @@ def test_unrouted_gets_the_shorter_window(tmp_path):
     d = tmp_path / "inbox-data"
     _touch(d, "_unrouted-2026-07-20.jsonl")    # 11 days — inside 30, outside 7
     _touch(d, "job-hunter-2026-07-20.jsonl")
-    s = RetentionSweeper(d, days=30, now_fn=lambda: _at("2026-07-31"))
+    s = RetentionSweeper(d, days=30, today_fn=_on("2026-07-31"))
     assert s.sweep() == 1
     assert [p.name for p in d.glob("*.jsonl")] == ["job-hunter-2026-07-20.jsonl"]
 
@@ -913,7 +1358,7 @@ def test_unrouted_gets_the_shorter_window(tmp_path):
 def test_zero_days_disables_pruning_entirely(tmp_path):
     d = tmp_path / "inbox-data"
     _touch(d, "job-hunter-2020-01-01.jsonl")
-    assert RetentionSweeper(d, days=0, now_fn=lambda: _at("2026-07-31")).sweep() == 0
+    assert RetentionSweeper(d, days=0, today_fn=_on("2026-07-31")).sweep() == 0
     assert list(d.glob("*.jsonl"))
 
 
@@ -921,7 +1366,7 @@ def test_an_unparseable_filename_is_left_alone_never_guessed_at(tmp_path):
     d = tmp_path / "inbox-data"
     _touch(d, "notes.jsonl")
     _touch(d, "job-hunter-not-a-date.jsonl")
-    s = RetentionSweeper(d, days=1, now_fn=lambda: _at("2026-07-31"))
+    s = RetentionSweeper(d, days=1, today_fn=_on("2026-07-31"))
     assert s.sweep() == 0
     assert len(list(d.glob("*.jsonl"))) == 2
 
@@ -931,8 +1376,108 @@ def test_the_quarantine_dir_is_never_swept(tmp_path):
     q = tmp_path / "state" / "quarantine"
     _touch(q, "unrevivable-2020-01-01.jsonl")
     RetentionSweeper(tmp_path / "inbox-data", days=1,
-                     now_fn=lambda: _at("2026-07-31")).sweep()
+                     today_fn=_on("2026-07-31"), quarantine_dir=q).sweep()
     assert (q / "unrevivable-2020-01-01.jsonl").exists()
+
+
+# -- audit F2: the guarantee above is now a CODE property, not a path accident --
+
+def test_a_quarantine_filename_would_otherwise_parse_as_a_tenant_bucket():
+    """Why the two new guards exist, stated as a measurement.
+
+    `unrevivable-<date>.jsonl` is a legal `<app>-<date>.jsonl`, and 'unrevivable'
+    does not start with '_', so it would draw the FULL tenant window — not the
+    7-day floor. Nothing about the name marks it as untouchable.
+    """
+    from chat_gateway.retention import _NAME
+    m = _NAME.match("unrevivable-2026-07-31.jsonl")
+    assert m is not None and m.group("app") == "unrevivable"
+    assert window_for("unrevivable", 30) == 30      # NOT the _unrouted floor
+
+
+def test_the_quarantine_stem_matches_what_inbox_actually_writes(tmp_path):
+    """One home for the literal: if `_quarantine` renames its files, this fails."""
+    jpath = tmp_path / "inbox.jsonl"
+    from chat_gateway.journal import Journal
+    Journal(jpath).open(1, "inbound", {"NOT": "an InboundReply"})
+    q = tmp_path / "quarantine"
+    ibx = Inbox(journal=Journal(jpath), quarantine_dir=q)
+    ibx.restore()
+    written = next(q.glob("*.jsonl"))
+    assert written.name.startswith(QUARANTINE_STEM)
+
+
+def test_a_quarantine_file_inside_the_sweep_dir_is_skipped_by_name(tmp_path):
+    """Belt to `_check_disjoint`'s braces: the layout nobody predicted."""
+    d = tmp_path / "inbox-data"
+    _touch(d, "unrevivable-2020-01-01.jsonl")      # ancient, and must survive
+    _touch(d, "job-hunter-2020-01-01.jsonl")
+    s = RetentionSweeper(d, days=30, today_fn=_on("2026-07-31"))
+    assert s.sweep() == 1
+    assert (d / "unrevivable-2020-01-01.jsonl").exists()
+
+
+@pytest.mark.parametrize("layout", ["same", "quarantine_under_sweep",
+                                    "sweep_under_quarantine"])
+def test_construction_refuses_a_sweep_dir_overlapping_the_quarantine(tmp_path, layout):
+    """Fails at BOOT, loudly — the opposite posture from a malformed window,
+    because a bad window over-retains and a bad directory deletes the only copy."""
+    q = tmp_path / "state" / "quarantine"
+    sweep = {"same": q,
+             "quarantine_under_sweep": tmp_path / "state",
+             "sweep_under_quarantine": q / "nested"}[layout]
+    q.mkdir(parents=True, exist_ok=True)
+    sweep.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(RetentionConfigError) as exc:
+        RetentionSweeper(sweep, days=30, quarantine_dir=q)
+    assert "quarantine" in str(exc.value)
+
+
+# -- audit F3: a stopped sweeper must not read as a working one ---------------
+
+def test_a_pass_over_a_missing_directory_still_stamps_last_sweep_at(tmp_path):
+    """`enabled: true, last_sweep_at: null` used to mean BOTH 'idle' and 'dead'."""
+    s = RetentionSweeper(tmp_path / "does-not-exist", days=30)
+    assert s.sweep() == 0
+    assert s.last_sweep_at is not None
+
+
+def test_a_failing_sweep_is_counted_not_just_printed(tmp_path, capsys):
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30, interval_s=0.01)
+    s.sweep = lambda: (_ for _ in ()).throw(RuntimeError("disk gone"))
+    s.start()
+    try:
+        deadline = dt.datetime.now() + dt.timedelta(seconds=3)
+        while s.sweep_failures == 0 and dt.datetime.now() < deadline:
+            pass
+    finally:
+        s.stop()
+    assert s.sweep_failures >= 1
+    assert s.last_sweep_error is not None
+    assert "sweep FAILED" in capsys.readouterr().out
+
+
+def test_an_unlink_failure_is_counted_and_named_through_the_allowlist(tmp_path, capsys):
+    """Audit F4: `str(OSError)` embeds the ABSOLUTE path; `describe_exception`
+    is this repo's rule for a class `errors.py` does not mark."""
+    d = tmp_path / "inbox-data"
+    _touch(d, "job-hunter-2020-01-01.jsonl")
+    s = RetentionSweeper(d, days=1, today_fn=_on("2026-07-31"))
+    import pathlib
+    original = pathlib.Path.unlink
+
+    def boom(self, *a, **kw):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    pathlib.Path.unlink = boom
+    try:
+        assert s.sweep() == 0
+    finally:
+        pathlib.Path.unlink = original
+    assert s.errors == 1
+    out = capsys.readouterr().out
+    assert "job-hunter-2020-01-01.jsonl" in out      # the name IS ours to print
+    assert str(d) not in out                          # the absolute path is not
 
 
 def test_malformed_env_falls_back_to_the_default(capsys):
@@ -942,21 +1487,57 @@ def test_malformed_env_falls_back_to_the_default(capsys):
     assert retention_days_from_env({}) == 30
 ```
 
+⚠ **Builder, on `test_an_unlink_failure_is_counted_and_named_through_the_allowlist`:**
+it monkeypatches `pathlib.Path.unlink` by hand so the intent is visible. Use
+`monkeypatch.setattr` if this file already has the fixture in scope — the
+assertions are the contract, the patching style is not.
+
+⚠ **On `test_a_failing_sweep_is_counted_not_just_printed`:** it drives a real
+thread with a 3-second ceiling and a `finally: stop()`. If that reads as flaky in
+review, call `_run`'s body once directly instead. What must be pinned either way:
+a raising sweep increments `sweep_failures`, sets `last_sweep_error`, and the
+loop survives.
+
 ## Task 11 — Wire the sweeper
 
-**`src/chat_gateway/__main__.py`** — in `build_runtime`, after `inbox`:
+**`src/chat_gateway/__main__.py`** — in `build_runtime`, after `inbox` (which
+already computes `state_dir` at `:37` and wires `quarantine_dir` at `:50`):
 
 ```python
-    from .retention import RetentionSweeper, retention_days_from_env
+    from .retention import (RetentionConfigError, RetentionSweeper,
+                            retention_days_from_env)
 
     # CG-68 / ADR-0002 D5. Sweeps the per-app inbound AUDIT trail only — never
     # the quarantine dir, never the delivery log, never the queue journals.
-    sweeper = RetentionSweeper(os.environ.get("CHAT_GATEWAY_INBOX_DIR", "inbox-data"),
-                               days=retention_days_from_env())
+    #
+    # `quarantine_dir` is passed for ONE reason: so the sweeper can refuse to
+    # run if the two overlap (audit F2). Before this, "never the quarantine dir"
+    # was true only because these two env vars happen to point at sibling
+    # directories, and nothing in the process compared them — one `.env` edit
+    # away from deleting the only copy of replies that were never delivered.
+    # It must be the SAME expression as the `Inbox(...)` call above; if that
+    # ever moves, hoist it to a local rather than writing it twice.
+    try:
+        sweeper = RetentionSweeper(
+            os.environ.get("CHAT_GATEWAY_INBOX_DIR", "inbox-data"),
+            days=retention_days_from_env(),
+            quarantine_dir=Path(state_dir) / "quarantine",
+        )
+    except RetentionConfigError as exc:
+        # Re-raised as the type `main` already handles, so a misconfiguration
+        # prints `config error: ...` and exits 2 — the same treatment
+        # GATEWAY_ENABLE_PUBSUB's missing-companion check gets, rather than a
+        # traceback. Refusing to boot is the SAFE direction here; see the class.
+        raise RegistryError(str(exc)) from exc
 ```
 
-Return it from `build_runtime` (extend the tuple and **every** unpack site), and
-in the `serve` branch, after `inbox.restore()`:
+Return it from `build_runtime` — the tuple is
+`registry, inbox, adapters, subscriber, state_dir` (`__main__.py:76`) and there
+is exactly **one** unpack site, `main` at `__main__.py:88`. Extend both to
+`registry, inbox, adapters, subscriber, state_dir, sweeper`. ⚠ Re-grep before
+editing; `check` and `mint-key` share that unpack.
+
+In the `serve` branch, after `inbox.restore()`:
 
 ```python
         swept = sweeper.sweep()
@@ -966,8 +1547,9 @@ in the `serve` branch, after `inbox.restore()`:
         sweeper.start()
 ```
 
-Pass `sweeper=sweeper` into `create_app`, store it as `app.state.sweeper`, and
-stop it beside the dispatcher and monitor.
+Pass `sweeper=sweeper` into `create_app` (Task 12 adds the keyword), store it as
+`app.state.sweeper` beside `app.state.dispatcher` (`service.py:198-201`), and
+stop it where the dispatcher and monitor are stopped.
 
 ## Task 12 — `/healthz` counters
 
@@ -979,7 +1561,7 @@ posture as `dispatcher` and `subscriber`, so every offline test that builds an
 app without one keeps working):
 
 ```python
-from .retention import UNROUTED_RETENTION_DAYS
+from .retention import window_for
 ```
 
 Then add the block to the `/healthz` body:
@@ -988,27 +1570,93 @@ Then add the block to the `/healthz` body:
             "retention": (
                 {"enabled": sweeper.days > 0,
                  "window_days": sweeper.days,
-                 "unrouted_window_days": min(sweeper.days, UNROUTED_RETENTION_DAYS),
+                 # `window_for`, not a second `min(...)` (audit F5). The floor
+                 # rule has ONE home; re-deriving it here is how /healthz ends
+                 # up publishing a window the sweeper stopped using. CLAUDE.md's
+                 # test count is this repo's own worked example.
+                 "unrouted_window_days": window_for("_unrouted", sweeper.days),
                  "files_deleted": sweeper.deleted,
                  "delete_errors": sweeper.errors,
+                 # CG-68 audit F3. `last_sweep_at` alone could not tell an idle
+                 # sweeper from a dead one, and a raising sweep was printed but
+                 # never counted — so the three fields below travel together.
+                 "sweep_failures": sweeper.sweep_failures,
+                 "last_sweep_error": sweeper.last_sweep_error,
                  "last_sweep_at": sweeper.last_sweep_at}
                 if sweeper is not None
                 else {"enabled": False, "note": "no sweeper configured"}
             ),
 ```
 
+⚠ **The reasons block MUST test `enabled` first (audit F0, HIGH).** The first
+draft indexed `body["retention"]["delete_errors"]` unconditionally against an
+else-branch that has no such key — so `/healthz` raised **`KeyError`** on every
+app built without a sweeper, which Task 12 itself says is the normal offline
+case. The endpoint hard rule #5 exists to keep honest would not have answered at
+all. `service.py:522-523` already shows the correct idiom for the identically
+shaped `subscriber` block: bind, then gate on `enabled`.
+
 ```python
-        if body["retention"]["delete_errors"]:
-            reasons.append(
-                f"retention: {body['retention']['delete_errors']} audit file(s) "
-                "could not be removed — the inbound audit trail is growing past "
-                "its stated window. Check the inbox dir's permissions"
-            )
+        ret = body["retention"]
+        if ret["enabled"]:
+            if ret["delete_errors"]:
+                reasons.append(
+                    f"retention: {ret['delete_errors']} audit file(s) could not "
+                    "be removed — the inbound audit trail is growing past its "
+                    "stated window. Check the inbox dir's permissions"
+                )
+            if ret["sweep_failures"]:
+                reasons.append(
+                    f"retention: {ret['sweep_failures']} sweep pass(es) FAILED "
+                    f"({ret['last_sweep_error']}) — nothing is being pruned, so "
+                    "`files_deleted` and `delete_errors` are both sitting at a "
+                    "reassuring number while the window is not being enforced. "
+                    "The audit trail holds message text and sender addresses"
+                )
 ```
 
 ⚠ **`files_deleted` must NOT degrade `status`** — a retention policy working is
 not a fault, and degrading on it teaches an operator to ignore `degraded`. Same
-reasoning `CLAUDE.md` records for `suppressed_opt_out`.
+reasoning `CLAUDE.md` records for `suppressed_opt_out`. `delete_errors` and
+`sweep_failures` **do** degrade: they are the policy *not* working.
+
+⚠ **`last_sweep_error` is on an unauthenticated endpoint** — which is why
+`_run` builds it with `describe_exception` (audit F4) and it reaches this line
+as a type name, never a filesystem path.
+
+**Tests** (`tests/test_service.py`):
+
+```python
+def test_healthz_answers_when_no_sweeper_is_configured(tmp_path):
+    """Audit F0: this raised KeyError, taking the whole endpoint down."""
+    body = TestClient(_app_with()).get("/healthz").json()
+    assert body["retention"] == {"enabled": False, "note": "no sweeper configured"}
+    assert "status" in body
+
+
+def test_healthz_degrades_on_a_sweeper_that_stopped_working(tmp_path):
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    s.sweep_failures = 2
+    s.last_sweep_error = "PermissionError"
+    body = TestClient(_app_with(sweeper=s)).get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("sweep pass(es) FAILED" in r for r in body["reasons"])
+
+
+def test_healthz_does_not_degrade_merely_because_files_were_deleted(tmp_path):
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    s.deleted = 400
+    body = TestClient(_app_with(sweeper=s)).get("/healthz").json()
+    assert body["retention"]["files_deleted"] == 400
+    assert not any("retention" in r for r in body["reasons"])
+
+
+def test_healthz_publishes_the_unrouted_floor_from_its_one_home(tmp_path):
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    body = TestClient(_app_with(sweeper=s)).get("/healthz").json()
+    assert body["retention"]["window_days"] == 30
+    assert body["retention"]["unrouted_window_days"] == window_for("_unrouted", 30)
+```
 
 ## Task 13 — The contract amendment
 
@@ -1041,20 +1689,88 @@ TERMINAL records — they say what ARRIVED, never what LEFT, so pending state
 cannot be reconstructed from them. Different question, different file; both stay.
 ```
 
-**13c — env-var NAME** in `.env.example`, `docs/integration-guide.md`, and
-`aitrader.md:569`'s table. ⚠ **`aitrader.md` gets the row but not a window
-claim** — aitrader is `allow_inbound: false` and never reaches `inbox.put`
-(ADR §2.7), so it has no records in this directory. Say that, so the tenant does
-not read a retention window as applying to something of theirs.
+**13c — env-var NAME** in `.env.example`, `docs/integration-guide.md`,
+`aitrader.md:569`'s table, **and `__main__.py`'s module docstring** (`:7-9`
+lists the env vars this entrypoint reads and would otherwise be one short).
+⚠ **`aitrader.md` gets the row but not a window claim** — aitrader is
+`allow_inbound: false` and never reaches `inbox.put` (ADR §2.7), so it has no
+records in this directory. Say that, so the tenant does not read a retention
+window as applying to something of theirs.
 
 **13d — `docs/consumers/jobhunt.md`.** The one tenant with records in this
 directory. State the window and point at the quarantine.
 
+**13e — `docs/integration-guide.md`'s `/healthz` durability table.** Task 9b
+took it to **nine fields, six that degrade**. This row adds `retention.*`.
+⚠ **Recount against `service.py` rather than trusting either sentence** — that
+table has been wrong about its own count twice (CG-64, and Task 8e's five-fields
+/ four-reasons trap).
+
+---
+
+## Task 14 — ⚠ The tense flip: five strings that CG-65 made true and this row makes false
+
+**Found by the 2026-08-01 pre-execution audit. Task 13 did not list any of
+these, and two of them are on the unauthenticated `/healthz`.**
+
+CG-65's pre-merge review caught three strings asserting a retention window and a
+`retention.py` in the **present** tense when neither had shipped — the CG-66
+defect shape. It fixed them by rewriting them in the **absent/future** tense.
+Those fixes are on `main` (`4fbd634`) and are correct **today**. Every one of
+them becomes **false in the opposite direction the moment Task 10 lands** —
+because after this row the audit trail *does* carry a retention guarantee, and
+the sweeper *does* exist.
+
+**This is a hard rule #5 item, not a docs item, for the same reason CG-65's
+quarantine was:** two of the five are `/healthz` `reasons` strings, and an
+unauthenticated endpoint that tells an operator *"this file carries no retention
+guarantee"* about a file the gateway deletes on a 30-day timer is describing
+machinery that does not match the machinery it is running.
+
+⚠ **Do this in the SAME PR as Tasks 10–12.** Splitting it re-creates the exact
+window CG-65 spent a review finding closing, just pointed the other way.
+
+| # | File:line (on `4fbd634`) | Says today | Must say after this row |
+|---|---|---|---|
+| 1 | `service.py:497-499` — `/healthz` `reasons`, the `unrevivable_at_boot` tail's `else` branch | *"the per-app JSONL audit under the inbox dir is the only record of what arrived, and it **carries no retention guarantee**"* | it is the only record **and it is pruned on the retention window**, so the copy may not be there later. ⚠ Keep the branch on `preserved` — that conditional IS the rule-#5 control CG-65 added, and the comment at `service.py:480-487` explains why. Change the tail only |
+| 2 | `service.py:506-508` — `/healthz` `reasons`, `quarantine_write_errors` | *"…is its only record and that file **carries no retention guarantee**"* | same correction. This is the louder of the two: the quarantine write already failed, so this really is the last copy, and it now has a delete timer on it |
+| 3 | `inbox.py:166-170` — `restore()` docstring | *"…it carries no retention guarantee and must not be relied on as the only copy: **CG-68 puts it on** a time-bounded window. **Future tense deliberately** — that row has not shipped…"* | present tense, and **delete the "Future tense deliberately" sentence** (`:168-170`) — it is scaffolding whose whole purpose was to mark an unshipped control, and leaving it in is a second copy of a fact that just changed. ⚠ Its reference to **CG-66** goes with it; CG-66 is a separate open row and must not be implied to be closed |
+| 4 | `inbox.py:197-199` — the boot console line's `else` branch | *"…is the only recovery record, and it **carries no retention guarantee**"* | present tense; name the window's env var so an operator reading the boot log knows how long they have |
+| 5 | `inbox.py:266-270` — `_quarantine()` docstring | *"**Never swept: CG-68's retention sweeper must not look** in this directory… **Future tense on purpose** — that row is gated behind this one merging, so **there is no sweeper in this tree yet**"* | present tense — and it can now say something stronger than *"must not"*: **it cannot**. `RetentionSweeper.__init__` refuses an overlapping directory and the loop skips `QUARANTINE_STEM` (audit F2). Point at those two guards by name and delete the future-tense sentence (`:267-270`) |
+
+**Two things Task 14 must NOT do.**
+
+1. ⚠ **`journal.py:10`'s *"never pruned"* is Task 13b, not this task.** Different
+   defect (a live over-promise, not a tense marker) and it is already assigned.
+   Do not fix it twice and do not leave it to this list.
+2. ⚠ **No ⚠ verification-ledger flag is cleared, added or reworded by any of
+   this.** None of the five strings is a ledger entry; all five are about
+   on-disk retention, and nothing here touches `adapters/` or a Google seam.
+
+**Verify** — this is the grep that finds a missed one:
+
+```bash
+grep -rn "carries no retention guarantee\|Future tense\|no sweeper in this tree" src/
+```
+
+Must return **nothing** when this task is done. Run it before opening the PR;
+it is cheaper than the review that found the first three.
+
 ## CG-68 gates
 
-- Suite green. Estimate **~266 → ~278**; measure.
+- Suite green. **Base is `4fbd634` / 268** — measured after CG-65 merged, not the
+  `~266` this line estimated beforehand. Estimate **268 → ~292** (Task 10's tests
+  roughly doubled in the audit, and Task 12 gained four); **measure and report the
+  real number.**
 - Manual: create dated files by hand in a scratch `inbox-data/`, boot, confirm
   the boot line, the deletions, and that `state/quarantine/` is untouched.
+- Manual, audit F2: point `CHAT_GATEWAY_INBOX_DIR` at `state/quarantine` and
+  confirm the gateway **refuses to boot** with `config error: retention:
+  refusing to sweep …` rather than starting and deleting.
 - `grep -rn "never pruned" src/ docs/ --include=*.py --include=*.md` returns
   only the **quarantine** and ADR references.
+- `grep -rn "carries no retention guarantee\|Future tense\|no sweeper in this tree" src/`
+  returns nothing (Task 14).
+- `/healthz` answers **200 with no sweeper configured** (audit F0) — the offline
+  test suite is the check, and it must be green before anything else counts.
 - No ⚠ flag cleared, added or reworded.

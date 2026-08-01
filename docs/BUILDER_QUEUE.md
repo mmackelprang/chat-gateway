@@ -1,6 +1,22 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-07-31 (Builder — **CG-65 shipped as #52; CG-70 filed**).
+**Last updated:** 2026-08-01 (Planner — **CG-68's plan corrected before Builder
+runs it**). No `src/` change; the plan document and this row only.
+
+⚠ **Read CG-68's row before starting it.** A Planner pass re-read
+[the plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md)
+end-to-end against what #52 actually shipped, because CG-68 **deletes tenant
+content** where CG-65 only compacted replayable state. **Tasks 4 and 5 were
+corrected** — their literal code carried the data-loss race #52's review caught,
+and the plan now records the wrong version and its counterfactual rather than
+looking as though it was always right. **Tasks 10–13 do NOT carry that same
+shape** (measured; the sweeper derives nothing from memory) — but the audit
+found **six neighbours**, one **HIGH**: `/healthz` would have raised `KeyError`
+whenever no sweeper was configured. **Task 14 is new** — five strings, two on the
+unauthenticated `/healthz`, that CG-65 made true and CG-68 makes false again.
+**No ⚠ verification-ledger flag cleared, added or reworded.**
+
+Previously 2026-07-31 (Builder — **CG-65 shipped as #52; CG-70 filed**).
 Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine** and
 the contract correction are in. Suite **247 → 268**. **CG-68 is now unblocked on
 sequencing** — the quarantine it waits for exists — but read CG-65's row first:
@@ -743,7 +759,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
 | **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | ✅ done (#52) | Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. Pre-merge review found a **data-loss race** in compact-on-drain — both producers journal the `open` before taking the queue lock, so `compact([])` could erase a record already on disk; fixed by recomputing survivors under the journal's own lock. Suite **247 → 268**. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
-| **CG-68** · time-bounded pruning of the inbound audit trail | 📋 queued | ✅ **decisions approved** (30/7/0, unlink, amend the contract). ⏸ **Sequenced behind CG-65** — the quarantine is what makes pruning safe. Answers ADR-0002 §9 **Q6** by amending a **published** guarantee. Plan Tasks 10–13 |
+| **CG-68** · time-bounded pruning of the inbound audit trail | 📋 queued | ✅ **decisions approved** (30/7/0, unlink, amend the contract); ✅ **gate released** — CG-65 merged as #52. Answers ADR-0002 §9 **Q6** by amending a **published** guarantee. ⚠ **Plan corrected 2026-08-01** by a pre-execution audit: Tasks 10–13 do **not** carry CG-65's compact-on-drain race, but six neighbours were found — one **HIGH** (`/healthz` `KeyError` with no sweeper) — and **Task 14** was added for five present-tense strings this row inverts, two of them on `/healthz`. Plan Tasks **10–14** |
 | **CG-69** · published-promise inventory (process control) | 📋 queued | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. No plan yet |
 | **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued | Filed by CG-65's Builder from its own pre-merge review (LOW), **deferred rather than folded in**. No plan yet |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
@@ -1721,15 +1737,70 @@ secure"; state what reaches disk, for how long, and at what mode.**
 
 ---
 
-### CG-68 · Time-bounded pruning of the inbound audit trail  📋 queued  ⏸ MERGE GATE
+### CG-68 · Time-bounded pruning of the inbound audit trail  📋 queued
 
 | | |
 |---|---|
 | **Origin** | filed by CG-65's Planner, 2026-07-31. Answers ADR-0002 §9 **Q6**, which that ADR raised and explicitly did not resolve |
-| **Depends on** | ⚠ **CG-65 must be MERGED first** — its quarantine is what makes pruning safe |
-| **Touches** | new `src/chat_gateway/retention.py`, `__main__.py`, `service.py`, `journal.py:10`, `docs/integration-guide.md:366`, `docs/consumers/jobhunt.md`, `.env.example` |
-| **Spec / plan** | [spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) §4 · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) **Tasks 10–13** |
-| **Merge gate** | ⏸ **sequencing only** — the user's decisions are ✅ granted (2026-07-31); **CG-65 must merge first** |
+| **Depends on** | ✅ **nothing — the gate is released.** It read *"CG-65 must be MERGED first"*; CG-65 merged 2026-07-31 as **#52** (`4fbd634`) and the quarantine exists (`inbox.py:264`) |
+| **Base** | `4fbd634`, suite **268** |
+| **Touches** | new `src/chat_gateway/retention.py`, `__main__.py`, `service.py`, **`inbox.py` (Task 14)**, `journal.py:10`, `docs/integration-guide.md:366`, `docs/consumers/jobhunt.md`, `docs/consumers/aitrader.md:569`, `.env.example` |
+| **Spec / plan** | [spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) §4 · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) **Tasks 10–14** |
+| **Merge gate** | none |
+
+> ## ⚠ The plan was corrected on 2026-08-01, BEFORE this row runs. Read the plan's audit section first.
+>
+> A Planner pass re-read the plan end-to-end against what CG-65 actually shipped,
+> because this row **deletes tenant content** where CG-65 only compacted
+> replayable state — a stale read here is unrecoverable, not merely wasteful.
+> Three outcomes:
+>
+> **1. Tasks 4 and 5 were corrected, and the correction is recorded rather than
+> tidied away.** Their literal code said `compact([])`; #52's pre-merge review
+> found that asserts an empty survivor set computed from in-memory state while
+> both producers write their journal `open` to disk *before* taking the queue
+> lock, so it could erase a job already `202`'d. The shipped fix is `compact()`
+> — no argument — which recomputes open-minus-close under the **journal's own**
+> lock (`journal.py:229`), serializing with `Journal.open`. Two gates the plan
+> also lacked (`closed`, and `ids` on the inbox side) are now in it; the `ids`
+> gate is load-bearing on **hard rule #6**. The plan now carries the wrong
+> version, the counterfactual, and the general rule. ⚠ **ADR-0002:463 still
+> shows `compact([])` on purpose** — it is labelled *"shape, not
+> implementation"* and is dated evidence. Do not fix it; do not copy from it.
+>
+> **2. The headline for THIS row: Tasks 10–13 did NOT carry that shape.**
+> `RetentionSweeper.sweep()` derives nothing from memory — it reads the
+> directory and decides each file from that file's own name, so there is no
+> snapshot to go stale. That is A3's *"the filename **is** the retention key"*
+> paying off twice.
+>
+> **3. But the audit found six neighbours, now folded into Tasks 10–12** —
+> one **HIGH**: `/healthz` raised **`KeyError`** whenever `sweeper is None`
+> (the block's `else` branch has no `delete_errors` key and the reasons line
+> indexed it unconditionally), which would 500 the endpoint hard rule #5 exists
+> to keep honest, on every offline test. Plus: the retention key is **written in
+> local time and read in UTC**; *"what this never touches"* was a **path
+> arrangement, not a code property** — `unrevivable-<date>.jsonl` matches the
+> sweeper's own regex as an app called `unrevivable` and would draw the **full
+> tenant window**; a **silently dead sweeper** was indistinguishable from an idle
+> one at `/healthz`; two prints bypassed **CG-29's allowlist**; and
+> `unrouted_window_days` re-derived `window_for`. Severities, evidence and fixes:
+> plan § *CG-68 pre-execution audit*.
+>
+> **4. Task 14 is new.** CG-65's review rewrote three strings that asserted a
+> retention window and a `retention.py` in the **present** tense before either
+> shipped. Those fixes are correct on `main` **today** and every one of them
+> becomes false in the **opposite** direction the moment Task 10 lands. The
+> audit found **five**, not three, and **two are `/healthz` `reasons` strings** —
+> so this is hard rule #5, not a docs pass. ⚠ **Task 14 ships in the SAME PR as
+> Tasks 10–12**; splitting it re-creates the window the review just closed,
+> pointed the other way. Guard grep:
+> `grep -rn "carries no retention guarantee\|Future tense\|no sweeper in this tree" src/`
+> must return nothing.
+>
+> **No ⚠ verification-ledger flag is cleared, added or reworded by any of this,
+> and no `src/` file was touched by the correction pass** — Planner edits the
+> plan and this row; Builder writes the code.
 
 `inbox-data/<app>-<date>.jsonl` holds a human's `text`, `sender_email` and whole
 `raw` event, and has held them **forever**. CG-65 fixes the mode; this fixes the
@@ -1760,7 +1831,10 @@ half (`0600`) is unaffected and can proceed."*
 3. ✅ **Amending the shared contract is signed off**, on the basis that it is
    owed to every consumer rather than to jobhunt alone.
 
-⚠ **What remains is sequencing, not approval:** **CG-65 must merge first.**
+⚠ **What remained was sequencing, not approval — and it is now DONE.** That
+line read *"CG-65 must merge first"*; #52 merged 2026-07-31. Kept as a released
+gate rather than deleted, so a reader can tell a gate that was **satisfied**
+from one that was never there.
 
 **Rule #1 note, so it is not rediscovered in review:** the window is **global**.
 `_unrouted`'s shorter floor is the gateway governing **its own** reserved bucket
