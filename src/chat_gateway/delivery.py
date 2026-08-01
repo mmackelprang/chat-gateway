@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Callable
 
 from .envelope import OutboundMessage
+from .journal import chmod_owner_only
 from .registry import Identity
 
 BACKOFF_S = (0, 30, 120, 600, 3600)  # attempt spacing; after the last -> failed
@@ -86,7 +87,15 @@ class DeliveryLog:
         if self._audit_dir:
             self._audit_dir.mkdir(parents=True, exist_ok=True)
             path = self._audit_dir / f"deliveries-{source}-{now.date().isoformat()}.jsonl"
+            # CG-65 / ADR-0002 D5. Titles-only, so this is a smaller exposure
+            # than the inbox audit — but `title[:200]` and `detail[:300]` can
+            # still carry sensitive state (aitrader Feature 3 is the reason this
+            # class is titles-only in the first place), and there is no reason
+            # for it to be the one artifact under the state dir left at 0644.
+            existed = path.exists()
             with path.open("a", encoding="utf-8") as fh:
+                if not existed:
+                    chmod_owner_only(path)
                 fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         return entry_id
 
@@ -156,7 +165,7 @@ class Dispatcher:
         without reaching into a private attribute across a module boundary."""
         return self._journal
 
-    def _journal_write(self, fn: Callable[[], None], op: str) -> None:
+    def _journal_write(self, fn: Callable[[], None], op: str) -> bool:
         """Best-effort journal write on a path where raising is the worse bug.
 
         A failed `close` must NEVER propagate: `_finish` would abort before
@@ -165,15 +174,23 @@ class Dispatcher:
         against Google. Counting it instead costs at most one duplicate on the
         next boot — the same at-least-once outcome replay already has — and the
         counter is what keeps the degradation visible.
+
+        Returns whether the write actually happened, so a caller can decline to
+        act on a write that did not land. `_finish` uses that (CG-65):
+        compacting after a FAILED `close` would truncate away the very `open`
+        record the failure left standing for replay, converting a counted
+        degradation into a silent loss.
         """
         if self._journal is None:
-            return
+            return False
         try:
             fn()
         except Exception as exc:  # noqa: BLE001 — durability degrades, delivery does not stop
             self.journal_write_errors += 1
             print(f"dispatcher: journal {op} failed ({exc}); "
                   "queue durability is degraded for this entry", flush=True)
+            return False
+        return True
 
     def enqueue(self, source: str, kind: str, identity: Identity,
                 message: OutboundMessage, title: str) -> int:
@@ -237,10 +254,36 @@ class Dispatcher:
         # killed here replays the job and delivers it TWICE. Deliberate — Chat
         # gives us no idempotency key, so the alternative is a two-phase commit
         # we are not building, and losing an alert is the worse failure.
-        self._journal_write(lambda: self._journal.close(job.entry_id, status), "close")
+        closed = self._journal_write(lambda: self._journal.close(job.entry_id, status),
+                                     "close")
         with self._lock:
             if job in self._jobs:
                 self._jobs.remove(job)
+            drained = not self._jobs
+        # CG-65 / ADR-0002 D1 — compact when the live set drains.
+        #
+        # A `close` record does NOT erase a payload: it appends a line saying
+        # the id is done while the `open` line carrying the body stays where it
+        # was. ADR-0002 §2.2 measured the consequence — a DELIVERED body sat on
+        # disk for ~500 gateway-wide notifies, which at this design's assumed
+        # traffic shape is three to eight WEEKS. A terminal job's payload has no
+        # replay value whatsoever, so that retention was a cost with no matching
+        # benefit; this collapses it to seconds.
+        #
+        # `compact([])` truncates the file to zero lines — measured, not assumed.
+        # `_maybe_compact_locked`'s 1000-append trigger STAYS as the backstop for
+        # a queue that never drains.
+        #
+        # THE HONEST COST, kept here rather than only in the ADR: one stuck job
+        # pins every other tenant's delivered body on disk until it terminates,
+        # because the set never empties. Bounded by the ~73-minute retry ladder,
+        # or by REPLAY_MAX_AGE_S (24h) across gateway downtime.
+        #
+        # Gated on `closed` as well: if the `close` above did not land, this
+        # job's `open` line is still the queue's record of it, and truncating
+        # would turn a counted durability failure into a silent loss.
+        if drained and closed:
+            self._journal_write(lambda: self._journal.compact([]), "compact")
 
     def restore(self, registry) -> tuple[int, int]:
         """Re-queue what the journal says never finished.

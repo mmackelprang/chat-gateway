@@ -13,6 +13,7 @@ journal wrote; only killing a process proves the queue survives.
 
 import datetime as dt
 import os
+import stat
 import subprocess
 import sys
 import textwrap
@@ -50,8 +51,8 @@ def _registry():
     return Registry(identities={"ident-a": ident}, apps={"app-a": app})
 
 
-def _message(text="hello"):
-    return OutboundMessage(identity="ident-a", text=text)
+def _message(text="hello", identity="ident-a"):
+    return OutboundMessage(identity=identity, text=text)
 
 
 def _reply(app="app-a", text="tapped"):
@@ -388,6 +389,106 @@ def test_delivery_log_ids_continue_past_the_replayed_ones(tmp_path):
     second.restore(reg)
     new_id = second.enqueue("app-a", "notify", reg.identities["ident-a"], _message(), "t")
     assert new_id > 3
+
+
+# --------------------------------------------------------------------------
+# Retention: what the queues KEEP, and for how long (CG-65 / ADR-0002 D1, D5)
+# --------------------------------------------------------------------------
+
+def test_delivery_audit_file_is_owner_only(tmp_path):
+    # CG-65 / ADR-0002 D5. Titles-only, so a smaller exposure than the inbox
+    # audit — but `title[:200]` and `detail[:300]` can still carry sensitive
+    # state, and there was no reason for it to be the one artifact under the
+    # state dir left at 0644.
+    log = DeliveryLog(audit_dir=tmp_path / "deliveries")
+    log.record("app-a", "notify", "HALT: SYNTHETIC-TICKER", "enqueued")
+    audit = next((tmp_path / "deliveries").glob("*.jsonl"))
+    assert stat.S_IMODE(audit.stat().st_mode) == 0o600
+    # and the mode survives a second append rather than being reset
+    log.record("app-a", "notify", "HALT: SYNTHETIC-TICKER", "delivered")
+    assert stat.S_IMODE(audit.stat().st_mode) == 0o600
+
+
+def test_delivered_body_is_erased_when_the_queue_drains(tmp_path):
+    """ADR-0002 §2.2 measured weeks; D1 makes it seconds.
+
+    A `close` does NOT erase a payload — it appends a line saying the id is
+    done while the `open` line carrying the body stays where it was. Only
+    compaction erases it.
+    """
+    reg = _registry()
+    jpath = tmp_path / "delivery.jsonl"
+    d = Dispatcher({"webhook": OkAdapter()}, DeliveryLog(), journal=Journal(jpath))
+    d.enqueue("app-a", "notify", reg.identities["ident-a"],
+              _message("SYNTHETIC BODY 4200"), "t")
+    assert "SYNTHETIC BODY 4200" in jpath.read_text(encoding="utf-8")
+    d.process_due()
+    assert d.pending() == 0
+    assert jpath.read_text(encoding="utf-8") == ""      # zero lines, body gone
+
+
+def test_a_stuck_job_pins_the_other_bodies_until_it_terminates(tmp_path):
+    """The honest cost of D1, pinned as a test rather than left as a comment.
+
+    Compaction is on DRAIN and there is one journal for the whole gateway, so
+    one stuck job holds every other source's delivered body on disk until it
+    terminates. Bounded by the retry ladder, or by REPLAY_MAX_AGE_S across
+    downtime. `app-a` / `app-b` are two synthetic tenants, per this file's rule.
+    """
+    reg = _registry()
+    jpath = tmp_path / "delivery.jsonl"
+    stuck = Identity(name="ident-b", display="B", mode="app")
+    d = Dispatcher({"webhook": OkAdapter(), "app": BoomAdapter()}, DeliveryLog(),
+                   journal=Journal(jpath))
+    d.enqueue("app-b", "notify", stuck, _message("STUCK", identity="ident-b"), "stuck")
+    d.enqueue("app-a", "notify", reg.identities["ident-a"],
+              _message("QUIET TENANT BODY"), "ok")
+    d.process_due()
+    # the app-a job delivered and closed, but the set never drained
+    assert d.pending() == 1
+    assert "QUIET TENANT BODY" in jpath.read_text(encoding="utf-8")
+
+
+def test_the_append_count_backstop_still_fires_for_a_queue_that_never_drains(tmp_path):
+    """D1 compacts on drain; `_maybe_compact_locked` STAYS for what never does.
+
+    `backoff=(0,) * 20` keeps every retry immediately due, so one job stays in
+    the live set while its `update` lines pile up — exactly the shape the
+    append-count trigger exists for, and the reason compacting on drain does
+    not replace it.
+    """
+    reg = _registry()
+    jpath = tmp_path / "delivery.jsonl"
+    d = Dispatcher({"webhook": BoomAdapter()}, DeliveryLog(), backoff=(0,) * 20,
+                   journal=Journal(jpath, compact_after=6))
+    d.enqueue("app-a", "notify", reg.identities["ident-a"], _message("STUCK"), "stuck")
+    for _ in range(12):
+        d.process_due()
+    assert d.pending() == 1                   # never drained
+    # 1 open + 12 updates would be 13 lines without the backstop
+    assert len(jpath.read_text(encoding="utf-8").splitlines()) < 13
+
+
+def test_a_failed_close_does_not_let_compaction_erase_the_open_record(tmp_path):
+    """The `closed` gate on D1's compaction, which the plan's `if drained:` left
+    open. A failed `close` is COUNTED so the entry replays on the next boot; a
+    compaction fired on the same drain would delete it instead, converting a
+    visible degradation into a silent loss.
+    """
+    reg = _registry()
+    jpath = tmp_path / "delivery.jsonl"
+
+    class BrokenJournal(Journal):
+        def close(self, entry_id, status):
+            raise OSError("no space left on device")
+
+    d = Dispatcher({"webhook": OkAdapter()}, DeliveryLog(), journal=BrokenJournal(jpath))
+    d.enqueue("app-a", "notify", reg.identities["ident-a"], _message("SURVIVES"), "t")
+    d.process_due()
+    assert d.pending() == 0 and d.journal_write_errors == 1
+    assert "SURVIVES" in jpath.read_text(encoding="utf-8")
+    assert Dispatcher({"webhook": OkAdapter()}, DeliveryLog(),
+                      journal=Journal(jpath)).restore(reg) == (1, 0)
 
 
 def test_without_a_journal_the_dispatcher_is_exactly_what_it_was(tmp_path):
