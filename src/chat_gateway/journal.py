@@ -51,9 +51,10 @@ SCHEMA_VERSION = 1
 #: that never reboots, boot-only compaction is no compaction at all.
 DEFAULT_COMPACT_AFTER = 1000
 
-#: The journal carries message bodies (see the module docstring), so it is
-#: created owner-only. A no-op for group/other on Windows, which is fine: the
-#: mode matters on the Linux deploy target.
+#: The journal and both audit trails carry message bodies or whole inbound
+#: events (see the module docstring, and CG-65), so they are created owner-only.
+#: A no-op for group/other on Windows, which is fine: the mode matters on the
+#: Linux deploy target.
 _FILE_MODE = 0o600
 
 
@@ -105,7 +106,7 @@ class Journal:
             existed = self._path.exists()
             with self._path.open("a", encoding="utf-8") as fh:
                 if not existed:
-                    _chmod_quietly(self._path)
+                    chmod_owner_only(self._path)
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
                 fh.flush()
                 os.fsync(fh.fileno())
@@ -164,7 +165,7 @@ class Journal:
                 existed = self._path.exists()
                 with self._path.open("a", encoding="utf-8") as fh:
                     if not existed:
-                        _chmod_quietly(self._path)
+                        chmod_owner_only(self._path)
                     fh.write(blob)
                     fh.flush()
                     os.fsync(fh.fileno())
@@ -263,7 +264,7 @@ class Journal:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.parent / (self._path.name + ".tmp")
         with tmp.open("w", encoding="utf-8") as fh:
-            _chmod_quietly(tmp)
+            chmod_owner_only(tmp)
             for job in survivors:
                 fh.write(json.dumps({
                     "v": SCHEMA_VERSION, "op": "open", "id": job["id"],
@@ -284,11 +285,18 @@ class Journal:
         self._since_compaction = 0
 
 
-def _chmod_quietly(path: Path) -> None:
+def chmod_owner_only(path: Path) -> None:
     """Owner-only, best effort. Never fatal: a filesystem that cannot express
     the mode (a Windows dev box, an odd bind mount) is not a reason to refuse to
-    journal — the deploy runbook sets the directory mode, which is the control
-    that actually holds on the Linux target."""
+    write — the deploy runbook sets the directory mode, which is the control
+    that actually holds on the Linux target.
+
+    Public since CG-65: `inbox.py`'s audit trail and `delivery.py`'s delivery
+    log were both created 0644 by doing nothing, and the fix is this exact
+    primitive applied in this exact place — inside the `open()` context, before
+    the first payload byte, so there is no window at 0644. One home, because a
+    second copy of a security control is how the two drift apart.
+    """
     try:
         os.chmod(path, _FILE_MODE)
     except OSError:
