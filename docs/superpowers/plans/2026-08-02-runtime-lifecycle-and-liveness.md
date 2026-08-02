@@ -822,8 +822,24 @@ done
 ```
 
 Equal counts on every row, and an equal repo-wide total, is the claim *"no flag
-was cleared, added or reworded"* actually being measured. CG-72 shipped with
-103 = 103.
+was cleared, added or reworded"* actually being measured.
+
+**Demonstrated by this very correction, which is why the per-file form needs one
+more refinement.** CG-72 ran that loop and it reported **this plan file** as
+`main=2 branch=4` — a "changed" row. The change is the three lines directly
+above: the flag words appear inside `grep` **patterns** in a shell snippet. No
+annotation moved. So the count comparison is necessary but not sufficient, and
+the check that actually settles it is the one for the **flagged form**:
+
+```
+git diff main | grep -cE "^[+-].*⚠.*(LIVE-UNVERIFIED|SHAPE-VERIFIED)"   # must be 0
+```
+
+A ledger entry is always the ⚠-prefixed annotation, never a bare mention. CG-72
+shipped with **0** on that check, `src/` at 4 = 4, `CLAUDE.md` at 8 = 8,
+`docs/architecture/` at 5 = 5 and `docs/consumers/` at 2 = 2 — while the naive
+whole-diff count read 103 → 105 and would have sent a Builder hunting. **Both
+numbers were true; only one of them was about the ledger.**
 
 **UAT, and it must be a real process — a unit test cannot prove B2.** Run
 `python3 -m chat_gateway serve` against a scratch state dir, `kill -TERM` it, and
