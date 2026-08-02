@@ -5,7 +5,7 @@
 | **Spec** | [`2026-07-31-body-retention-and-audit-hardening-design.md`](../specs/2026-07-31-body-retention-and-audit-hardening-design.md) |
 | **ADR** | [ADR-0002](../../architecture/decisions/2026-07-31-journalled-message-bodies.md) — `D + A + D5` |
 | **Base** | Tasks 1–9: `dced002` (CG-61/#50), suite **247**. **Tasks 10–14: `4fbd634` (CG-65/#52), suite 268** |
-| **Approved** | ✅ **all four sign-offs granted by the user, 2026-07-31** — see the box below |
+| **Approved** | ✅ **four sign-offs granted by the user 2026-07-31, plus a fifth (A5) on 2026-08-02** — see the box below |
 | **Rows** | **CG-65** = Tasks 1–9 — ✅ **shipped as #52**. **CG-68** = Tasks **10–14** — 📋 queued, gate released |
 | **Corrected** | **2026-08-01** — Tasks 4 & 5 rewritten to match what shipped (a data-loss race their literal code contained), Tasks 10–12 amended from a pre-execution audit, **Task 14 added**. See the two ⚠ CORRECTED boxes and § *CG-68 pre-execution audit* |
 
@@ -21,6 +21,7 @@
 > | **A2** | ✅ **Retention: 30 days tenant / 7 days `_unrouted` / `0` disables**, via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`. Task 10 | **30** because a calendar month is the unit a privacy posture and a subject-access request are written in, and — load-bearing — **`docs/integration-guide.md:370` already tells consumers this file is *"a forensic record on the gateway host, not something you can re-poll"***, so the gateway does **not** need to hold a consumer's decision history; a consumer needing it keeps its own. **7** for `_unrouted` per ADR §4.1: it answers to no tenant and has no consent story. **Time-bounded in days, never count-bounded** — ADR §2.2 is the reason |
 > | **A3** | ✅ **Unlink, not redact.** Task 10 | The filename **is** the retention key, so pruning is a directory listing and an `unlink` — no parsing, and nothing ever opens a file holding message bodies to decide whether to delete it. Redaction needs field-by-field judgements about which parts of a person's message are sensitive, which is rule-#1 territory |
 > | **A4** | ✅ **Amend the shared contract.** Task 13a | `integration-guide.md:366`'s *"never pruned"* was a v0 over-promise on a file holding a person's `text`, `sender_email` and whole `raw` event forever. It is owed to **every** consumer, not to jobhunt alone — which is why it was signed off explicitly rather than absorbed into a docs pass |
+> | **A5** ⚠ *added **2026-08-02**, mid-execution* | ✅ **F2's boot guard REFUSES, not warns** — `_check_disjoint` stays stricter than the non-recursive glob strictly requires, so `CHAT_GATEWAY_INBOX_DIR=state` fails at boot. Task 10 | **This was Planner's own judgement call and is now the user's decision** — it sat outside A1–A4, phrased as a trade the plan had chosen, which is exactly the shape a reviewer softens. The reasoning the user accepted: *"currently harmless" depends on ONE LINE staying non-recursive.* A future `rglob` removes that safety silently, and **a warning nobody reads becomes tenant data loss.** Full wording at the ✅ box above Task 10's tests |
 >
 > **A2's rule-#1 note, so it is not relitigated in review:** the window is
 > **global**. `_unrouted`'s shorter floor is the gateway governing **its own**
@@ -1296,6 +1297,28 @@ class RetentionSweeper:
 fix.** `sweep()` owns the *"a pass completed"* stamp; `_sweep_dir()` owns the
 work. Do not re-merge them — the whole defect was that the early return for a
 missing directory skipped the stamp, and a single method invites that back.
+
+> ## ✅ SIGNED OFF BY THE USER, 2026-08-02 — F2's boot guard REFUSES, and that is now a decision rather than the Planner's judgement call
+>
+> **Recorded because of what it was before.** The paragraph below was written by
+> Planner as a *trade it had chosen*, in a plan whose approval box (A1–A4) did
+> not cover it — so a Builder or a reviewer could reasonably have read it as
+> open and softened it to a warning. It is not open. The user was asked directly
+> and elected **refuse**, and the reasoning they accepted is the reasoning to
+> quote if it is ever questioned again:
+>
+> *"currently harmless" is a property of ONE LINE of code staying non-recursive.*
+> `glob("*.jsonl")` is what makes `CHAT_GATEWAY_INBOX_DIR=state` safe today — not
+> the guard, not the layout. The day someone reaches for `rglob` for an unrelated
+> reason, that safety evaporates silently, and **a warning nobody reads becomes
+> tenant data loss.** Refusing at boot costs an operator one clear error message
+> naming both env vars; the alternative costs the only copy of replies that were
+> never delivered.
+>
+> ⚠ **Do not soften this in review.** Bugs *in* the guard are still findings; the
+> strictness is not one. Pinned in both directions by
+> `test_a_safe_but_all_in_one_layout_is_refused_on_purpose` and its counterweight
+> `test_the_default_sibling_layout_is_NOT_refused`, so neither half can drift.
 
 ⚠ **`_check_disjoint` is deliberately STRICTER than the glob requires, and one
 plausible config now fails at boot that would not have corrupted anything.**

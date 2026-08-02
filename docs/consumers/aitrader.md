@@ -649,6 +649,7 @@ or in an assistant prompt.
 | `GOOGLE_CHAT_WEBHOOK_URL__AITRADER_ALERTS` | the loud, phone-visible space |
 | `GOOGLE_CHAT_WEBHOOK_URL__AITRADER_REPORTS` | the quiet reports space |
 | `CHAT_GATEWAY_STATE_DIR` | heartbeat checks, the delivery log JSONL, **the queue journals (message bodies — yours included — file mode `0600`, §6)** and the quarantine dir for inbound replies that could not be revived. Default `state` |
+| `CHAT_GATEWAY_INBOX_RETENTION_DAYS` | how long the **inbound** audit trail under `CHAT_GATEWAY_INBOX_DIR` is kept, in days (default 30; `0` disables). ⚠ **Nothing of aitrader's is in that directory, and this window does not apply to anything of yours.** aitrader is `allow_inbound: false`, so no event ever reaches `inbox.put` and no file is ever written under your app id (§2.7). Listed here because it is an operator knob on this deployment, not because it touches your records. Your delivery log under `CHAT_GATEWAY_STATE_DIR/deliveries/` is **unaffected** — the sweeper never looks there. |
 | `CHAT_GATEWAY_REGISTRY` | identities + apps config (default `config/registry.yaml`) |
 
 Mint a key with `python3 -m chat_gateway mint-key`. Confirm readiness without

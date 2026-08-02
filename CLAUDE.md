@@ -60,7 +60,7 @@ printed in full (see below); `adapters/` — webhook (tier 1), chat_api + pubsub
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 268 passing.
+`python` is 3.13.7) — offline, 314 passing.
 
 ## Current status (2026-07-31)
 
@@ -109,6 +109,28 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   because the per-app audit trail should never have been *"the only copy"* of a
   record the gateway was holding in its own hands at the moment it dropped it.
   Numbers and reasoning: ADR-0002 — **not restated here.**
+  **And the "forever" ended too (CG-68, 2026-08-02) — the first change in this
+  repo that DELETES a tenant's content.** `inbox-data/<app>-<date>.jsonl` is now
+  swept on a time bound; the filename **is** the retention key, so pruning is a
+  directory listing and an `unlink`, and nothing ever opens a file holding
+  message bodies to decide whether to delete it. **The window has one home and
+  it is not this file** — `retention.py`'s constants, quoted to consumers at
+  `docs/integration-guide.md:366`, which is the *published* guarantee this row
+  amended from *"never pruned"* (sign-off A4). Do not copy the numbers here;
+  that is precisely what the test count above did.
+  **What must NOT be inferred from the sentence above:** `<state_dir>/quarantine/`
+  is still never pruned — it is what makes the sweep safe — and
+  `<state_dir>/deliveries/` is untouched by decision (ADR-0002 **D7**). Both are
+  now enforced in **code**, not by where two env vars happen to point: the
+  sweeper **refuses to boot** if its directory overlaps the state dir, and skips
+  the quarantine's filename by name even then. That refusal is deliberately
+  stricter than the non-recursive glob requires — **a user decision, 2026-08-02**
+  (queue CG-68, decision 4), on the reasoning that "currently harmless" is a
+  property of one line of code and a warning nobody reads becomes tenant data
+  loss. `/healthz` publishes `files_deleted`, which **never** degrades `status`
+  — a retention policy working is not a fault, the same reasoning recorded for
+  `suppressed_opt_out` below — while `delete_errors`, consecutive sweep failures
+  and a dead sweep thread all do.
 - **The live project is `chat-gateway-gw` (`#860649224827`), and it is the only
   one.** `chat-gateway-prod` — which every "Cloud resources now exist" note in
   this file used to describe — was **deleted 2026-07-30**, along with E1's

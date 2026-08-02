@@ -1,6 +1,50 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-01 (Planner — **CG-68's plan corrected before Builder
+**Last updated:** 2026-08-02 (Builder — **CG-68 shipped as [#54](https://github.com/mmackelprang/chat-gateway/pull/54)**).
+Suite **268 → 314**.
+
+**The first row that DELETES a tenant's content**, and the "forever" on
+`inbox-data/<app>-<date>.jsonl` is over: **30 days / 7 for `_unrouted` / `0`
+disables**, via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`. `integration-guide.md:366`'s
+published *"never pruned"* is amended (sign-off A4) — the promise was owed to
+every consumer, not to jobhunt alone.
+
+✅ **A fifth sign-off, A5, taken mid-execution (2026-08-02).** The boot guard
+**refuses** rather than warns and is stricter than the non-recursive glob
+requires. The plan carried that as a trade **Planner had chosen**, phrased
+outside the A1–A4 box — the exact shape a reviewer softens on "currently
+harmless" grounds. Reasoning the user accepted, kept rather than the verdict
+alone: *"currently harmless" is a property of one line of code staying
+non-recursive*, and **a warning nobody reads becomes tenant data loss** the day
+someone reaches for `rglob`. Recorded in three places, including
+`_check_disjoint`'s own docstring so it travels with the code.
+
+⚠ **Pre-merge review found 0 HIGH, 6 MEDIUM, 6 LOW, and the sharpest one was
+this row's guarantee being half-built.** The module docstring listed three
+directories under *"what this never touches"* and closed *"it is now enforced
+twice, in code"* — backed by two **quarantine-only** mechanisms. Measured:
+`CHAT_GATEWAY_INBOX_DIR=state/deliveries` is a **sibling** of the quarantine, so
+both guards passed and the sweeper pruned the **delivery log** — ADR-0002 **D7**,
+*"permanent by decision"* — and `files_deleted`, which deliberately never
+degrades, published it at `/healthz` as the feature working. The guard now
+refuses overlap with the whole state dir: a **widening** of A5, never a
+narrowing. Two more worth carrying forward: a **recovered** sweep failure pinned
+`degraded` for the life of the process and printed the cleared error as the
+literal `(None)`; and both Task 14 `/healthz` tails asserted a delete timer
+**unconditionally**, so a deployment with `RETENTION_DAYS=0` was told its last
+copy was being pruned — **Task 14's own defect shape, pointed the other way**.
+
+**One deferral, knowingly:** the sweeper's `start()`/`stop()` are not idempotent
+and it is never stopped. Byte-for-byte the `Dispatcher` idiom, and Task 11's
+*"stop it where the dispatcher and monitor are stopped"* names a place that
+**does not exist** — `__main__` stops neither. A shutdown path for three
+components is not a retention row's to invent.
+
+**No ⚠ verification-ledger flag cleared, added or reworded** — proven by diff,
+not memory: zero flag-word occurrences in `git diff main`, and identical
+per-file counts on both sides. `docs/architecture/` untouched.
+
+Previously 2026-08-01 (Planner — **CG-68's plan corrected before Builder
 runs it**). No `src/` change; the plan document and this row only.
 
 ⚠ **Read CG-68's row before starting it.** A Planner pass re-read
@@ -759,7 +803,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
 | **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | ✅ done (#52) | Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. Pre-merge review found a **data-loss race** in compact-on-drain — both producers journal the `open` before taking the queue lock, so `compact([])` could erase a record already on disk; fixed by recomputing survivors under the journal's own lock. Suite **247 → 268**. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
-| **CG-68** · time-bounded pruning of the inbound audit trail | 📋 queued | ✅ **decisions approved** (30/7/0, unlink, amend the contract); ✅ **gate released** — CG-65 merged as #52. Answers ADR-0002 §9 **Q6** by amending a **published** guarantee. ⚠ **Plan corrected 2026-08-01** by a pre-execution audit: Tasks 10–13 do **not** carry CG-65's compact-on-drain race, but six neighbours were found — one **HIGH** (`/healthz` `KeyError` with no sweeper) — and **Task 14** was added for five present-tense strings this row inverts, two of them on `/healthz`. Plan Tasks **10–14** |
+| **CG-68** · time-bounded pruning of the inbound audit trail | ✅ done (#54) | **The first row that DELETES a tenant's content.** 30/7/0 via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`; the filename is the retention key, so pruning never opens a file holding message bodies. Amends `integration-guide.md:366`'s published *"never pruned"* (A4). ⚠ **New user decision A5** — the boot guard **refuses** rather than warns, and is stricter than the non-recursive glob requires (decision 4 below). Review found **0 HIGH, 6 MEDIUM, 6 LOW**; the sharpest was **M2** — the sweeper would have pruned `state/deliveries/` (ADR D7, permanent by decision), because the guard only fenced the quarantine and `state/deliveries` is its *sibling*. Suite **268 → 314**. Plan Tasks **10–14** |
 | **CG-69** · published-promise inventory (process control) | 📋 queued | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. No plan yet |
 | **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued | Filed by CG-65's Builder from its own pre-merge review (LOW), **deferred rather than folded in**. No plan yet |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
@@ -1737,7 +1781,7 @@ secure"; state what reaches disk, for how long, and at what mode.**
 
 ---
 
-### CG-68 · Time-bounded pruning of the inbound audit trail  📋 queued
+### CG-68 · Time-bounded pruning of the inbound audit trail  ✅ done ([PR #54](https://github.com/mmackelprang/chat-gateway/pull/54))
 
 | | |
 |---|---|
@@ -1830,6 +1874,23 @@ half (`0600`) is unaffected and can proceed."*
    a person's message are sensitive, which is rule-#1 territory.
 3. ✅ **Amending the shared contract is signed off**, on the basis that it is
    owed to every consumer rather than to jobhunt alone.
+4. ✅ **Added 2026-08-02, mid-execution — F2's boot guard REFUSES rather than
+   warns.** `RetentionSweeper._check_disjoint` stays **stricter than the
+   non-recursive glob strictly requires**: `CHAT_GATEWAY_INBOX_DIR=state` — an
+   operator putting everything in one place — fails at boot even though
+   `glob("*.jsonl")` would never have descended into `state/quarantine/`.
+   ⚠ **This was the Planner's own judgement call, phrased in the plan as a trade
+   it had chosen, and it sat outside the three sign-offs above** — which is
+   precisely the shape a reviewer softens on the grounds that it is "currently
+   harmless". The user was asked directly and elected refuse. The reasoning they
+   accepted, kept rather than summarized: *"currently harmless" is a property of
+   **one line of code** staying non-recursive.* The day someone reaches for
+   `rglob` for an unrelated reason that safety evaporates silently, and **a
+   warning nobody reads becomes tenant data loss.** Refusing costs one clear
+   boot error naming both env vars; the alternative costs the only copy of
+   replies that were never delivered. Pinned in **both** directions
+   (`test_a_safe_but_all_in_one_layout_is_refused_on_purpose` and
+   `test_the_default_sibling_layout_is_NOT_refused`) so neither half drifts.
 
 ⚠ **What remained was sequencing, not approval — and it is now DONE.** That
 line read *"CG-65 must merge first"*; #52 merged 2026-07-31. Kept as a released
@@ -2039,7 +2100,11 @@ as unnoticed:
   inbound events including `raw`. Measured by the concurrent **Architect**
   agent, not by this row, and it belongs to the **CG-65 decision the user has
   not yet taken**. This row ignores the directory; it does not change what the
-  directory contains or how it is protected. (This Builder's own `stat` read
+  directory contains or how it is protected. ⚠ **Both halves of that first
+  sentence are now false, and it is left standing as the dated record of what
+  this row saw rather than edited into agreement with today:** the mode became
+  `0600` in **CG-65** (#52) and the "never pruned" ended in **CG-68**
+  (2026-08-02). The decision named here as untaken was taken. (This Builder's own `stat` read
   `777` on every file — an artifact of the dev box's 9p `/mnt/d` mount, which
   does not honour POSIX modes. That is a **measurement-environment artifact,
   not a contradiction** of Architect's 0644.)
@@ -2342,11 +2407,29 @@ compaction**, and `inbox.pending` / `inbox.dropped`.
 proves little about behaviour under load** — say which of those the evidence
 reaches.
 
-**Disk growth: measure and propose, do not implement.** The audit JSONL files
-(`inbox-data/`, `state/deliveries/`) are per-app-per-day and **never pruned** —
-invisible on the dev box, a slow leak on a host meant to run for years. A
-retention policy on an audit trail whose stated purpose is that *"nothing is ever
-silently lost"* is a rule-#5-flavoured decision and **belongs to the user**.
+**Disk growth: measure and propose, do not implement.** The audit JSONL files are
+per-app-per-day — invisible on the dev box, a slow leak on a host meant to run
+for years. A retention policy on an audit trail whose stated purpose is that
+*"nothing is ever silently lost"* is a rule-#5-flavoured decision and **belongs
+to the user**.
+
+⚠ **Half of this was overtaken by CG-68 on 2026-08-02, and the brief above is
+corrected rather than left to mislead.** It said both directories are *"never
+pruned"*, and named the decision as one the user had not taken. Now:
+
+- **`inbox-data/` IS pruned** — 30 days by default, 7 for the gateway's own
+  `_unrouted` bucket, `0` disables, via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`.
+  The decision this row wanted to hand to the user **was** handed to the user
+  and taken (sign-offs A2/A3/A5).
+- **`state/deliveries/` is NOT pruned**, and that is a decision rather than an
+  omission — titles-only and permanent per ADR-0002 **D7**. CG-68 made it a
+  code property as well as a policy: the sweeper refuses to boot if its
+  directory overlaps the state dir at all.
+
+**What is left for this row is what it measures BEYOND the window**: whether 30
+days is the right number against real volume, and whether `state/deliveries/`
+growing forever is acceptable on a host meant to run for years — which D7
+decided on content grounds, never on size.
 
 ---
 

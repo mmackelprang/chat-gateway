@@ -163,11 +163,11 @@ class Inbox:
         **The quarantine file under the state dir is the recovery record** — the
         whole journal record, payload included, is written there before boot
         compaction erases it, and it is never pruned. The per-app JSONL audit
-        beside this queue also holds what arrived, but it carries no retention
-        guarantee and must not be relied on as the only copy: CG-68 puts it on a
-        time-bounded window. **Future tense deliberately** — that row has not
-        shipped, and this repo already carries one open defect (CG-66) for a
-        docstring that cites an unshipped control in the present tense.
+        beside this queue also holds what arrived, but it is **subject to a
+        time-bounded window** (`retention.py`, CG-68) and must not be relied on
+        as the only copy. *Subject to*, not *pruned on*: whether a sweeper is
+        wired and what window it holds are facts this class cannot see, and `0`
+        disables pruning entirely.
 
         The console line names the id and the exception TYPE, never the record.
         A pydantic `ValidationError` embeds the input it rejected, and an
@@ -194,9 +194,20 @@ class Inbox:
                           + ("the whole record was preserved in the quarantine dir "
                              "under the state dir, which is never pruned"
                              if preserved else
+                             # SUBJECT TO, not IS DELETED ON (pre-merge review,
+                             # 2026-08-02). `Inbox` cannot see whether a sweeper
+                             # exists or what window it holds, and
+                             # `CHAT_GATEWAY_INBOX_RETENTION_DAYS=0` is a
+                             # documented escape hatch — so the unconditional
+                             # form told some deployments their last copy was on
+                             # a timer that is not running. Softened rather than
+                             # coupled: passing the window in here would join two
+                             # modules to dodge a wording problem, and the env
+                             # var's NAME is what Task 13's row asked for.
                              "NO quarantine copy was written — the per-app JSONL "
                              "audit under the inbox dir is the only recovery "
-                             "record, and it carries no retention guarantee"),
+                             "record, and it is subject to the "
+                             "CHAT_GATEWAY_INBOX_RETENTION_DAYS window"),
                           flush=True)
                     continue
                 q = self._pending[reply.app]
@@ -263,11 +274,17 @@ class Inbox:
         so preserving it costs one append. Without it, `restore` drops the
         record and `compact` erases the journal's copy moments later.
 
-        Never swept: CG-68's retention sweeper must not look in this directory,
-        and that is the point of it existing. **Future tense on purpose** — that
-        row is gated behind this one merging, so there is no sweeper in this
-        tree yet; its plan pins the rule with
-        `test_the_quarantine_dir_is_never_swept`.
+        Never swept, and since CG-68 that is stronger than *"must not"* — the
+        sweeper **cannot**. `RetentionSweeper.__init__` refuses at boot any
+        sweep directory that is, contains, or sits inside this one
+        (`_check_disjoint`), and `_sweep_dir` skips this method's filename by
+        its `QUARANTINE_STEM` even if a layout nobody predicted gets one into
+        the swept directory. Two guards rather than one, deliberately: this is
+        the one deletion in the repo with no second copy anywhere. Pinned by
+        `test_the_quarantine_dir_is_never_swept` and
+        `test_the_quarantine_stem_matches_what_inbox_actually_writes` — the
+        second is what fails if the filename below is ever renamed without
+        moving `QUARANTINE_STEM` with it.
 
         Best-effort, and counted rather than raised: a quarantine write that
         fails must not stop a boot. The console line below says which branch
