@@ -7,9 +7,9 @@ idiom: no new dependency, one file per queue, readable with `tail` during an
 incident.
 
 NOT THE AUDIT TRAIL, and not a replacement for it. The audit files are
-per-app-per-day, never pruned, and carry no TERMINAL records — they say what
-ARRIVED, never what LEFT, so pending state cannot be reconstructed from them.
-Different question, different file; both stay.
+per-app-per-day, retained for a bounded window (retention.py), and carry no
+TERMINAL records — they say what ARRIVED, never what LEFT, so pending state
+cannot be reconstructed from them. Different question, different file; both stay.
 
 Durability is chosen over throughput deliberately: every append is flushed and
 fsync'd. The traffic shape this serves is tens of messages a day (the jobhunt

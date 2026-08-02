@@ -364,10 +364,21 @@ answer to that question and never was one. There are **two** files answering
 **two** questions, and only the second one is about durability:
 
 - The per-app **JSONL audit** says what **ARRIVED**. One file per app per day,
-  written before anything is queued, never pruned. It holds no terminal records
-  — nothing in it marks a reply as polled — so **your pending queue cannot be
-  reconstructed from it.** It is a forensic record on the gateway host, not
-  something you can re-poll.
+  written before anything is queued, and **retained for a bounded window —
+  30 days by default, 7 days for the gateway's own `_unrouted` bucket**,
+  settable per deployment via `CHAT_GATEWAY_INBOX_RETENTION_DAYS` (`0`
+  disables pruning). It holds no terminal records — nothing in it marks a
+  reply as polled — so **your pending queue cannot be reconstructed from it.**
+  It is a forensic record on the gateway host, not something you can re-poll.
+
+  ⚠ **This changed on 2026-08-02, and it changed a published guarantee.** This
+  line previously read *"never pruned."* That was a v0 over-promise on a file
+  holding a person's message text, `sender_email` and whole `raw` event
+  forever. The window is the amendment; the mechanism that makes it safe is
+  the **quarantine** described below, which is never pruned and holds any
+  reply that could not be revived. Reasoning:
+  [ADR-0002](architecture/decisions/2026-07-31-journalled-message-bodies.md)
+  §4.1 and §9 Q6.
 - The **queue journal** says what is still **PENDING**. Since 2026-07-31 the
   inbox queue is journalled under `CHAT_GATEWAY_STATE_DIR/queue/` and replayed
   at boot, so a restart while your poller is asleep no longer loses the taps
@@ -400,13 +411,15 @@ curl -s $GW/healthz                     # honest health — no auth required
 
 ### Durability counters at `/healthz`
 
-This is where the queue journals report themselves **to you**. A boot line on
-the gateway's console says some of it as well, but that is the operator's copy
-and you cannot read it. **Nine** fields arrived with the journals on 2026-07-31,
-and **six of them can flip `status` to `degraded`** — so a consumer that alarms
-on `status` should know what they mean before one fires at 03:00. `status` is
-computed **from** `reasons`: anything that can degrade this endpoint says so in
-words, because a number nobody reads is not honest health.
+This is where the queue journals — and, since 2026-08-02, the retention
+sweeper — report themselves **to you**. A boot line on the gateway's console
+says some of it as well, but that is the operator's copy and you cannot read
+it. **Nine** fields arrived with the journals on 2026-07-31 and **eight more**
+with the sweeper; **eight of the seventeen can flip `status` to `degraded`** —
+so a consumer that alarms on `status` should know what they mean before one
+fires at 03:00. `status` is computed **from** `reasons`: anything that can
+degrade this endpoint says so in words, because a number nobody reads is not
+honest health.
 
 | Field | What it means | Degrades? |
 |---|---|---|
@@ -419,20 +432,36 @@ words, because a number nobody reads is not honest health.
 | `inbox.quarantine_write_errors` | quarantine writes that **failed**. At least one unrevivable reply has **no preserved copy**, so only the per-app audit trail records that it ever arrived | **yes** |
 | `delivery.journal_skipped_lines` | journal lines that did not parse. A torn trailing line is the *expected* shape after a power loss and is deliberately not fatal — a gateway that refuses to boot over a half-written byte is a crash loop | **yes** |
 | `delivery.journal_write_errors` | journal writes that **failed** since start. The queues keep running — raising there would turn a full disk into a re-send storm — so while this is non-zero they are running **without** durability, and a reply you already polled can be delivered to you a second time after a restart | **yes** |
+| `retention.enabled` | whether the audit trail is being pruned at all. `false` means either no sweeper is wired or the window is `0` — the two are distinguishable: only the first carries a `note` and omits every field below | no |
+| `retention.window_days` | the tenant window actually in force on this deployment, in days. Read this rather than assuming the 30-day default — it is one env var | no |
+| `retention.unrouted_window_days` | the shorter floor applied to the gateway's own `_unrouted` bucket. Not per-tenant policy: `_unrouted` holds unattributable events that answer to nobody | no |
+| `retention.files_deleted` | day-files pruned since this process started. **Deliberately not a fault at any magnitude** — a retention policy working is not a failure, and degrading on it would teach you to ignore `degraded` | no — the feature working |
+| `retention.delete_errors` | day-files the OS **refused** to unlink. The trail is growing past the window this guide states, so the retention promise above is not currently being kept | **yes** |
+| `retention.sweep_failures` | whole sweep passes that **raised**. Louder than the row above: nothing is being pruned, so `files_deleted` and `delete_errors` both sit at a reassuring number while the window is not enforced at all | **yes** |
+| `retention.last_sweep_error` | the exception **type** from the last failed pass — a type name, never a path. Companion to the row above, not an independent signal | no — reported with `sweep_failures` |
+| `retention.last_sweep_at` | when a pass last **completed**. A pass over a directory that does not exist still stamps this, so `null` on a running gateway means the sweeps are not happening, not that there was nothing to do | no |
 
-Three things the field names do not tell you:
+Four things the field names do not tell you:
 
 - **Two of the `delivery.*` fields count both queues.**
   `journal_skipped_lines` and `journal_write_errors` are sums across the
   outbound *and* inbox journals — despite the prefix. The other three
   `delivery.*` fields, and **all four** `inbox.*` fields, are per-queue exactly
   as their prefixes say. Do not read the prefix as a guarantee on those two.
-- **Six fields, five `reasons` lines.** `expired_at_boot` and
+- **Eight degrading fields, seven `reasons` lines.** `expired_at_boot` and
   `unroutable_at_boot` share one entry: both mean "queued, then not delivered",
   and one investigation reads them together. (It was five and four until
-  2026-07-31; `quarantine_write_errors` added one of each. Recount against
-  `service.py` rather than trusting this sentence — a copied count is what
-  `CLAUDE.md`'s test-count note is about.)
+  2026-07-31; `quarantine_write_errors` added one of each, and the two
+  `retention.*` faults added one each on 2026-08-02 — they do **not** share a
+  line, because one file the OS refused and the whole pass dying are different
+  investigations. Recount against `service.py` rather than trusting this
+  sentence — a copied count is what `CLAUDE.md`'s test-count note is about.)
+- **`retention.*` is about the audit trail, not about your queue.** Everything
+  else in this table describes work that was queued and might have been lost.
+  These describe a file being **deleted on schedule**, which is the intended
+  behaviour — only the two fault rows mean anything is wrong. Nothing the
+  sweeper does can affect a pending reply: it never opens the queue journals
+  and it never touches the quarantine.
 - **The `*_at_boot` reasons will not clear while the process runs.** They
   describe this boot, and boot compaction has already removed the records, so a
   restart clears them. `journal_write_errors` is the opposite — it is live, and
