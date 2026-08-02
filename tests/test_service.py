@@ -937,3 +937,97 @@ def test_opted_out_tenants_are_never_given_a_routing_target(tmp_path, monkeypatc
         "/v1/identities", headers={"Authorization": "Bearer cgk_test_key"}
     ).json()["interaction"]
     assert opted_in["routing_target"] == "projects/p/topics/t"
+
+
+# --- CG-72: the dispatcher and the heartbeat monitor at /healthz -------------
+#
+# Six tests, kept together. The two threads `/healthz` could not see: a dead
+# `delivery-dispatcher` silently stops every outbound notification, and a dead
+# `heartbeat-monitor` kills the dead-man switch — both with every published
+# field frozen at a real-looking value. Rule #5's founding shape, twice.
+#
+# These use the file's own `env` fixture rather than a new helper: it already
+# builds a registry, an inbox, a fake adapter and an app with NO subscriber and
+# NO sweeper, which is the 23-bare-TestClient shape these tests are about.
+
+
+def test_a_dispatcher_that_was_never_started_is_silent_not_degraded(env):
+    """The 23 offline apps. `thread_alive` is false and it is NOT a fault."""
+    client, _inbox, _adapter = env
+    body = client.get("/healthz").json()
+    assert body["delivery"]["thread_started"] is False
+    assert body["delivery"]["thread_alive"] is False
+    assert body["heartbeats"]["thread_started"] is False
+    assert not any("delivery: the dispatch thread" in r for r in body["reasons"])
+    assert not any("heartbeats: the scan thread" in r for r in body["reasons"])
+
+
+def test_a_dispatch_thread_that_started_and_died_degrades_healthz(env):
+    """The founding rule-#5 shape: every field frozen at a plausible value."""
+    client, _inbox, _adapter = env
+    dispatch = client.app.state.dispatcher
+    dispatch.start()
+    dispatch.stop()                               # thread is now dead
+    assert dispatch.started is True
+    assert dispatch.is_alive() is False
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("the dispatch thread was started and is NOT RUNNING" in r
+               for r in body["reasons"])
+
+
+def test_a_scan_thread_that_started_and_died_degrades_healthz(env):
+    client, _inbox, _adapter = env
+    monitor = client.app.state.monitor
+    monitor.start()
+    monitor.stop()
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("the scan thread was started and is NOT RUNNING" in r
+               for r in body["reasons"])
+
+
+def test_an_empty_pass_still_stamps_last_pass_at():
+    """Otherwise 'healthy and idle' is byte-identical to 'dead' for hours.
+
+    This is the assertion that makes the staleness branch mean anything at
+    this gateway's traffic shape, where nearly every pass is empty.
+    """
+    from chat_gateway.delivery import DeliveryLog, Dispatcher
+
+    d = Dispatcher({}, DeliveryLog())
+    assert d.last_pass_at is None
+    assert d.process_due() == 0                   # nothing due, nothing to do
+    assert d.last_pass_at is not None
+
+
+def test_a_wedged_dispatcher_is_stale_but_not_reported_dead(env):
+    """Alive + no completed pass past the budget == wedged, one reason only."""
+    from chat_gateway.service import DISPATCH_STALE_AFTER_SECONDS
+
+    client, _inbox, _adapter = env
+    dispatch = client.app.state.dispatcher
+    dispatch.start()
+    try:
+        dispatch.last_pass_at = (dt.datetime.now(dt.timezone.utc)
+                                 - dt.timedelta(seconds=DISPATCH_STALE_AFTER_SECONDS + 60))
+        body = client.get("/healthz").json()
+        assert body["status"] == "degraded"
+        hits = [r for r in body["reasons"] if r.startswith("delivery: ")]
+        assert len(hits) == 1 and "wedged rather than erroring" in hits[0]
+    finally:
+        dispatch.stop()
+
+
+def test_the_delivery_and_heartbeat_stale_budgets_follow_their_intervals(
+        env, tmp_path):
+    """`service.py` must not hardcode a copy of either interval."""
+    from chat_gateway.delivery import PASS_INTERVAL_S
+
+    p = tmp_path / "r.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+    app = create_app(load_registry(p), Inbox(), {}, monitor_interval=600.0)
+    body = TestClient(app).get("/healthz").json()
+    assert body["heartbeats"]["scan_interval_seconds"] == 600.0
+    assert body["heartbeats"]["stale_after_seconds"] == 3600.0   # 6 * 600
+    assert body["delivery"]["pass_interval_seconds"] == PASS_INTERVAL_S
