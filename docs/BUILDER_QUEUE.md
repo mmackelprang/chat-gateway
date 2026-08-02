@@ -2056,7 +2056,11 @@ as unnoticed:
   inbound events including `raw`. Measured by the concurrent **Architect**
   agent, not by this row, and it belongs to the **CG-65 decision the user has
   not yet taken**. This row ignores the directory; it does not change what the
-  directory contains or how it is protected. (This Builder's own `stat` read
+  directory contains or how it is protected. ⚠ **Both halves of that first
+  sentence are now false, and it is left standing as the dated record of what
+  this row saw rather than edited into agreement with today:** the mode became
+  `0600` in **CG-65** (#52) and the "never pruned" ended in **CG-68**
+  (2026-08-02). The decision named here as untaken was taken. (This Builder's own `stat` read
   `777` on every file — an artifact of the dev box's 9p `/mnt/d` mount, which
   does not honour POSIX modes. That is a **measurement-environment artifact,
   not a contradiction** of Architect's 0644.)
@@ -2359,11 +2363,29 @@ compaction**, and `inbox.pending` / `inbox.dropped`.
 proves little about behaviour under load** — say which of those the evidence
 reaches.
 
-**Disk growth: measure and propose, do not implement.** The audit JSONL files
-(`inbox-data/`, `state/deliveries/`) are per-app-per-day and **never pruned** —
-invisible on the dev box, a slow leak on a host meant to run for years. A
-retention policy on an audit trail whose stated purpose is that *"nothing is ever
-silently lost"* is a rule-#5-flavoured decision and **belongs to the user**.
+**Disk growth: measure and propose, do not implement.** The audit JSONL files are
+per-app-per-day — invisible on the dev box, a slow leak on a host meant to run
+for years. A retention policy on an audit trail whose stated purpose is that
+*"nothing is ever silently lost"* is a rule-#5-flavoured decision and **belongs
+to the user**.
+
+⚠ **Half of this was overtaken by CG-68 on 2026-08-02, and the brief above is
+corrected rather than left to mislead.** It said both directories are *"never
+pruned"*, and named the decision as one the user had not taken. Now:
+
+- **`inbox-data/` IS pruned** — 30 days by default, 7 for the gateway's own
+  `_unrouted` bucket, `0` disables, via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`.
+  The decision this row wanted to hand to the user **was** handed to the user
+  and taken (sign-offs A2/A3/A5).
+- **`state/deliveries/` is NOT pruned**, and that is a decision rather than an
+  omission — titles-only and permanent per ADR-0002 **D7**. CG-68 made it a
+  code property as well as a policy: the sweeper refuses to boot if its
+  directory overlaps the state dir at all.
+
+**What is left for this row is what it measures BEYOND the window**: whether 30
+days is the right number against real volume, and whether `state/deliveries/`
+growing forever is acceptable on a host meant to run for years — which D7
+decided on content grounds, never on size.
 
 ---
 
