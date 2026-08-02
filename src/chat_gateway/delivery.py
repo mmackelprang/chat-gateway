@@ -41,6 +41,13 @@ BACKOFF_S = (0, 30, 120, 600, 3600)  # attempt spacing; after the last -> failed
 #: outcomes are bad; this is the visible one.
 REPLAY_MAX_AGE_S = 86400.0
 
+#: How long `_run` sleeps between passes. Promoted from the literal that used to
+#: sit inside `_run` because /healthz must judge staleness against the interval
+#: this loop is actually supposed to run at, and a second copy of that number in
+#: `service.py` is how the two drift apart (`RetentionSweeper.interval_seconds`
+#: says the same thing about the same problem).
+PASS_INTERVAL_S = 1.0
+
 
 def _utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
@@ -150,6 +157,19 @@ class Dispatcher:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        #: Was `start()` ever called? NOT cleared by `stop()`. Same contract and
+        #: same reasoning as `SubscriberLoop.started` and
+        #: `RetentionSweeper.started`: `is_alive()` alone cannot tell a loop that
+        #: was never started from one that started and died, and only the second
+        #: is a fault. Every offline test builds a Dispatcher and never starts it.
+        self._started = False
+        #: When the last pass COMPLETED. The direct analogue of
+        #: `last_poll_at` / `last_sweep_at`, and the field this class did not
+        #: have — `process_due()` returned a count and stamped nothing, so a
+        #: dispatcher that had stopped dispatching was indistinguishable from
+        #: one with nothing to do, on the endpoint whose job is telling those
+        #: two apart (hard rule #5).
+        self.last_pass_at: dt.datetime | None = None
         self.replayed = 0
         self.expired = 0
         self.unroutable = 0
@@ -244,6 +264,13 @@ class Dispatcher:
                                      f"attempt {job.attempts}: {exc}", entry_id=job.entry_id)
             else:
                 self._finish(job, "delivered", f"after {job.attempts + 1} attempt(s)")
+        # STAMPED EVEN WHEN `due` WAS EMPTY, deliberately, and for the reason
+        # `RetentionSweeper.sweep` records in its own comment: a pass that had
+        # nothing to do is still a pass that RAN. The gateway's traffic shape is
+        # tens of messages a day (journal.py), so the overwhelming majority of
+        # passes are empty — if only a non-empty pass stamped, "healthy and idle"
+        # would be byte-identical to "the thread is dead" for hours at a time.
+        self.last_pass_at = now
         return attempted
 
     def _finish(self, job: Job, status: str, detail: str) -> None:
@@ -360,16 +387,43 @@ class Dispatcher:
         self.replayed, self.expired, self.unroutable = restored, expired, unroutable
         return (restored, expired + unroutable)
 
+    @property
+    def interval_seconds(self) -> float:
+        """The pass interval, readable by `/healthz`. See `PASS_INTERVAL_S`."""
+        return PASS_INTERVAL_S
+
+    @property
+    def started(self) -> bool:
+        """Was `start()` ever called? NOT cleared by `stop()` — see `__init__`."""
+        return self._started
+
+    def is_alive(self) -> bool:
+        """Is the dispatch thread actually running right now?
+
+        The DIRECT liveness signal (hard rule #5), and it is not redundant with
+        `pending_jobs`. `_run`'s `except Exception` covers `process_due`; it does
+        NOT cover an exception raised inside its own handler — a `print()` to a
+        closed or blocked stdout is the realistic one — which escapes the
+        `while` and kills the thread. Every field in the delivery block then
+        freezes at a plausible value: the boot counters hold real numbers,
+        `pending_jobs` holds a real number and grows, and NOTHING IS EVER
+        DELIVERED AGAIN. That is the 11-day-silent-failure shape rule #5 was
+        written after, and it is the finding `RetentionSweeper.is_alive` records
+        for the sweeper, through the same door.
+        """
+        return self._thread is not None and self._thread.is_alive()
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
                 self.process_due()
             except Exception as exc:  # noqa: BLE001 — the loop must survive
                 print(f"dispatcher: pass error (will retry): {exc}", flush=True)
-            self._stop.wait(1.0)
+            self._stop.wait(PASS_INTERVAL_S)
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="delivery-dispatcher", daemon=True)
+        self._started = True
         self._thread.start()
 
     def stop(self) -> None:
