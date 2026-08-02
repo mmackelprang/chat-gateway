@@ -429,6 +429,16 @@ def test_healthz_degrades_when_a_quarantine_write_FAILED(tmp_path, monkeypatch):
     assert "0 of them were preserved" in line
     assert "is the recovery record" not in line
     assert "the per-app JSONL audit under the inbox dir" in line
+    # CG-68. Both of these lines told an operator the audit file "carries no
+    # retention guarantee" — accurate until `retention.py` shipped, and after
+    # it an unauthenticated endpoint describing machinery this process is not
+    # running. The file it points at is now on a delete timer, and both lines
+    # have to say so.
+    assert "IS PRUNED" in line
+    assert "carries no retention guarantee" not in line
+    q_line = next(r for r in body["reasons"] if "quarantine" in r and "FAILED" in r)
+    assert "DELETE TIMER" in q_line
+    assert "carries no retention guarantee" not in q_line
 
 
 def test_healthz_inbox_quarantine_fields_exist_without_a_quarantine_dir(env):

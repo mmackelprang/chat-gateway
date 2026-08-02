@@ -523,6 +523,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             # record" when nothing was preserved (no `quarantine_dir` wired, or
             # every write failed) would reproduce the exact defect on the exact
             # line, pointing an operator at a directory that may not even exist.
+            #
+            # CG-68 changed the `else` TAIL and nothing else. It read "carries
+            # no retention guarantee", which was true on 2026-08-01 and false
+            # the moment `retention.py` shipped — an unauthenticated endpoint
+            # describing machinery the process is not running. The conditional
+            # above is untouched: it is the rule-#5 control, not phrasing.
             reasons.append(
                 f"inbox replay dropped {body['inbox']['unrevivable_at_boot']} "
                 "journalled reply(ies) that no longer parse as an InboundReply — "
@@ -533,17 +539,23 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 + (", which is never pruned and is the recovery record"
                    if preserved else
                    " — so the per-app JSONL audit under the inbox dir is the "
-                   "only record of what arrived, and it carries no retention "
-                   "guarantee")
+                   "only record of what arrived, AND THAT FILE IS PRUNED on "
+                   "the retention window (retention.window_days above), so it "
+                   "will not be there indefinitely")
                 + "; the ids are on the boot console"
             )
         if body["inbox"]["quarantine_write_errors"]:
+            # The louder of the two CG-68 tense flips: the quarantine write
+            # already failed, so this really IS the last copy — and since this
+            # row it has a delete timer on it. "Copy it now" is the actionable
+            # half, and it was not sayable while the file was permanent.
             reasons.append(
                 f"inbox quarantine: {body['inbox']['quarantine_write_errors']} "
                 "write(s) FAILED — at least one unrevivable reply has no "
                 "preserved copy, so the per-app JSONL audit under the inbox dir "
-                "is its only record and that file carries no retention "
-                "guarantee. Check free space and the state dir's permissions"
+                "is its only record AND THAT FILE IS ON A DELETE TIMER "
+                "(retention.window_days above). Copy it now if you need it. "
+                "Check free space and the state dir's permissions"
             )
         if queue["expired_at_boot"] or queue["unroutable_at_boot"]:
             reasons.append(
