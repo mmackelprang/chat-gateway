@@ -71,6 +71,32 @@ POLL_FAILURE_THRESHOLD = 3
 POLL_STALE_AFTER_SECONDS = 300.0
 POLL_STALE_INTERVAL_MULTIPLE = 6
 
+#: Silence before /healthz calls OUTBOUND DELIVERY dead.
+#:
+#: The floor is chosen against a real bound, as `POLL_STALE_AFTER_SECONDS`'s is,
+#: and the bound here is worse: `process_due` walks every due job SEQUENTIALLY
+#: and each `adapter.send` is bounded only by its client timeout — 30s for both
+#: `webhook` and `chat_api`. A backlog of N jobs all timing out therefore holds
+#: `last_pass_at` still for ~30N seconds while the dispatcher is working
+#: perfectly. 600s clears twenty consecutive timing-out sends, which is far past
+#: any realistic pass at this gateway's traffic shape (tens of messages a day,
+#: journal.py) and is still one dashboard refresh rather than eleven days.
+#:
+#: Stated rather than glossed: this is a LOOSER detector than the subscriber's.
+#: Ten minutes to notice a dead delivery thread is the price of not crying wolf
+#: at every slow Google call, and it is bought against a baseline of NEVER.
+DISPATCH_STALE_AFTER_SECONDS = 600.0
+DISPATCH_STALE_INTERVAL_MULTIPLE = 60
+
+#: Silence before /healthz calls the HEARTBEAT MONITOR dead. `scan_once` does no
+#: network I/O — it reads the store and hands work to `Dispatcher.enqueue`,
+#: which appends and returns — so a scan is fast and bounded, and this needs no
+#: allowance for a slow remote call. Six intervals matches the subscriber's
+#: multiple; the 300s floor keeps a deployment that sets a very short
+#: `monitor_interval` from alarming on ordinary jitter.
+SCAN_STALE_AFTER_SECONDS = 300.0
+SCAN_STALE_INTERVAL_MULTIPLE = 6
+
 
 def _stale_after(subscriber) -> float:
     """Seconds of silence tolerated before the last poll is called stale."""
@@ -86,6 +112,18 @@ def _sweep_stale_after(sweeper) -> float:
     constant in `retention.py` — one home, not two.
     """
     return SWEEP_STALE_INTERVAL_MULTIPLE * sweeper.interval_seconds
+
+
+def _dispatch_stale_after(dispatch) -> float:
+    """Seconds of silence tolerated before the last completed pass is stale."""
+    return max(DISPATCH_STALE_AFTER_SECONDS,
+               DISPATCH_STALE_INTERVAL_MULTIPLE * dispatch.interval_seconds)
+
+
+def _scan_stale_after(monitor) -> float:
+    """Seconds of silence tolerated before the last completed scan is stale."""
+    return max(SCAN_STALE_AFTER_SECONDS,
+               SCAN_STALE_INTERVAL_MULTIPLE * monitor.interval_seconds)
 
 
 def _journal_skipped(dispatch, inbox) -> int:
@@ -379,10 +417,40 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                          # something nobody watched must say when it lost
                          # something. Rule #5.
                          "journal_skipped_lines": _journal_skipped(dispatch, inbox),
-                         "journal_write_errors": _journal_write_errors(dispatch, inbox)},
+                         "journal_write_errors": _journal_write_errors(dispatch, inbox),
+                         # CG-72. The third way of judging outbound, and the one
+                         # nothing else can substitute for. `pending_jobs` cannot
+                         # do it: a dead dispatcher and a busy one both show a
+                         # non-zero number, and an idle deployment shows zero
+                         # either way. Counters see nothing when a loop stops
+                         # raising as well as stops working.
+                         "thread_alive": dispatch.is_alive(),
+                         # ...and without this, `thread_alive: false` is
+                         # ambiguous: a dispatcher that was never started looks
+                         # identical to one that died, and only the second is a
+                         # fault. Every offline test is the first case.
+                         "thread_started": dispatch.started,
+                         "last_pass_at": (dispatch.last_pass_at.isoformat()
+                                          if dispatch.last_pass_at else None),
+                         "seconds_since_last_pass": (
+                             round((now - dispatch.last_pass_at).total_seconds(), 1)
+                             if dispatch.last_pass_at else None),
+                         "stale_after_seconds": _dispatch_stale_after(dispatch),
+                         "pass_interval_seconds": dispatch.interval_seconds},
             "heartbeats": {"checks": len(hb_all),
                            "missed": sum(1 for c in hb_all if c.status == "missed"),
-                           "last_scan_at": monitor.last_scan_at.isoformat() if monitor.last_scan_at else None},
+                           "last_scan_at": monitor.last_scan_at.isoformat() if monitor.last_scan_at else None,
+                           # CG-72. `last_scan_at` was already published and
+                           # already frozen-at-a-real-timestamp when the thread
+                           # dies, which is exactly what made it read as healthy.
+                           # These three are what turn it into a signal.
+                           "thread_alive": monitor.is_alive(),
+                           "thread_started": monitor.started,
+                           "seconds_since_last_scan": (
+                               round((now - monitor.last_scan_at).total_seconds(), 1)
+                               if monitor.last_scan_at else None),
+                           "stale_after_seconds": _scan_stale_after(monitor),
+                           "scan_interval_seconds": monitor.interval_seconds},
             "subscriber": (
                 {"enabled": True,
                  "last_poll_at": subscriber.last_poll_at.isoformat() if subscriber.last_poll_at else None,
@@ -655,6 +723,65 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "fact about THIS boot and will not change while the process runs "
                 "— boot compaction already removed the records, so the next "
                 "restart clears it"
+            )
+        # CG-72. Outbound delivery's liveness, in the subscriber block's shape
+        # and for the subscriber block's reason. Not gated on `enabled` — there
+        # is no such thing as a deployment without outbound delivery; it is
+        # gated on `thread_started`, because the 23 offline tests that build an
+        # app and never start a thread must stay silent (CG-68 audit F0 is the
+        # same lesson with a KeyError instead of a false alarm).
+        #
+        # An `elif` chain: a dead thread also looks stale, and two reasons for
+        # one fault is noise.
+        if queue["thread_started"] and not queue["thread_alive"]:
+            reasons.append(
+                "delivery: the dispatch thread was started and is NOT RUNNING — "
+                "nothing queued will ever be sent and no counter in this block "
+                "will move again. `pending_jobs` will climb and every other "
+                "field is frozen at a real value, which is why this looks "
+                "healthy; restart the service"
+            )
+        elif queue["thread_started"] and queue["seconds_since_last_pass"] is None:
+            reasons.append(
+                "delivery: the dispatch thread was started but no pass has ever "
+                "completed — the loop runs every "
+                f"{queue['pass_interval_seconds']}s and stamps even an empty "
+                "pass, so this should be impossible and nothing is being "
+                "delivered"
+            )
+        elif queue["thread_started"] and queue["thread_alive"] and (
+                queue["seconds_since_last_pass"] > queue["stale_after_seconds"]):
+            reasons.append(
+                f"delivery: the thread is alive but the last completed pass was "
+                f"{queue['seconds_since_last_pass']}s ago, over the "
+                f"{queue['stale_after_seconds']}s budget — passes are neither "
+                "completing nor raising, so it is wedged rather than erroring. "
+                "A send blocked past its client timeout looks like this"
+            )
+        # ...and the dead-man switch's own liveness. Same chain, same order.
+        # A heartbeat monitor that has died stops evaluating every consumer's
+        # checks while `missed` and `last_scan_at` both hold real values.
+        hb = body["heartbeats"]
+        if hb["thread_started"] and not hb["thread_alive"]:
+            reasons.append(
+                "heartbeats: the scan thread was started and is NOT RUNNING — "
+                "no registered check is being evaluated, so a source that has "
+                "gone silent will never be alerted on. `missed` and "
+                "`last_scan_at` are frozen at real values; restart the service"
+            )
+        elif hb["thread_started"] and hb["seconds_since_last_scan"] is None:
+            reasons.append(
+                "heartbeats: the scan thread was started but no scan has ever "
+                "completed — the dead-man monitor has never run on this process"
+            )
+        elif hb["thread_started"] and hb["thread_alive"] and (
+                hb["seconds_since_last_scan"] > hb["stale_after_seconds"]):
+            reasons.append(
+                f"heartbeats: the thread is alive but the last completed scan "
+                f"was {hb['seconds_since_last_scan']}s ago, over the "
+                f"{hb['stale_after_seconds']}s budget for a "
+                f"{hb['scan_interval_seconds']}s-interval loop — the dead-man "
+                "monitor is wedged rather than erroring"
             )
         # `ret` is bound above the inbox lines, which need the same flag.
         if ret["enabled"]:
