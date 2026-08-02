@@ -941,10 +941,16 @@ def test_opted_out_tenants_are_never_given_a_routing_target(tmp_path, monkeypatc
 
 # --- CG-72: the dispatcher and the heartbeat monitor at /healthz -------------
 #
-# Six tests, kept together. The two threads `/healthz` could not see: a dead
-# `delivery-dispatcher` silently stops every outbound notification, and a dead
-# `heartbeat-monitor` kills the dead-man switch — both with every published
+# Ten tests, kept together — six shipped with the row, four added by its
+# pre-merge review, which found the delivery chain exercised and the heartbeats
+# chain trusted to be its mirror. The two threads `/healthz` could not see: a
+# dead `delivery-dispatcher` silently stops every outbound notification, and a
+# dead `heartbeat-monitor` kills the dead-man switch — both with every published
 # field frozen at a real-looking value. Rule #5's founding shape, twice.
+#
+# All three branches of BOTH `elif` chains are executed here, and each asserts
+# `len(hits) == 1` rather than `any(...)`: the chain's guarantee is at most one
+# reason per fault, and `any` cannot fail when that breaks.
 #
 # These use the file's own `env` fixture rather than a new helper: it already
 # builds a registry, an inbox, a fake adapter and an app with NO subscriber and
@@ -972,8 +978,14 @@ def test_a_dispatch_thread_that_started_and_died_degrades_healthz(env):
     assert dispatch.is_alive() is False
     body = client.get("/healthz").json()
     assert body["status"] == "degraded"
-    assert any("the dispatch thread was started and is NOT RUNNING" in r
-               for r in body["reasons"])
+    # `len(hits) == 1`, not `any(...)`: a dead thread also reads as stale and as
+    # never having completed a pass, and the whole point of the `elif` chain is
+    # that one fault prints one reason. `any` passes just as happily when all
+    # three fire, which is the regression this branch's ordering exists to
+    # prevent — so it is pinned on every branch, not only the wedged one.
+    hits = [r for r in body["reasons"] if r.startswith("delivery: ")]
+    assert len(hits) == 1
+    assert "the dispatch thread was started and is NOT RUNNING" in hits[0]
 
 
 def test_a_scan_thread_that_started_and_died_degrades_healthz(env):
@@ -983,8 +995,9 @@ def test_a_scan_thread_that_started_and_died_degrades_healthz(env):
     monitor.stop()
     body = client.get("/healthz").json()
     assert body["status"] == "degraded"
-    assert any("the scan thread was started and is NOT RUNNING" in r
-               for r in body["reasons"])
+    hits = [r for r in body["reasons"] if r.startswith("heartbeats: ")]
+    assert len(hits) == 1                         # see the dispatcher twin above
+    assert "the scan thread was started and is NOT RUNNING" in hits[0]
 
 
 def test_an_empty_pass_still_stamps_last_pass_at():
@@ -1025,6 +1038,119 @@ def test_a_wedged_dispatcher_is_stale_but_not_reported_dead(env):
         assert len(hits) == 1 and "either WEDGED or RAISING" in hits[0]
     finally:
         dispatch.stop()
+
+
+def test_a_wedged_heartbeat_monitor_is_stale_but_not_reported_dead(env):
+    """The dispatcher's twin, which had no test of its own until now.
+
+    Worth its own case rather than trusting the shared shape: this is the
+    dead-man switch's OWN liveness, and while it is wedged every consumer's
+    checks stop being evaluated with `missed` and `last_scan_at` both holding
+    real values — the failure `heartbeats.thread_alive` was added to catch.
+    """
+    client, _inbox, _adapter = env
+    monitor = client.app.state.monitor
+    # Read the budget from the endpoint before starting, so this does not
+    # hardcode a copy of `monitor_interval`'s default (`_scan_stale_after`
+    # floors six intervals at 300s, and both halves are settable).
+    budget = client.get("/healthz").json()["heartbeats"]["stale_after_seconds"]
+    monitor.scan_once = lambda: 0                 # see the dispatcher twin above
+    monitor.start()
+    try:
+        assert monitor.is_alive() is True
+        monitor.last_scan_at = (dt.datetime.now(dt.timezone.utc)
+                                - dt.timedelta(seconds=budget + 60))
+        body = client.get("/healthz").json()
+        assert body["status"] == "degraded"
+        assert body["heartbeats"]["seconds_since_last_scan"] > budget
+        hits = [r for r in body["reasons"] if r.startswith("heartbeats: ")]
+        assert len(hits) == 1 and "either WEDGED or RAISING" in hits[0]
+    finally:
+        monitor.stop()
+
+
+def test_a_started_dispatcher_with_no_completed_pass_degrades(env):
+    """The MIDDLE `elif` of the delivery chain, untested until now.
+
+    Alive, started, and `seconds_since_last_pass` still `null`. The reason
+    string calls this impossible on purpose: the loop stamps even an empty pass
+    (`PASS_INTERVAL_S`), so a `null` here means the first pass never returned —
+    which is a wedge the staleness branch cannot see, because staleness needs a
+    timestamp to be stale relative to.
+    """
+    client, _inbox, _adapter = env
+    dispatch = client.app.state.dispatcher
+    dispatch.process_due = lambda: 0              # never stamps -> stays None
+    dispatch.start()
+    try:
+        body = client.get("/healthz").json()
+        assert body["delivery"]["thread_alive"] is True
+        assert body["delivery"]["last_pass_at"] is None
+        assert body["delivery"]["seconds_since_last_pass"] is None
+        assert body["status"] == "degraded"
+        hits = [r for r in body["reasons"] if r.startswith("delivery: ")]
+        assert len(hits) == 1 and "no pass has ever completed" in hits[0]
+    finally:
+        dispatch.stop()
+
+
+def test_a_started_monitor_with_no_completed_scan_degrades(env):
+    """The same middle `elif` in the heartbeats chain. Both, not one.
+
+    The two chains are the same shape but not the same code, and the branch
+    that was never executed is exactly the one a copy-paste slip survives in.
+    """
+    client, _inbox, _adapter = env
+    monitor = client.app.state.monitor
+    monitor.scan_once = lambda: 0                 # never stamps -> stays None
+    monitor.start()
+    try:
+        body = client.get("/healthz").json()
+        assert body["heartbeats"]["thread_alive"] is True
+        assert body["heartbeats"]["last_scan_at"] is None
+        assert body["heartbeats"]["seconds_since_last_scan"] is None
+        assert body["status"] == "degraded"
+        hits = [r for r in body["reasons"] if r.startswith("heartbeats: ")]
+        assert len(hits) == 1 and "no scan has ever completed" in hits[0]
+    finally:
+        monitor.stop()
+
+
+def test_the_liveness_timestamps_are_serialized_in_the_healthz_body(env):
+    """Asserted AT THE ENDPOINT, which no other test in this block does.
+
+    `test_an_empty_pass_still_stamps_last_pass_at` reads the attribute off a
+    bare `Dispatcher`, so a body that dropped `last_pass_at`, published it under
+    another key, or emitted a `datetime` where a consumer expects an ISO string
+    would sail past it. These four fields are the ones the guide tells consumers
+    to read, so the endpoint is where they have to be checked.
+    """
+    from chat_gateway.delivery import PASS_INTERVAL_S
+    from chat_gateway.service import DISPATCH_STALE_AFTER_SECONDS
+
+    client, _inbox, _adapter = env
+    dispatch = client.app.state.dispatcher
+    monitor = client.app.state.monitor
+    assert dispatch.process_due() == 0             # one real, empty pass...
+    assert monitor.scan_once() == 0                # ...and one real, empty scan
+    body = client.get("/healthz").json()
+    d, hb = body["delivery"], body["heartbeats"]
+
+    assert d["last_pass_at"] == dispatch.last_pass_at.isoformat()
+    assert isinstance(d["seconds_since_last_pass"], float)
+    assert 0.0 <= d["seconds_since_last_pass"] < 60.0
+    assert d["stale_after_seconds"] == DISPATCH_STALE_AFTER_SECONDS
+    assert d["pass_interval_seconds"] == PASS_INTERVAL_S
+
+    assert hb["last_scan_at"] == monitor.last_scan_at.isoformat()
+    assert isinstance(hb["seconds_since_last_scan"], float)
+    assert 0.0 <= hb["seconds_since_last_scan"] < 60.0
+
+    # Neither thread was ever started, so a fresh stamp is not a fault and
+    # neither chain may speak — the 23-offline-apps guarantee, re-checked here
+    # because this is the one test that puts a real timestamp in both blocks.
+    assert not any(r.startswith(("delivery: ", "heartbeats: "))
+                   for r in body["reasons"])
 
 
 def test_the_delivery_and_heartbeat_stale_budgets_follow_their_intervals(
