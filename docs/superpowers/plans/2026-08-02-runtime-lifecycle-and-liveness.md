@@ -493,15 +493,64 @@ ones.
 
 ```
 python3 -m pytest -q            # expect 314 + the six above = 320
-grep -c "thread_alive" src/chat_gateway/service.py     # 8 -> 12
+grep -c "thread_alive" src/chat_gateway/service.py     # 8 -> 15 (see below)
 git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"   # must be 0
 ```
+
+**Measured on completion: 314 → 320, and `thread_alive` 8 → 15.** The `12` this
+block predicted was an arithmetic slip in the plan, not a shortfall in the code:
+Task A4/A5's literal code adds **seven** matching lines, not four — the two body
+fields, the four `elif`-chain references (`not queue["thread_alive"]`,
+`queue["thread_alive"] and`, and the same pair for `hb`), **and** the comment
+line that names the field while explaining why `thread_started` sits beside it.
+The code was applied verbatim rather than trimmed to hit the number; the number
+was the guess and the code was the spec. Recorded rather than quietly corrected,
+because a Builder who trusts a predicted grep count over the code it describes
+is the failure this repo keeps writing down.
 
 ---
 
 # Part B — CG-71 · One shutdown path, in the one place that runs
 
 Branch from a merged Part A.
+
+## ✅ Sign-off L3 — granted by the user, 2026-08-02
+
+**`start()` after `stop()` must RAISE**, not silently return a dead thread.
+Spec §8's L3 row is answered: the recommendation was accepted as written.
+
+**The reasoning, kept rather than the verdict alone.** `_stop` is never cleared,
+so `start()` after `stop()` builds a thread whose `while not self._stop.is_set()`
+is already false on its first evaluation. The caller gets a normal return,
+`started == True`, and a thread that has already exited — **success-looking and
+dead**, which is the exact failure shape CG-72 exists to eliminate one layer up.
+Making it loud costs one `raise`; making it *work* would mean inventing restart
+semantics for a component that has abandoned in-flight work, which is a second
+feature inside a lifecycle row (spec §5.3). A caller wanting a fresh loop builds
+a fresh object, which is what `__main__` does.
+
+⚠ **Recorded here by CG-72's Builder; deliberately NOT implemented by CG-72.**
+The sign-off arrived during Part A, and Part A's blast radius was checked against
+it rather than assumed:
+
+- Part A's only change to either `start()` is adding `self._started = True`. It
+  does not touch the `_stop` Event, the thread construction, or any return path.
+- Part A therefore **cannot** make the L3 hazard worse, and measurably makes it
+  **less** dangerous: before Part A, a start-after-stop was invisible; after it,
+  the same call renders at `/healthz` as `thread_started: true` +
+  `thread_alive: false` and **degrades `status`** with *"was started and is NOT
+  RUNNING"*. Spec §2.7 predicted exactly this — *"on the two classes that publish
+  liveness this renders as 'started and is NOT RUNNING', which is at least
+  honest"* — and that is now true of the dispatcher and the monitor.
+- Nothing in Part A calls `start()` after `stop()`, and no Part A test would
+  change behaviour if the raise existed.
+
+So L3 falls **outside** Part A's blast radius and stays Task B1's, where it
+belongs beside the other three classes. Implementing it in a `/healthz` row would
+have put a new exception on a lifecycle path into a PR nobody was reviewing for
+lifecycle changes — and it would have shipped for `Dispatcher` and
+`HeartbeatMonitor` only, leaving `RetentionSweeper` and `SubscriberLoop` with the
+silent-dead-thread behaviour. **Two of four is the worst of the three options.**
 
 ## Task B1 · `start()` idempotency, all four classes
 
@@ -747,8 +796,34 @@ across test files.
 python3 -m pytest -q
 grep -n "\.stop()" src/chat_gateway/service.py     # the hook exists
 git diff main -- src/chat_gateway/adapters/ | wc -l   # expect only start() in pubsub.py
-git diff main | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"   # must be 0
+git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"   # must be 0
 ```
+
+⚠ **The flag-word check above was WRONG in this plan's first draft and is
+corrected here (CG-72's Builder, 2026-08-02) so CG-71's Builder is not sent
+chasing a phantom.** It read `git diff main | grep -c ...` — without `-- src/`.
+That form **cannot return 0 on a branch that touches the docs**, and the reason
+is this plan itself: `git diff` prints three lines of context around every hunk,
+`docs/BUILDER_QUEUE.md` contains 22 occurrences of those flag words and this file
+contains several more, so any edit landing near one drags it into the diff as
+context. A Builder would then "discover" a flag it never touched and go looking
+for a change that does not exist. The `-- src/` form directly above it was always
+the correct one.
+
+**When a stronger proof is wanted** — and it is worth having, because `-- src/`
+says nothing about the docs where the ledger actually lives — compare the counts
+on both sides per file rather than grepping the diff:
+
+```
+for f in $(git diff main --name-only); do
+  echo "$f  main=$(git show main:$f | grep -c 'LIVE-UNVERIFIED\|SHAPE-VERIFIED')" \
+       " branch=$(grep -c 'LIVE-UNVERIFIED\|SHAPE-VERIFIED' "$f")"
+done
+```
+
+Equal counts on every row, and an equal repo-wide total, is the claim *"no flag
+was cleared, added or reworded"* actually being measured. CG-72 shipped with
+103 = 103.
 
 **UAT, and it must be a real process — a unit test cannot prove B2.** Run
 `python3 -m chat_gateway serve` against a scratch state dir, `kill -TERM` it, and
