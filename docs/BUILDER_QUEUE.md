@@ -1,6 +1,58 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-02 (Builder — **CG-68 shipped as [#54](https://github.com/mmackelprang/chat-gateway/pull/54)**).
+**Last updated:** 2026-08-02 (Planner — **CG-68's deferred L4 measured; three rows
+filed, one decided**). No `src/` change: spec, plan and this file only. Suite
+**314**, re-measured here (`314 passed in 58.76s`) rather than quoted from the
+row below.
+[spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) ·
+[plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md).
+
+⚠ **CG-68's deferral was right to refuse, and it understated the problem.**
+`__main__` has **four `.start()` and zero `.stop()`** — no `finally`, no
+`atexit`, no signal handler. Not a retention row's missing cleanup: four
+long-lived threads with no shutdown path, of which CG-68 added the fourth.
+
+⚠ **The obvious fix is a measured no-op.** uvicorn 0.42 restores the default
+signal disposition and **re-raises**, so `uvicorn.run()` never returns on
+SIGTERM. A child with all four hook shapes installed exited `rc=-15` and printed
+**only** `LIFESPAN_SHUTDOWN` — the `try/finally`, the `atexit` handler and the
+line after `uvicorn.run(...)` all failed to run. **`try: uvicorn.run(app)
+finally: dispatcher.stop()` passes every unit test, reviews cleanly, and never
+executes.** The shutdown path must be an ASGI lifespan hook (**CG-71**).
+
+⚠ **The bigger finding is not the shutdown gap — it is what turned up while
+measuring it.** `subscriber` and `sweeper` publish `thread_alive` /
+`thread_started` at `/healthz` and degrade on a dead thread; **`dispatcher` and
+`monitor` publish neither and cannot degrade.** A dead dispatcher silently stops
+every outbound notification while `pending_jobs` climbs and `status` stays `ok`;
+a dead heartbeat monitor kills the dead-man switch while `last_scan_at` sits
+frozen at a real timestamp. That is CG-68's own F3/M3b finding on the two threads
+nobody went looking at, and it is the 11-day-silent-failure shape rule #5 exists
+for. Filed as **CG-72** and **sequenced ahead of CG-71** — it is live today, on
+every deployment, including the one CG-55 makes.
+
+**The shutdown gap itself is LATENT, and the row says so rather than inflating
+itself.** Daemon threads, ~0.16s exit, nothing hangs. **Durability is not the
+justification: CG-54's SIGKILL proof already covers that half.** Every journal
+append is `write`→`flush`→`fsync` inside one `open()`, and a hammering daemon
+thread killed by SIGTERM *and* by SIGKILL left a clean parseable journal both
+times. The only uncovered window is a kill mid-send, which `_finish` already
+documents as deliberate at-least-once.
+
+✅ **CG-70 decided — option (a), and the row's own argument against it was
+measurably wrong.** It preferred (b) because (a) *"adds a `stat` per append to a
+path that deliberately has none"*. `strace` on the real `Journal` shows one
+`newfstatat` per append **already there** — `existed = path.exists()` *is* that
+stat — **and the kernel already returns the mode in it**. (a) costs zero extra
+syscalls in the steady state. Severity unchanged (LOW); the reason changed from
+*"defer, it is low"* to *"do it, it is free"*.
+
+**Five user sign-offs are outstanding (L1–L5)** — spec §8.
+
+**No ⚠ verification-ledger flag cleared, added or reworded**; `docs/architecture/`
+untouched.
+
+Previously 2026-08-02 (Builder — **CG-68 shipped as [#54](https://github.com/mmackelprang/chat-gateway/pull/54)**).
 Suite **268 → 314**.
 
 **The first row that DELETES a tenant's content**, and the "forever" on
@@ -805,7 +857,10 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | ✅ done (#52) | Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. Pre-merge review found a **data-loss race** in compact-on-drain — both producers journal the `open` before taking the queue lock, so `compact([])` could erase a record already on disk; fixed by recomputing survivors under the journal's own lock. Suite **247 → 268**. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
 | **CG-68** · time-bounded pruning of the inbound audit trail | ✅ done (#54) | **The first row that DELETES a tenant's content.** 30/7/0 via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`; the filename is the retention key, so pruning never opens a file holding message bodies. Amends `integration-guide.md:366`'s published *"never pruned"* (A4). ⚠ **New user decision A5** — the boot guard **refuses** rather than warns, and is stricter than the non-recursive glob requires (decision 4 below). Review found **0 HIGH, 6 MEDIUM, 6 LOW**; the sharpest was **M2** — the sweeper would have pruned `state/deliveries/` (ADR D7, permanent by decision), because the guard only fenced the quarantine and `state/deliveries` is its *sibling*. Suite **268 → 314**. Plan Tasks **10–14** |
 | **CG-69** · published-promise inventory (process control) | 📋 queued | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. No plan yet |
-| **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued | Filed by CG-65's Builder from its own pre-merge review (LOW), **deferred rather than folded in**. No plan yet |
+| **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued · **decided** | Filed by CG-65's Builder (LOW). ✅ **Planner call made 2026-08-02: option (a), and the row's own argument against it was measurably wrong.** `strace` shows every append already issues the stat and the kernel already returns the mode in it — (a) costs **zero** extra syscalls in the steady state. (b) goes to CG-53 for the files (a) provably cannot reach; (c) rejected. Severity unchanged; the reason changed from *"defer, it is low"* to *"do it, it is free"*. Spec §6 |
+| **CG-72** · `/healthz` cannot see two of the four threads (rule #5) | 📋 queued | **Found while measuring CG-71; sequence it FIRST.** `subscriber` and `sweeper` publish `thread_alive`/`thread_started` and degrade; **`dispatcher` and `monitor` publish neither and cannot degrade.** A dead dispatcher = every outbound notification silently stops. A dead monitor = the dead-man switch is dead. Live on every deployment, including the one CG-55 makes. [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §2.6/§4 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part A |
+| **CG-71** · four `.start()`, zero `.stop()` — the runtime has no shutdown path | 📋 queued | CG-68's deferred L4, **measured and found broader**: not the retention row's missing cleanup but four threads with no shutdown path at all. ⚠ **`uvicorn.run()` does not return on SIGTERM** — a `try/finally` is a measured no-op. Depends on **CG-72** (same two classes; must not run concurrently). [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §5 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part B |
+| **CG-73** · five print/persist sites bypass CG-29's allowlist | 📋 queued | Filed by CG-71's Planner, **not folded in**. `retention.py` uses `describe_exception`; `delivery.py` (×2 printed, ×2 **persisted to the delivery log**) and `heartbeat.py` (×1) interpolate a raw `{exc}`. **Drift in a hard-rule-#2 control, not a proven leak** — stated at that confidence. `test_error_surfaces.py` cannot see it: it reads construction sites of *marked* classes; these are print sites of unmarked ones. No plan yet. Spec §7 |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
 | **CG-67** · `.gitignore` — stop `state/` from ever being committed | ✅ done (#48) | **Split out of CG-66 and promoted by the user**, because it is a live path to committing message bodies and CG-53/CG-55 are the rows that first run the gateway from the repo root. Config-only |
 
@@ -1954,14 +2009,15 @@ shipping something whose consequences nobody had written down.
 
 ---
 
-### CG-70 · The `0600` chmod is create-only, so a pre-existing `0644` file keeps its mode  📋 queued
+### CG-70 · The `0600` chmod is create-only, so a pre-existing `0644` file keeps its mode  📋 queued · ✅ **decided 2026-08-02**
 
 | | |
 |---|---|
 | **Origin** | filed by **CG-65's Builder**, 2026-07-31, out of that PR's own pre-merge review (finding L3) |
 | **Depends on** | nothing — CG-65 (#52) shipped the create-time half |
-| **Touches** | `src/chat_gateway/inbox.py::_audit`, `src/chat_gateway/delivery.py::DeliveryLog.record`, or the CG-53 deploy runbook |
+| **Touches** | `journal.py::_append` + its batch-close sibling, `inbox.py::_audit` + the quarantine append, `delivery.py::DeliveryLog.record` — **four sites, not two** |
 | **Merge gate** | no |
+| **Decision** | **(a). Reasoning + measurements: [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §6** |
 
 CG-65 applies `chmod_owner_only` **only when the file did not already exist** —
 that guard is what keeps the chmod off the hot path, one syscall per *file*
@@ -1983,6 +2039,258 @@ CG-53 deploy runbook, beside the `install -d -m 0750` that already owns the
 directory modes — no hot-path cost, but it does not help a dev box. **(b) looks
 right given the runbook already owns this class of control**, but it is a
 Planner call, not a Builder's.
+
+#### ✅ The Planner call, 2026-08-02 — **(a)**, and the paragraph above is wrong
+
+The row's reason for preferring (b) is *"adds a `stat` per append to a path that
+deliberately has none."* **That path already has one.** `existed = path.exists()`
+**is** a stat, and it runs on every append at all four sites. Measured at the
+syscall level with `strace` on the real `Journal`, three consecutive appends:
+
+```
+newfstatat(AT_FDCWD, ".../sc.jsonl", 0x7ffcf59ff2f0, 0) = -1 ENOENT
+openat(AT_FDCWD, ".../sc.jsonl", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666) = 3
+chmod(".../sc.jsonl", 0600) = 0
+newfstatat(AT_FDCWD, ".../sc.jsonl", {st_mode=S_IFREG|0600, st_size=113, ...}, 0) = 0
+openat(...) = 3
+newfstatat(AT_FDCWD, ".../sc.jsonl", {st_mode=S_IFREG|0600, st_size=226, ...}, 0) = 0
+openat(...) = 3
+```
+
+One `newfstatat` per append, already there — **and the kernel already hands back
+the mode in it** (`st_mode=S_IFREG|0600`). `Path.exists()` discards that and
+keeps one bit. So (a) is not "one more syscall"; it is *read the field the
+syscall you already make already returned*. Steady state: **identical syscall
+count.** One-time: exactly one `chmod` per wrong-moded file, ever.
+
+**Honesty in the other direction — (a) cannot reach every affected file.** The
+write paths are date-sharded and only ever open **today's** file, so a `0644`
+day-file from three days ago is never reopened and (a) will never touch it. It
+sits at `0644` until the sweeper deletes it — up to `retention.window_days`, and
+**forever** where `CHAT_GATEWAY_INBOX_RETENTION_DAYS=0`. **(a) and (b) cover
+disjoint sets; the row presented them as alternatives and they are not.**
+
+**A third option was considered and rejected.** (c) a one-time chmod pass at
+boot, beside the boot sweep `__main__` already runs — reachable, and unlike (b)
+it works on a dev box. Rejected because it would be the **third home** for a
+file-mode control, against `chmod_owner_only`'s own docstring (*"One home,
+because a second copy of a security control is how the two drift apart"*), and
+because it adds a second boot-time walker with different exclusion logic over
+the same trees the sweeper deletes from — which is buying a repeat of CG-68's M2
+for a set of files that is **empty today**.
+
+**Outcome:**
+- **(a) is the mechanism**, at all four `existed = path.exists()` sites.
+- **(b) becomes one line in CG-53's runbook**, for the historical files (a)
+  cannot reach — it belongs there because CG-53 already owns
+  `install -d -m 0750`, not because it is better than (a).
+- **(c) rejected.**
+- **The row stays open and is NOT folded into CG-53.** Closing it was considered
+  and is a legitimate outcome — it is LOW, no such file exists anywhere today,
+  and date-sharding bounds it. It is kept because **(a) is a `src/` change across
+  four files with tests and CG-53 is a merge-gated deploy row**; folding a
+  four-file code change into the row that handles secrets makes the gated PR
+  bigger, which is the opposite of what a merge gate is for.
+- **Severity unchanged — still LOW. The reason to do it changed**, from *"defer
+  it, it is low"* to **"do it, it is free."** The row was deferred on a cost that
+  does not exist.
+
+---
+
+### CG-72 · `/healthz` cannot see two of the four threads  📋 queued · **sequence before CG-71**
+
+| | |
+|---|---|
+| **Origin** | filed by CG-71's Planner, 2026-08-02, found while measuring CG-68's deferred L4 |
+| **Depends on** | nothing. **CG-71 depends on THIS** — same two classes, must not run concurrently |
+| **Touches** | `delivery.py::Dispatcher`, `heartbeat.py::HeartbeatMonitor`, `service.py::healthz` |
+| **Merge gate** | no |
+| **Docs** | [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §2.6 + §4 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) **Part A**, Tasks A1–A7 |
+
+Hard rule #5 says `/healthz` reports real liveness. It does, for half the
+threads. Measured on `36fac22`:
+
+| thread | `thread_alive` | `thread_started` | staleness | can degrade `status`? |
+|---|---|---|---|---|
+| `pubsub-subscriber` | ✅ | ✅ | ✅ | ✅ |
+| `retention-sweeper` | ✅ | ✅ | ✅ | ✅ |
+| `delivery-dispatcher` | ❌ | ❌ | ❌ | **❌** |
+| `heartbeat-monitor` | ❌ | ❌ | ❌ | **❌** |
+
+`grep -c thread_alive src/chat_gateway/service.py` → **8**, every one of them in
+the subscriber or retention block. In the `delivery` block, **every**
+`reasons.append` is gated on `journal_skipped_lines`, `journal_write_errors` or
+`expired_at_boot`/`unroutable_at_boot`; **`pending_jobs` gates nothing.** In the
+`heartbeats` block, **no reason references `last_scan_at` at all.**
+
+Both `_run` loops swallow per-pass exceptions and continue, which is right —
+neither catches what its own handler raises, which is the hole
+`RetentionSweeper.is_alive`'s docstring was written about (*"a `print()` to a
+closed or blocked stdout is the realistic one"*). So today:
+
+- **A dead `delivery-dispatcher` means every outbound notification silently
+  stops.** `pending_jobs` climbs and `/healthz` answers `ok` forever.
+- **A dead `heartbeat-monitor` means the dead-man switch is dead.**
+  `last_scan_at` freezes at a *real* timestamp — which is what makes it look
+  healthy — and `missed` stops moving because nothing scans. aitrader's contract
+  surface is a dead-man monitor.
+
+**This is CG-68's F3/M3b finding, on the two threads that never got it** — the
+sweeper grew `started` + `is_alive()` because a reviewer went looking; nobody
+went looking here. It is the 11-day-silent-capture-failure shape rule #5 was
+written after, present twice.
+
+⚠ **Two things the plan makes non-negotiable.** `Dispatcher` has no "last
+completed pass" timestamp at all (`process_due` returns a count and stamps
+nothing), so one is added — and it **must stamp on an empty pass too**, or
+"healthy and idle" stays byte-identical to "dead" at this gateway's traffic
+shape. And an app whose dispatcher was never started (all 23 bare-`TestClient`
+tests) must render as **silence, not a reason** — CG-68's audit F0 is the same
+lesson with a `KeyError` instead of a false alarm.
+
+---
+
+### CG-71 · Four `.start()`, zero `.stop()` — the runtime has no shutdown path  📋 queued
+
+| | |
+|---|---|
+| **Origin** | CG-68's Builder deferred it as L4; re-measured and re-scoped by Planner 2026-08-02 |
+| **Depends on** | **CG-72** — same two classes and the same file; **do not run them concurrently** |
+| **Touches** | `service.py::create_app`, `__main__.py` (comment only), `start()` in `delivery.py`, `heartbeat.py`, `retention.py`, `adapters/pubsub.py` |
+| **Merge gate** | no — but see the ⚠ flag constraint below |
+| **Docs** | [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §5 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) **Part B**, Tasks B1–B5 |
+
+**The deferral was right to refuse and it understated the problem.** CG-68's
+Builder declined Task 11's *"stop it where the dispatcher and monitor are
+stopped"* because that place does not exist. Measured:
+
+```
+$ grep -n "\.start()\|\.stop()" src/chat_gateway/__main__.py
+171:        sweeper.start()
+179:            subscriber.start()
+187:        app.state.dispatcher.start()
+188:        app.state.monitor.start()
+```
+
+Four starts, zero stops, no `finally`, no `atexit`, no signal handler. **This is
+not a retention row's missing cleanup — it is four long-lived threads with no
+shutdown path, and CG-68 added the fourth.**
+
+#### ⚠ The trap, measured — `uvicorn.run()` never returns on SIGTERM
+
+uvicorn 0.42's `Server.capture_signals` restores the **default** disposition and
+then `signal.raise_signal(captured_signal)`. Confirmed by experiment against a
+child with all four hook shapes installed:
+
+```
+rc=-15  (killed by SIGTERM, not a clean return)
+rest: 'LIFESPAN_SHUTDOWN\n'
+```
+
+**`RUN_RETURNED` did not print. `FINALLY` did not print. `ATEXIT` did not
+print.** Exactly one hook ran — the **ASGI lifespan shutdown hook**, because it
+executes inside `serve()` before the re-raise.
+
+So the shape Task 11's wording implies — `try: uvicorn.run(app) finally:
+dispatcher.stop()` — **is a silent no-op on the only signal that matters.** It
+passes every unit test and reviews cleanly. The plan says this three times on
+purpose.
+
+#### Is it a problem today?
+
+**No — it is latent, and the row says so rather than overselling itself.** All
+four threads are daemons, the process exits in ~0.16s on SIGTERM, nothing hangs.
+**Durability is not the justification:** every journal append is
+`write`→`flush`→`fsync` inside one `open()` context, so nothing is buffered for
+a graceful stop to flush, and a hammering daemon thread killed by SIGTERM *and*
+by SIGKILL produced a clean parseable journal both times.
+
+**CG-54's SIGKILL proof covers the durability half** —
+`test_a_job_survives_an_ABRUPT_kill_of_a_real_process` kills a real child
+uncatchably and proves replay with the attempt count preserved. SIGKILL is
+strictly more abrupt than anything a SIGTERM path produces, so **the shutdown
+gap cannot violate any promise in `delivery.py`'s or `journal.py`'s docstrings.**
+What it does not cover is a kill *during* a send — and `_finish` already
+documents that window as deliberate at-least-once (*"Chat gives us no
+idempotency key"*). A graceful stop **narrows** it and changes no guarantee.
+
+**What CG-55 changes is frequency, not kind.** `restart: unless-stopped` on a
+TrueNAS custom app means every deploy, reboot and config change is a kill landing
+mid-pass — a fresh draw on that documented window each time, i.e. an occasional
+duplicate Chat message after a restart. A quality cost, bounded and already
+written down.
+
+#### Scope
+
+- **One lifespan hook in `create_app`**, stopping all four. `create_app` already
+  holds every one of them. Not four hooks, and not a `finally`.
+- **Stop-only, asymmetric with `start()` by decision** — starting in the hook
+  would spawn four threads in every context-managed test and would move
+  `__main__`'s boot ordering (restore → boot-sweep → start, which CG-68 comments
+  at length about) into the ASGI lifecycle.
+- **`stop()` is NOT touched.** Measured as already idempotent and already safe on
+  a never-started component, which is exactly what lets the hook call it
+  unconditionally on all four.
+- **`start()` idempotency** in all four: a second `start()` currently orphans the
+  first thread. `start()` after `stop()` **raises** rather than silently
+  returning a dead thread — `_stop` is never cleared, so today the caller gets a
+  normal return, `started == True`, and a thread that exits on its first loop
+  check. Clearing `_stop` would invent restart semantics for a component that has
+  abandoned in-flight work; out of scope by decision.
+
+⚠ **No ⚠ verification-ledger flag may be cleared, added or reworded.** The
+shutdown path stops the thread owning `PubSubPuller` and the thread driving the
+outbound adapters, which puts it one call from `adapters/`. It must not change
+what any adapter sends, receives, retries or prints. If implementation appears to
+need an adapter change, **stop and raise it.**
+
+⚠ **A unit test cannot prove the hook.** UAT must SIGTERM a real
+`python3 -m chat_gateway serve`. All 23 existing `TestClient` constructions are
+bare, and Starlette runs lifespan only for a context-managed client — which is
+both why this hook has zero blast radius on the 314 existing tests and why it is
+invisible to them unless a test opts in with `with TestClient(app):`.
+
+---
+
+### CG-73 · Five sites bypass CG-29's print allowlist  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by CG-71's Planner, 2026-08-02, found while reading the `_run` loops for CG-72 |
+| **Depends on** | nothing |
+| **Touches** | `delivery.py` (4 sites), `heartbeat.py` (1), possibly `errors.py` |
+| **Merge gate** | no |
+
+`CLAUDE.md`'s CG-29 rule: an exception message is printed in full only if this
+repo wrote every byte of it, enforced by `errors.py`'s marked set and
+`describe_exception`. `retention.py` — the newest of the four loops — applies it
+at both its print sites, with a comment explaining that `str(OSError)` from
+`unlink()` embeds the absolute path. The older code does not:
+
+| site | what it does |
+|---|---|
+| `delivery.py:190` | `f"dispatcher: journal {op} failed ({exc})"` — printed |
+| `delivery.py:368` | `f"dispatcher: pass error (will retry): {exc}"` — printed |
+| `heartbeat.py:199` | `f"heartbeat: scan error (will retry): {exc}"` — printed |
+| `delivery.py::process_due` | `f"gave up after {job.attempts} attempts: {exc}"` — **persisted to the delivery log** |
+| `delivery.py::process_due` | `f"attempt {job.attempts}: {exc}"` — **persisted to the delivery log** |
+
+**Stated at the confidence it deserves: this is drift in a hard-rule-#2 control,
+not a proven leak.** No live credential exposure was demonstrated — the adapters
+wrap transport errors into marked classes and CG-23's tests pin that those
+messages never carry a URL. The concrete half is `JournalWriteError`, which is
+**not** in the marked set and whose own message embeds `str(OSError)`.
+
+**What makes it a row is the shape, not any one site.** CG-29 chose an
+**allowlist** precisely so *"the next unanticipated exception type"* prints by
+type alone; these five are a denylist by omission, and the last two persist the
+result to a queryable artifact rather than only printing it.
+`tests/test_error_surfaces.py` cannot see any of them — it reads the construction
+sites of *marked* classes, and these are print sites of unmarked ones.
+
+⚠ **Deliberately NOT folded into CG-71 or CG-72**, and both plans instruct their
+implementer to leave these strings untouched: a hard-rule-#2 control change
+inside a `/healthz` row would be reviewed by nobody looking for one.
 
 ---
 
