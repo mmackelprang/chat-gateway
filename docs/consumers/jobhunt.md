@@ -118,17 +118,29 @@ apps:
 
 ## Retention of your inbound records (CG-68, 2026-08-02)
 
-jobhunt is the **only** registered tenant with records in the gateway's inbound
-audit directory — it is the only one with `allow_inbound: true` — so this
-amendment is addressed to you before anyone else.
+In `config/registry.example.yaml`, jobhunt is the **only** tenant with records
+in the gateway's inbound audit directory — the only one with
+`allow_inbound: true` — so this amendment is addressed to you before anyone
+else. ⚠ **Scoped to the example registry deliberately.** The live registry is
+gitignored and cannot be read from a PR; `CLAUDE.md` records that CG-61's
+`allow_inbound: false` for `aiteam-harness` landed in the **example** file and
+that the live edit is a separate recorded operator action, with the key absent
+from the live file and the default doing the work until then. So a second tenant
+may still have records in that directory on the running deployment. Nothing
+about the window below is tenant-specific — it is global (ADR-0002 D6) — so
+this changes who else should read this section, not what it says.
 
 Every event routed to you is appended to `<CHAT_GATEWAY_INBOX_DIR>/<app-id>-<date>.jsonl`
 before anything is queued, and that file holds the tapper's `text`,
 `sender_email` and the **whole** `raw` Chat event. It used to be kept forever;
-the integration guide said *"never pruned"*. It is now **deleted 30 days after
-the day it covers** (`CHAT_GATEWAY_INBOX_RETENTION_DAYS`, `0` disables), and
-the deletion is an `unlink` of the whole day-file — never a rewrite, and
-nothing ever opens it to decide.
+the integration guide said *"never pruned"*. It is now **kept for 30 days after
+the day it covers and deleted on the 31st** (`CHAT_GATEWAY_INBOX_RETENTION_DAYS`,
+`0` disables), and the deletion is an `unlink` of the whole day-file — never a
+rewrite, and nothing ever opens it to decide. The off-by-one is stated precisely
+because this page stated it wrong first (*"deleted 30 days after the day it
+covers"*): the test is `(today - file_date).days <= 30 → keep`, so a file dated
+**D** survives through **D+30** and goes on **D+31** — plus up to six hours,
+since the sweep runs on an interval rather than at midnight.
 
 **What this does and does not change for you:**
 
@@ -144,9 +156,13 @@ nothing ever opens it to decide.
   quarantine filenames by name even then — two guards, deliberately, because
   it is the one deletion in this repo with no second copy anywhere.
 - **You can watch it.** `/healthz` → `retention.window_days` is the window
-  actually in force, and `retention.delete_errors` / `retention.sweep_failures`
-  degrade the endpoint when the policy stops being kept. `files_deleted`
-  deliberately does not.
+  actually in force. `retention.delete_errors` and
+  `retention.consecutive_sweep_failures` degrade the endpoint when the policy
+  stops being kept — the second is the *consecutive* count, so it clears on
+  recovery, while the lifetime `sweep_failures` beside it is history and
+  degrades nothing. `retention.thread_alive` / `seconds_since_last_sweep` catch
+  the quieter failure, a sweeper that stopped without raising. `files_deleted`
+  deliberately degrades nothing at any magnitude.
 
 Reasoning: [ADR-0002](../architecture/decisions/2026-07-31-journalled-message-bodies.md)
 §4.1 and §9 Q6.
