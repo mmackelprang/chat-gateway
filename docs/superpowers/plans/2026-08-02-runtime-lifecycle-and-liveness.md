@@ -111,6 +111,14 @@ with:
 `now` is already bound at the top of `process_due`; do not call `self._now()` a
 second time.
 
+⚠ **DEVIATED FROM, deliberately, in pre-merge review (2026-08-02).** The shipped
+line is `self.last_pass_at = self._now()`. `now` is bound at the top of the pass,
+so reusing it publishes when the pass BEGAN under a field three places already
+define as when it COMPLETED — including this row's own 600s budget arithmetic,
+which the start-stamp halves. **The reasoning has one home and it is the code
+comment at that line**, not this file; it is recorded here only so a reader of
+the plan is not sent to "fix" the code back.
+
 Finally, in `start()`, record that it happened, and use the constant in `_run`:
 
 ```python
@@ -389,6 +397,17 @@ Insert **immediately after** the existing
 branch reads). `body["heartbeats"]` is bound as `hb` here because `hb_all` is
 already taken by the check list higher up — do not shadow it.
 
+⚠ **BOTH STALENESS STRINGS ABOVE WERE REWRITTEN in pre-merge review
+(2026-08-02); the two `elif` conditions are shipped as written.** *"passes are
+neither completing nor raising, so it is wedged rather than erroring"* was
+lifted from the subscriber's and the sweeper's lines, where it is true only
+because a failure-counter branch sits above them in the same chain. Neither of
+these two classes counts failures, so the plan copied the conclusion without the
+branch that earns it — onto the endpoint whose rule is not claiming what it has
+not measured. **Reasoning and the reachable failure live in the comment above
+that chain in `service.py`**, not here. The counters that would let the endpoint
+answer *which* are a separate queue row; this row is wording only.
+
 ---
 
 ## Task A6 · Tests
@@ -507,6 +526,16 @@ The code was applied verbatim rather than trimmed to hit the number; the number
 was the guess and the code was the spec. Recorded rather than quietly corrected,
 because a Builder who trusts a predicted grep count over the code it describes
 is the failure this repo keeps writing down.
+
+**Then 320 → 324 in pre-merge review**, which found three of the six branches
+this row added had never been executed: the heartbeats staleness `elif` and both
+chains' middle `elif`. Four tests, not three — the fourth asserts the new
+timestamps **at the endpoint**, because the empty-pass test the plan specified
+reads the attribute off a bare `Dispatcher` and a `/healthz` body that dropped a
+key would have passed it. Worth stating as a plan finding rather than a test
+count: **the plan wrote six tests for a chain of three branches times two
+classes, and the shortfall was invisible because the delivery chain was the one
+that got them.** A mirror is not covered by its twin's tests.
 
 ---
 
