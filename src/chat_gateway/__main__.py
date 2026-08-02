@@ -63,16 +63,23 @@ def build_runtime():
     # CG-68 / ADR-0002 D5. Sweeps the per-app inbound AUDIT trail only — never
     # the quarantine dir, never the delivery log, never the queue journals.
     #
-    # `quarantine_dir` is passed for ONE reason: so the sweeper can refuse to
-    # run if the two overlap (audit F2). Before this, "never the quarantine dir"
-    # was true only because these two env vars happen to point at sibling
-    # directories, and nothing in the process compared them — one `.env` edit
-    # away from deleting the only copy of replies that were never delivered.
+    # `quarantine_dir` and `state_dir` are passed for ONE reason: so the sweeper
+    # can refuse to run if the sweep dir overlaps either (audit F2). Before this,
+    # "never the quarantine dir" was true only because these two env vars happen
+    # to point at sibling directories, and nothing in the process compared them —
+    # one `.env` edit away from deleting the only copy of replies that were never
+    # delivered.
+    #
+    # BOTH, not just the quarantine (pre-merge review, 2026-08-02):
+    # `CHAT_GATEWAY_INBOX_DIR=state/deliveries` is a SIBLING of the quarantine,
+    # so the narrower check passed and the sweeper pruned the delivery log —
+    # a directory the module docstring lists under "what this never touches".
     try:
         sweeper = RetentionSweeper(
             audit_dir,
             days=retention_days_from_env(),
             quarantine_dir=quarantine_dir,
+            state_dir=state_dir,
         )
     except RetentionConfigError as exc:
         # Re-raised as the type `main` already handles, so a misconfiguration

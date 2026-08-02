@@ -2,11 +2,14 @@
 keep the sweeper away from the one directory with no second copy."""
 
 import datetime as dt
+import os
 import pathlib
+import sys
 import time
 
 import pytest
 
+from chat_gateway.envelope import InboundReply
 from chat_gateway.inbox import Inbox
 from chat_gateway.journal import Journal
 from chat_gateway.retention import (QUARANTINE_STEM, RetentionConfigError,
@@ -60,6 +63,80 @@ def test_an_unparseable_filename_is_left_alone_never_guessed_at(tmp_path):
     s = RetentionSweeper(d, days=1, today_fn=_on("2026-07-31"))
     assert s.sweep() == 0
     assert len(list(d.glob("*.jsonl"))) == 2
+
+
+def test_the_retention_key_matches_the_filename_inbox_actually_mints(tmp_path):
+    """The loop the whole design rests on, and the one nothing closed.
+
+    Every other test here hand-writes filenames with `_touch`, so all of them
+    would stay green if `Inbox._audit` changed its filename shape — and the
+    sweeper would then prune NOTHING while `/healthz` published `enabled: true,
+    delete_errors: 0, files_deleted: 0` and tenant bodies accumulated forever.
+    Every published signal green is exactly the failure hard rule #5 exists for.
+    `test_the_quarantine_stem_matches_what_inbox_actually_writes` above closes
+    this loop for the quarantine; this closes it for the retention key itself.
+
+    A REAL `put()`, so `_audit` mints the name, and a real `unlink` deletes it.
+    """
+    from chat_gateway.retention import _NAME
+
+    d = tmp_path / "inbox-data"
+    Inbox(audit_dir=d).put(
+        InboundReply(app="job-hunter", space="spaces/X", text="APPROVE 42",
+                     received_at=dt.datetime(2026, 6, 1, 12, tzinfo=dt.timezone.utc)))
+    minted = next(d.glob("*.jsonl"))
+    match = _NAME.match(minted.name)
+    assert match is not None and match.group("app") == "job-hunter"
+
+    # `_audit` names the file with the LOCAL date the write happened, NOT the
+    # reply's `received_at` — so the window is measured from the name, and the
+    # sweep clock is derived from that same name rather than hardcoded. That is
+    # what keeps this test off the calendar it happens to run on (audit F1).
+    stamp = dt.date.fromisoformat(match.group("date"))
+    s = RetentionSweeper(d, days=30, today_fn=lambda: stamp + dt.timedelta(days=31))
+    assert s.sweep() == 1
+    assert not minted.exists()
+
+
+@pytest.mark.parametrize("age_days,survives", [(29, True), (30, True), (31, False)])
+def test_the_window_boundary_is_inclusive_of_the_nth_day(tmp_path, age_days, survives):
+    """`(today - stamp).days <= window` keeps day N and deletes day N+1.
+
+    Pinned at the boundary because the tests above use 60 and 11 days against a
+    30-day window — nowhere near it — and because `docs/consumers/jobhunt.md`
+    stated the off-by-one wrong until this row's review.
+    """
+    d = tmp_path / "inbox-data"
+    today = dt.date(2026, 7, 31)
+    name = f"job-hunter-{(today - dt.timedelta(days=age_days)).isoformat()}.jsonl"
+    _touch(d, name)
+    RetentionSweeper(d, days=30, today_fn=_on(today.isoformat())).sweep()
+    assert (d / name).exists() is survives
+
+
+def test_todays_file_survives_even_at_a_one_day_window(tmp_path):
+    """The audit's headline safety argument, pinned: `_audit` and `sweep()` share
+    a directory with NO shared lock, and that is safe only because `_audit`
+    writes TODAY's file and `sweep()` never targets a file inside its window.
+    Arithmetic, not synchronization — so the arithmetic gets a test at its
+    tightest legal setting."""
+    d = tmp_path / "inbox-data"
+    _touch(d, "job-hunter-2026-07-31.jsonl")
+    assert RetentionSweeper(d, days=1, today_fn=_on("2026-07-31")).sweep() == 0
+    assert (d / "job-hunter-2026-07-31.jsonl").exists()
+
+
+def test_a_directory_named_like_a_day_file_is_skipped_not_counted_as_an_error(tmp_path):
+    """`glob("*.jsonl")` matches DIRECTORIES, and `unlink()` raises
+    `IsADirectoryError` on one. `delete_errors` is cumulative AND degrading with
+    no recovery path, so one such directory pinned /healthz at `degraded`
+    forever, incrementing on every pass."""
+    d = tmp_path / "inbox-data"
+    (d / "job-hunter-2020-01-01.jsonl").mkdir(parents=True)
+    s = RetentionSweeper(d, days=1, today_fn=_on("2026-07-31"))
+    assert s.sweep() == 0 and s.errors == 0
+    assert s.sweep() == 0 and s.errors == 0      # and it does not accumulate
+    assert (d / "job-hunter-2020-01-01.jsonl").is_dir()
 
 
 def test_the_quarantine_dir_is_never_swept(tmp_path):
@@ -145,8 +222,67 @@ def test_the_default_sibling_layout_is_NOT_refused(tmp_path):
     """The counterweight to the test above: the shipped default must still boot."""
     q = tmp_path / "state" / "quarantine"
     q.mkdir(parents=True)
-    s = RetentionSweeper(tmp_path / "inbox-data", days=30, quarantine_dir=q)
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30, quarantine_dir=q,
+                         state_dir=tmp_path / "state")
     assert s.days == 30
+
+
+@pytest.mark.parametrize("sub", ["deliveries", "queue", "somewhere-else"])
+def test_a_sweep_dir_anywhere_under_the_state_dir_is_refused(tmp_path, sub):
+    """The quarantine check missed every SIBLING of the quarantine.
+
+    `CHAT_GATEWAY_INBOX_DIR=state/deliveries` passed both quarantine guards —
+    it is neither inside the quarantine nor a parent of it — and the sweeper
+    unlinked the delivery log's day-files, which `deliveries-<source>-<date>`
+    matches exactly. `files_deleted` deliberately does not degrade, so /healthz
+    published the loss as the feature working. ADR D7 calls that log permanent.
+    """
+    state = tmp_path / "state"
+    q = state / "quarantine"
+    q.mkdir(parents=True)
+    with pytest.raises(RetentionConfigError) as exc:
+        RetentionSweeper(state / sub, days=30, quarantine_dir=q, state_dir=state)
+    assert "state dir" in str(exc.value)
+    assert "CHAT_GATEWAY_INBOX_DIR" in str(exc.value)
+    assert "CHAT_GATEWAY_STATE_DIR" in str(exc.value)
+
+
+def test_the_quarantine_message_wins_when_both_guards_apply(tmp_path):
+    """Order is load-bearing: the strongest message is the one an operator gets.
+
+    `CHAT_GATEWAY_INBOX_DIR=state` trips BOTH checks. The quarantine's wording
+    names the one artifact with no second copy anywhere, so it is checked first.
+    """
+    state = tmp_path / "state"
+    q = state / "quarantine"
+    q.mkdir(parents=True)
+    with pytest.raises(RetentionConfigError) as exc:
+        RetentionSweeper(state, days=30, quarantine_dir=q, state_dir=state)
+    assert "quarantine" in str(exc.value)
+    assert "state dir" not in str(exc.value)
+
+
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="symlink creation needs privilege on Windows")
+def test_a_symlink_cannot_walk_around_the_guard(tmp_path):
+    """`_check_disjoint`'s docstring claims `resolve()` defeats this. Measured,
+    because an untested comment rots — and `.parents` is a pure string walk that
+    would be fooled without the resolve."""
+    q = tmp_path / "state" / "quarantine"
+    q.mkdir(parents=True)
+    link = tmp_path / "looks-innocent"
+    os.symlink(q, link, target_is_directory=True)
+    with pytest.raises(RetentionConfigError):
+        RetentionSweeper(link, days=30, quarantine_dir=q)
+
+
+def test_a_dotdot_traversal_cannot_walk_around_the_guard(tmp_path):
+    """The other half of the same claim: a path that only LOOKS disjoint."""
+    q = tmp_path / "state" / "quarantine"
+    q.mkdir(parents=True)
+    sneaky = tmp_path / "inbox-data" / ".." / "state" / "quarantine"
+    with pytest.raises(RetentionConfigError):
+        RetentionSweeper(sneaky, days=30, quarantine_dir=q)
 
 
 # -- audit F3: a stopped sweeper must not read as a working one ---------------
@@ -156,6 +292,81 @@ def test_a_pass_over_a_missing_directory_still_stamps_last_sweep_at(tmp_path):
     s = RetentionSweeper(tmp_path / "does-not-exist", days=30)
     assert s.sweep() == 0
     assert s.last_sweep_at is not None
+
+
+def test_a_pass_with_NO_directory_configured_still_stamps_last_sweep_at(tmp_path):
+    """The same finding through the door the first fix missed.
+
+    `CHAT_GATEWAY_INBOX_DIR=""` reaches `build_runtime` as `None` — the natural
+    way to say "no audit trail on this deployment", and how `Inbox` reads it too.
+    That branch returned BEFORE the stamp, so it reported
+    `enabled: true, last_sweep_at: null` forever: byte-identical to a dead
+    thread, which is the precise condition audit F3 says must never be
+    reportable. `audit_dir_configured` is what tells the two apart, not the
+    absence of a stamp.
+    """
+    s = RetentionSweeper("", days=30)
+    assert s.sweep() == 0
+    assert s.last_sweep_at is not None
+    assert s.audit_dir_configured is False
+    # ...and the configured-but-empty case still reports True, so the field is
+    # answering the question it claims to.
+    assert RetentionSweeper(tmp_path / "inbox-data", days=30).audit_dir_configured
+
+
+def test_a_disabled_window_does_NOT_stamp_a_sweep_it_did_not_run(tmp_path):
+    """The counterweight: `days=0` is pruning switched off by operator decision,
+    `enabled: false` says so unambiguously at /healthz, and stamping a pass that
+    was never made would be its own small lie."""
+    s = RetentionSweeper(tmp_path / "inbox-data", days=0)
+    assert s.sweep() == 0
+    assert s.last_sweep_at is None
+
+
+def test_a_recovered_sweep_clears_the_degradation_but_not_the_history(tmp_path):
+    """One transient failure used to degrade /healthz for the life of the
+    process — and print the already-cleared `last_sweep_error` as the literal
+    "(None)" while the sweeper was demonstrably still pruning. The lifetime
+    count survives (it is real history); only the consecutive one resets."""
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30, interval_s=0.01)
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("disk gone")
+        return 0
+
+    s.sweep = flaky
+    s.start()
+    try:
+        deadline = time.monotonic() + 3
+        while calls["n"] < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+    finally:
+        s.stop()
+    assert s.sweep_failures == 1                 # history is kept
+    assert s.consecutive_sweep_failures == 0     # the degrading counter is not
+    assert s.last_sweep_error is None
+
+
+# The escaping `BaseException` below IS the scenario, so pytest's warning about
+# it is the test working rather than something to fix.
+@pytest.mark.filterwarnings(
+    "ignore::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_started_thread_that_died_is_visible(tmp_path):
+    """The gap audit F3 left open: counters see nothing when a loop stops
+    raising as well as stops working. `_run`'s `except` covers `sweep()`, not
+    its own handler — a `print()` to a blocked stdout escapes the `while`."""
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30, interval_s=0.01)
+    assert (s.started, s.is_alive()) == (False, False)   # never started != died
+    s.sweep = lambda: (_ for _ in ()).throw(BaseException("uncatchable"))
+    s.start()
+    deadline = time.monotonic() + 3
+    while s.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert s.started is True
+    assert s.is_alive() is False
 
 
 def test_a_failing_sweep_is_counted_not_just_printed(tmp_path, capsys):
