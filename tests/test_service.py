@@ -1007,14 +1007,22 @@ def test_a_wedged_dispatcher_is_stale_but_not_reported_dead(env):
 
     client, _inbox, _adapter = env
     dispatch = client.app.state.dispatcher
+    # STUBBED BEFORE `start()`, and it must stay that way: the real `_run` calls
+    # `process_due` every 1.0s and that stamps `last_pass_at` even on an empty
+    # pass, so a live loop re-stamps the antique timestamp below and the
+    # assertion flips to `ok` on any pause over a second. A no-op `process_due`
+    # lets the thread spin — `is_alive()` is still True, which is the half of
+    # this branch the stub must not break — while nothing moves the clock.
+    dispatch.process_due = lambda: 0
     dispatch.start()
     try:
+        assert dispatch.is_alive() is True
         dispatch.last_pass_at = (dt.datetime.now(dt.timezone.utc)
                                  - dt.timedelta(seconds=DISPATCH_STALE_AFTER_SECONDS + 60))
         body = client.get("/healthz").json()
         assert body["status"] == "degraded"
         hits = [r for r in body["reasons"] if r.startswith("delivery: ")]
-        assert len(hits) == 1 and "wedged rather than erroring" in hits[0]
+        assert len(hits) == 1 and "either WEDGED or RAISING" in hits[0]
     finally:
         dispatch.stop()
 

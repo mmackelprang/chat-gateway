@@ -733,6 +733,37 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         #
         # An `elif` chain: a dead thread also looks stale, and two reasons for
         # one fault is noise.
+        #
+        # WHERE THE WORDING DEPARTS FROM THE TWO CHAINS IT OTHERWISE MIRRORS,
+        # AND WHY IT MUST NOT BE "UNIFIED" BACK ONTO THEM. The subscriber's and
+        # the sweeper's staleness lines end *"neither completing nor raising, so
+        # it is wedged rather than erroring"*. They may say that because a
+        # failure-counter branch sits ABOVE them in the same chain
+        # (`consecutive_poll_failures`, `consecutive_sweep_failures`), so by the
+        # time their `elif` is reached "not raising" has already been measured.
+        # `Dispatcher` and `HeartbeatMonitor` count nothing, so the same
+        # sentence here — it was copied in verbatim, without the branch that
+        # earned it — would be an assertion this endpoint cannot support, on the
+        # endpoint whose whole job is not claiming what it has not measured
+        # (hard rule #5).
+        #
+        # REACHABLE, not theoretical: `DeliveryLog.record` does a raw
+        # `mkdir`/`open`/`write` and is deliberately NOT wrapped by
+        # `_journal_write`, so a full disk raises `OSError` straight out of
+        # `process_due` — and only on passes that HAD work. Both halves of that
+        # are bad in different ways. A job whose send SUCCEEDS raises before it
+        # is removed from `_jobs`, so every pass explodes, the stamp freezes,
+        # and this branch fires with the wrong explanation. A job that is
+        # RETRYING is 30s or more from its next attempt (`BACKOFF_S`), so the
+        # empty passes in between go on stamping, `last_pass_at` never goes
+        # stale, and this branch does not fire at all. `HeartbeatMonitor` meets
+        # the same write through `Dispatcher.enqueue`, with the same
+        # idle-scans-still-stamp split.
+        #
+        # So both strings state the disjunction and hand the operator the one
+        # place the difference IS visible — `_run`'s console line. The failure
+        # counters that would let /healthz answer it here are filed as their own
+        # queue row, deliberately not built on this one.
         if queue["thread_started"] and not queue["thread_alive"]:
             reasons.append(
                 "delivery: the dispatch thread was started and is NOT RUNNING — "
@@ -754,9 +785,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             reasons.append(
                 f"delivery: the thread is alive but the last completed pass was "
                 f"{queue['seconds_since_last_pass']}s ago, over the "
-                f"{queue['stale_after_seconds']}s budget — passes are neither "
-                "completing nor raising, so it is wedged rather than erroring. "
-                "A send blocked past its client timeout looks like this"
+                f"{queue['stale_after_seconds']}s budget — so the loop is "
+                "either WEDGED or RAISING on every pass, and nothing in this "
+                "block can tell you which, because it counts no failures. The "
+                "gateway's console can: a wedged pass is silent, a raising one "
+                "prints `dispatcher: pass error (will retry)` once a second. A "
+                "send blocked past its client timeout is the wedged shape; a "
+                "full disk, which makes the delivery log's own write raise, is "
+                "the other one"
             )
         # ...and the dead-man switch's own liveness. Same chain, same order.
         # A heartbeat monitor that has died stops evaluating every consumer's
@@ -780,8 +816,13 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 f"heartbeats: the thread is alive but the last completed scan "
                 f"was {hb['seconds_since_last_scan']}s ago, over the "
                 f"{hb['stale_after_seconds']}s budget for a "
-                f"{hb['scan_interval_seconds']}s-interval loop — the dead-man "
-                "monitor is wedged rather than erroring"
+                f"{hb['scan_interval_seconds']}s-interval loop — so the "
+                "dead-man monitor is either WEDGED or RAISING on every scan, "
+                "and nothing in this block can tell you which, because it "
+                "counts no failures. The gateway's console can: a raising scan "
+                "prints `heartbeat: scan error (will retry)` once an interval. "
+                "A scan that fires a check enqueues through the delivery log, "
+                "so a full disk raises there while an idle scan still stamps"
             )
         # `ret` is bound above the inbox lines, which need the same flag.
         if ret["enabled"]:
