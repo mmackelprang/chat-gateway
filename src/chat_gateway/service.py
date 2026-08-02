@@ -680,11 +680,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                     "being enforced. The audit trail holds message text and "
                     "sender addresses"
                 )
-            # The two silence checks, in the subscriber block's order and for
-            # the subscriber block's reason: a loop that is loudly failing has a
-            # more actionable reason already, and a dead thread will also look
-            # stale — a dead thread and a frozen timestamp are ONE fault, so
-            # they must not produce two reasons.
+            # The three silence checks — one `elif` chain with the failure check
+            # above it, in the subscriber block's order and for the subscriber
+            # block's reason: a loop that is loudly failing has a more
+            # actionable reason already, and a dead thread will also look stale.
+            # A dead thread and a frozen timestamp are ONE fault, so at most one
+            # of these four may speak at a time.
             #
             # A SWEEPER THAT WAS STARTED AND IS NO LONGER RUNNING moves no
             # counter and no timestamp, so nothing above can see it. `_run`
