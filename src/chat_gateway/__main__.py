@@ -5,8 +5,9 @@
     python3 -m chat_gateway check       # load registry, print healthz material
 
 Env (see .env.example): CHAT_GATEWAY_REGISTRY, CHAT_GATEWAY_PORT,
-CHAT_GATEWAY_INBOX_DIR, GATEWAY_ENABLE_PUBSUB,
-CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, GOOGLE_APPLICATION_CREDENTIALS.
+CHAT_GATEWAY_INBOX_DIR, CHAT_GATEWAY_INBOX_RETENTION_DAYS,
+GATEWAY_ENABLE_PUBSUB, CHAT_GATEWAY_PUBSUB_SUBSCRIPTION,
+GOOGLE_APPLICATION_CREDENTIALS.
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ from .inbox import Inbox
 from .journal import Journal
 from .log_redaction import install_url_redaction
 from .registry import RegistryError, load_registry
+from .retention import (RetentionConfigError, RetentionSweeper,
+                        retention_days_from_env)
 
 
 def build_runtime():
@@ -35,19 +38,48 @@ def build_runtime():
 
     registry = load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml"))
     state_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
+    # ONE home for each of these two paths, deliberately: the Inbox WRITES the
+    # audit dir and the quarantine dir, and the RetentionSweeper below is
+    # constructed against both — one to sweep, one to refuse to sweep. Written
+    # twice they could drift apart in a way whose only symptom is a deletion,
+    # which is this repo's own recorded lesson about a moving fact with two
+    # homes (CLAUDE.md's test count).
+    audit_dir = os.environ.get("CHAT_GATEWAY_INBOX_DIR", "inbox-data")
+    quarantine_dir = Path(state_dir) / "quarantine"
     # CG-54: the inbox's PENDING QUEUE is journalled here, at
     # construction, rather than attached afterwards — `_journal` is
     # private and assigning it from outside reaches through the class.
     # This is not the audit trail beside it: the audit says what
     # ARRIVED, the journal says what is still UNPOLLED, and passive
     # polling is the only inbound path an opted-out tenant has.
-    inbox = Inbox(audit_dir=os.environ.get("CHAT_GATEWAY_INBOX_DIR", "inbox-data"),
+    inbox = Inbox(audit_dir=audit_dir,
                   journal=Journal(Path(state_dir) / "queue" / "inbox.jsonl"),
                   # CG-65: unrevivable replies are preserved here rather than
                   # only pointed at in another file. Under the state dir, beside
                   # the journals, because it is queue-recovery material — not an
                   # audit record of what arrived.
-                  quarantine_dir=Path(state_dir) / "quarantine")
+                  quarantine_dir=quarantine_dir)
+
+    # CG-68 / ADR-0002 D5. Sweeps the per-app inbound AUDIT trail only — never
+    # the quarantine dir, never the delivery log, never the queue journals.
+    #
+    # `quarantine_dir` is passed for ONE reason: so the sweeper can refuse to
+    # run if the two overlap (audit F2). Before this, "never the quarantine dir"
+    # was true only because these two env vars happen to point at sibling
+    # directories, and nothing in the process compared them — one `.env` edit
+    # away from deleting the only copy of replies that were never delivered.
+    try:
+        sweeper = RetentionSweeper(
+            audit_dir,
+            days=retention_days_from_env(),
+            quarantine_dir=quarantine_dir,
+        )
+    except RetentionConfigError as exc:
+        # Re-raised as the type `main` already handles, so a misconfiguration
+        # prints `config error: ...` and exits 2 — the same treatment
+        # GATEWAY_ENABLE_PUBSUB's missing-companion check gets, rather than a
+        # traceback. Refusing to boot is the SAFE direction here; see the class.
+        raise RegistryError(str(exc)) from exc
 
     from .adapters.webhook import WebhookAdapter
 
@@ -73,7 +105,7 @@ def build_runtime():
         puller = PubSubPuller(sub, GoogleServiceAccountTokens(creds, scope=PUBSUB_SCOPE))
         subscriber = SubscriberLoop(puller, registry, inbox)
 
-    return registry, inbox, adapters, subscriber, state_dir
+    return registry, inbox, adapters, subscriber, state_dir, sweeper
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        registry, inbox, adapters, subscriber, state_dir = build_runtime()
+        registry, inbox, adapters, subscriber, state_dir, sweeper = build_runtime()
     except RegistryError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
@@ -116,6 +148,20 @@ def main(argv: list[str] | None = None) -> int:
         inbound_restored = inbox.restore()
         print(f"queue: restored {restored} outbound job(s), {not_restored} expired or unroutable; "
               f"{inbound_restored} inbound reply(ies)", flush=True)
+        # CG-68. AFTER `inbox.restore()`, never before: restore is what writes
+        # the quarantine copy of an unrevivable reply, and a boot line claiming
+        # a retention window while that copy is still unwritten would be the
+        # tense defect this row exists to close, in the other direction.
+        #
+        # The boot sweep is the one an operator can see. It is not the whole
+        # mechanism — `start()` below is — because a host running
+        # `restart: unless-stopped` may not reboot for months, which is the same
+        # reasoning journal.py gives for not relying on boot compaction.
+        swept = sweeper.sweep()
+        print(f"retention: inbox audit window is {sweeper.days} day(s) "
+              f"({'pruning DISABLED' if sweeper.days == 0 else 'enabled'}); "
+              f"removed {swept} expired day-file(s) at boot", flush=True)
+        sweeper.start()
         if subscriber is not None:
             from .forwarder import CallbackForwarder
 
@@ -129,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
             delivery_log=log,
             dispatcher=dispatcher,
             heartbeats=HeartbeatStore(Path(state_dir) / "heartbeats.json"),
+            sweeper=sweeper,
         )
         app.state.dispatcher.start()
         app.state.monitor.start()
