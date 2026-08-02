@@ -775,9 +775,11 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # idle-scans-still-stamp split.
         #
         # So both strings state the disjunction and hand the operator the one
-        # place the difference IS visible — `_run`'s console line. The failure
-        # counters that would let /healthz answer it here are filed as their own
-        # queue row, deliberately not built on this one.
+        # place the difference IS visible — `_run`'s console line. Adding the
+        # failure counters that would let /healthz answer it *here* belongs to a
+        # queue row of its own: it is a new degrade input on an endpoint
+        # consumers alarm on, which is a decision, not a wording fix. Until one
+        # lands, honest ambiguity beats a confident wrong answer.
         if queue["thread_started"] and not queue["thread_alive"]:
             reasons.append(
                 "delivery: the dispatch thread was started and is NOT RUNNING — "

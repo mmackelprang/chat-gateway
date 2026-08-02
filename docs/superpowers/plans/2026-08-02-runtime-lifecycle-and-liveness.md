@@ -405,8 +405,9 @@ because a failure-counter branch sits above them in the same chain. Neither of
 these two classes counts failures, so the plan copied the conclusion without the
 branch that earns it — onto the endpoint whose rule is not claiming what it has
 not measured. **Reasoning and the reachable failure live in the comment above
-that chain in `service.py`**, not here. The counters that would let the endpoint
-answer *which* are a separate queue row; this row is wording only.
+that chain in `service.py`**, not here. Adding the counters that would let the
+endpoint answer *which* belongs to a queue row of its own — it is a new degrade
+input, not a wording fix; this row changed only the words.
 
 ---
 
