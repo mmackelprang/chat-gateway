@@ -411,15 +411,35 @@ curl -s $GW/healthz                     # honest health — no auth required
 
 ### Durability counters at `/healthz`
 
-This is where the queue journals — and, since 2026-08-02, the retention
-sweeper — report themselves **to you**. A boot line on the gateway's console
-says some of it as well, but that is the operator's copy and you cannot read
-it. **Nine** fields arrived with the journals on 2026-07-31 and **fifteen** with
-the sweeper; **eleven of the twenty-four can flip `status` to `degraded`** — so
-a consumer that alarms on `status` should know what they mean before one fires
-at 03:00. `status` is computed **from** `reasons`: anything that can degrade
-this endpoint says so in words, because a number nobody reads is not honest
-health.
+This is where the queue journals — and, since 2026-08-02, the retention sweeper,
+the outbound dispatcher and the heartbeat monitor — report themselves **to you**.
+A boot line on the gateway's console says some of it as well, but that is the
+operator's copy and you cannot read it. The table below has **thirty-six** rows:
+**nine** arrived with the journals on 2026-07-31, **fifteen** with the sweeper,
+and **twelve** with the two thread liveness blocks on 2026-08-02 — though only
+**eleven** of that last twelve are new **keys** in the body.
+`heartbeats.last_scan_at` was already published and is documented for the first
+time here, because it is the row that made a dead monitor look healthy. If you
+diff the JSON across that date you will see eleven additions, not twelve; the
+distinction is rows-in-this-table versus fields-in-the-response.
+
+Of the thirty-six rows, **fourteen carry `**yes**` in the Degrades? column**.
+Counted as *fields* the number is **seventeen**, and both are right: each of the
+three liveness triples (`delivery.*`, `retention.*`, `heartbeats.*`) is read in
+**combination**, so its `thread_started` row — marked *"no on its own"* — is part
+of the judgement that degrades. Fourteen is what the column says; seventeen is
+what participates. A consumer that alarms on `status` should know what they mean
+before one fires at 03:00. `status` is computed **from** `reasons`: anything that
+can degrade this endpoint says so in words, because a number nobody reads is not
+honest health.
+
+⚠ **Two of those degrade paths are new on 2026-08-02, and a consumer already
+alarming on `status` will meet them first.** Until then `/healthz` answered `ok`
+with a dead outbound dispatcher and with a dead heartbeat monitor — `pending_jobs`
+climbing, `last_scan_at` frozen at a real timestamp, and nothing saying so. Both
+now degrade. If you alarm on `status`, expect these two reasons to be possible
+where previously the endpoint was silent; that silence was the bug, not a
+contract.
 
 | Field | What it means | Degrades? |
 |---|---|---|
@@ -432,6 +452,12 @@ health.
 | `inbox.quarantine_write_errors` | quarantine writes that **failed**. At least one unrevivable reply has **no preserved copy**, so only the per-app audit trail records that it ever arrived | **yes** |
 | `delivery.journal_skipped_lines` | journal lines that did not parse. A torn trailing line is the *expected* shape after a power loss and is deliberately not fatal — a gateway that refuses to boot over a half-written byte is a crash loop | **yes** |
 | `delivery.journal_write_errors` | journal writes that **failed** since start. The queues keep running — raising there would turn a full disk into a re-send storm — so while this is non-zero they are running **without** durability, and a reply you already polled can be delivered to you a second time after a restart | **yes** |
+| `delivery.thread_alive` | whether the **dispatch** thread is running **right now**. The direct signal, and nothing else in this table substitutes for it: `pending_jobs` reads non-zero for a busy dispatcher and a dead one alike, and zero for an idle deployment either way | **yes** — read with `thread_started` |
+| `delivery.thread_started` | whether that thread was ever started. Read **with** the row above: alone, "not alive" cannot tell a dispatcher that was never started from one that died, and only the second is a fault | no on its own |
+| `delivery.last_pass_at` | when a dispatch pass last **completed**. A pass that found nothing due **still stamps it** — deliberately, because at this gateway's traffic shape almost every pass is empty, and if only a non-empty pass stamped then "healthy and idle" would be byte-identical to "the thread is dead" for hours | no |
+| `delivery.seconds_since_last_pass` | how stale `last_pass_at` is, as a **number**. `null` before the first pass | **yes** — past the budget below |
+| `delivery.stale_after_seconds` | the silence budget: **600s**, and deliberately looser than the poll loop's. `process_due` walks due jobs sequentially and each send is bounded by a 30s client timeout — plus, for `mode: app` sends, a token refresh that runs on google-auth's own transport and is **not** bounded by it (no number is published for that leg because none has been measured). So a backlog all timing out holds the timestamp still while the dispatcher works perfectly. Ten minutes to notice a dead delivery thread is the price of not crying wolf at every slow Google call — and it is bought against a baseline of **never noticing at all** | no |
+| `delivery.pass_interval_seconds` | the interval the budget is derived from — one second | no |
 | `retention.enabled` | whether the audit trail is being pruned at all. `false` means either no sweeper is wired or the window is `0` — the two are distinguishable: only the first carries a `note` and omits every field below | no |
 | `retention.window_days` | the tenant window actually in force on this deployment, in days. Read this rather than assuming the 30-day default — it is one env var | no |
 | `retention.unrouted_window_days` | the shorter floor applied to the gateway's own `_unrouted` bucket. Not per-tenant policy: `_unrouted` holds unattributable events that answer to nobody | no |
@@ -447,25 +473,43 @@ health.
 | `retention.seconds_since_last_sweep` | how stale `last_sweep_at` is, as a **number** rather than two timestamps for you to subtract. `null` before the first pass | **yes** — past the budget below |
 | `retention.stale_after_seconds` | the silence budget: twice the sweep interval. Published so the row above is checkable rather than magic | no |
 | `retention.sweep_interval_seconds` | the configured interval the budget is derived from — six hours by default | no |
+| `heartbeats.last_scan_at` | when the dead-man monitor last **completed** a scan. Like `retention.last_sweep_at`, this is **not** how you spot a dead monitor: a dead one leaves a real, frozen, non-`null` timestamp here, which is exactly what made it read as healthy. Use the three rows below | no |
+| `heartbeats.thread_alive` | whether the **scan** thread is running right now. This is the dead-man switch's own dead-man switch: while it is `false`, **no registered check is being evaluated**, so a source that has gone silent will never be alerted on — and `missed` stops moving because nothing is scanning, not because nothing is wrong | **yes** — read with `thread_started` |
+| `heartbeats.thread_started` | whether that thread was ever started. Same pairing as the two blocks above; a deployment that registers checks but never starts the monitor is a different fact from one whose monitor died | no on its own |
+| `heartbeats.seconds_since_last_scan` | how stale `last_scan_at` is, as a number. `null` before the first scan | **yes** — past the budget below |
+| `heartbeats.stale_after_seconds` | the silence budget: six scan intervals, floored at 300s. `scan_once` does no network I/O, so unlike delivery this needs no allowance for a slow remote call | no |
+| `heartbeats.scan_interval_seconds` | the configured scan interval the budget is derived from — sixty seconds by default, and settable per deployment, which is why the budget is published rather than assumed | no |
 
 Four things the field names do not tell you:
 
 - **Two of the `delivery.*` fields count both queues.**
   `journal_skipped_lines` and `journal_write_errors` are sums across the
-  outbound *and* inbox journals — despite the prefix. The other three
+  outbound *and* inbox journals — despite the prefix. The other **nine**
   `delivery.*` fields, and **all four** `inbox.*` fields, are per-queue exactly
-  as their prefixes say. Do not read the prefix as a guarantee on those two.
-- **Eleven degrading fields, and the map to `reasons` lines is one-to-one in
+  as their prefixes say — including the six added on 2026-08-02, which describe
+  the outbound dispatch thread and nothing else. (This read *"the other three"*
+  until that date, which was true of the five-row block it was written for.) Do
+  not read the prefix as a guarantee on those two.
+- **Seventeen degrading fields — the field count from above, not the fourteen
+  rows the column marks — and the map to `reasons` lines is one-to-one in
   neither direction.** `expired_at_boot` and `unroutable_at_boot` share one
   entry: both mean "queued, then not delivered", and one investigation reads
-  them together. In the other direction the three `retention.*` liveness fields
-  — `thread_started`, `thread_alive`, `seconds_since_last_sweep` — are read in
+  them together. In the other direction the `retention.*` liveness fields —
+  `thread_started`, `thread_alive`, `seconds_since_last_sweep` — are read in
   **combination**, and produce exactly **one** entry between them at any moment:
-  a dead thread also looks stale, and one fault must not print two reasons. (It
-  was five fields and four lines until 2026-07-31; `quarantine_write_errors`
-  added one of each, and `retention.*` added the rest on 2026-08-02. Recount
-  against `service.py` rather than trusting this sentence — a copied count is
-  what `CLAUDE.md`'s test-count note is about.)
+  a dead thread also looks stale, and one fault must not print two reasons. **The
+  `delivery.*` and `heartbeats.*` liveness triples added on 2026-08-02 behave
+  identically** — same three fields, same `elif` ordering, same at-most-one-entry
+  guarantee — which is why they are three rows each rather than one, and why you
+  should alarm on `status` rather than on any single row. (It was five fields and
+  four lines until 2026-07-31; `quarantine_write_errors` added one of each,
+  `retention.*` added five fields and three lines on 2026-08-02, and the two
+  thread blocks added six fields and two lines the same day — 17 and 10. Recount
+  against `service.py`'s `reasons` chain rather than trusting this sentence — a
+  copied count is what `CLAUDE.md`'s test-count note is about — but count the way
+  this table does, or you will land on a third number: **fields that participate
+  in a degrade**, which includes each triple's `thread_started`, and **`reasons`
+  entries**, of which a triple can emit at most one.)
 - **`retention.*` is about the audit trail, not about your queue.** Everything
   else in this table describes work that was queued and might have been lost.
   These describe a file being **deleted on schedule**, which is the intended

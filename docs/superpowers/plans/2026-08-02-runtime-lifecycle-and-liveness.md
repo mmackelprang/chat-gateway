@@ -111,6 +111,14 @@ with:
 `now` is already bound at the top of `process_due`; do not call `self._now()` a
 second time.
 
+⚠ **DEVIATED FROM, deliberately, in pre-merge review (2026-08-02).** The shipped
+line is `self.last_pass_at = self._now()`. `now` is bound at the top of the pass,
+so reusing it publishes when the pass BEGAN under a field three places already
+define as when it COMPLETED — including this row's own 600s budget arithmetic,
+which the start-stamp halves. **The reasoning has one home and it is the code
+comment at that line**, not this file; it is recorded here only so a reader of
+the plan is not sent to "fix" the code back.
+
 Finally, in `start()`, record that it happened, and use the constant in `_run`:
 
 ```python
@@ -389,6 +397,18 @@ Insert **immediately after** the existing
 branch reads). `body["heartbeats"]` is bound as `hb` here because `hb_all` is
 already taken by the check list higher up — do not shadow it.
 
+⚠ **BOTH STALENESS STRINGS ABOVE WERE REWRITTEN in pre-merge review
+(2026-08-02); the two `elif` conditions are shipped as written.** *"passes are
+neither completing nor raising, so it is wedged rather than erroring"* was
+lifted from the subscriber's and the sweeper's lines, where it is true only
+because a failure-counter branch sits above them in the same chain. Neither of
+these two classes counts failures, so the plan copied the conclusion without the
+branch that earns it — onto the endpoint whose rule is not claiming what it has
+not measured. **Reasoning and the reachable failure live in the comment above
+that chain in `service.py`**, not here. Adding the counters that would let the
+endpoint answer *which* belongs to a queue row of its own — it is a new degrade
+input, not a wording fix; this row changed only the words.
+
 ---
 
 ## Task A6 · Tests
@@ -493,15 +513,74 @@ ones.
 
 ```
 python3 -m pytest -q            # expect 314 + the six above = 320
-grep -c "thread_alive" src/chat_gateway/service.py     # 8 -> 12
+grep -c "thread_alive" src/chat_gateway/service.py     # 8 -> 15 (see below)
 git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"   # must be 0
 ```
+
+**Measured on completion: 314 → 320, and `thread_alive` 8 → 15.** The `12` this
+block predicted was an arithmetic slip in the plan, not a shortfall in the code:
+Task A4/A5's literal code adds **seven** matching lines, not four — the two body
+fields, the four `elif`-chain references (`not queue["thread_alive"]`,
+`queue["thread_alive"] and`, and the same pair for `hb`), **and** the comment
+line that names the field while explaining why `thread_started` sits beside it.
+The code was applied verbatim rather than trimmed to hit the number; the number
+was the guess and the code was the spec. Recorded rather than quietly corrected,
+because a Builder who trusts a predicted grep count over the code it describes
+is the failure this repo keeps writing down.
+
+**Then 320 → 324 in pre-merge review**, which found three of the six branches
+this row added had never been executed: the heartbeats staleness `elif` and both
+chains' middle `elif`. Four tests, not three — the fourth asserts the new
+timestamps **at the endpoint**, because the empty-pass test the plan specified
+reads the attribute off a bare `Dispatcher` and a `/healthz` body that dropped a
+key would have passed it. Worth stating as a plan finding rather than a test
+count: **the plan wrote six tests for a chain of three branches times two
+classes, and the shortfall was invisible because the delivery chain was the one
+that got them.** A mirror is not covered by its twin's tests.
 
 ---
 
 # Part B — CG-71 · One shutdown path, in the one place that runs
 
 Branch from a merged Part A.
+
+## ✅ Sign-off L3 — granted by the user, 2026-08-02
+
+**`start()` after `stop()` must RAISE**, not silently return a dead thread.
+Spec §8's L3 row is answered: the recommendation was accepted as written.
+
+**The reasoning, kept rather than the verdict alone.** `_stop` is never cleared,
+so `start()` after `stop()` builds a thread whose `while not self._stop.is_set()`
+is already false on its first evaluation. The caller gets a normal return,
+`started == True`, and a thread that has already exited — **success-looking and
+dead**, which is the exact failure shape CG-72 exists to eliminate one layer up.
+Making it loud costs one `raise`; making it *work* would mean inventing restart
+semantics for a component that has abandoned in-flight work, which is a second
+feature inside a lifecycle row (spec §5.3). A caller wanting a fresh loop builds
+a fresh object, which is what `__main__` does.
+
+⚠ **Recorded here by CG-72's Builder; deliberately NOT implemented by CG-72.**
+The sign-off arrived during Part A, and Part A's blast radius was checked against
+it rather than assumed:
+
+- Part A's only change to either `start()` is adding `self._started = True`. It
+  does not touch the `_stop` Event, the thread construction, or any return path.
+- Part A therefore **cannot** make the L3 hazard worse, and measurably makes it
+  **less** dangerous: before Part A, a start-after-stop was invisible; after it,
+  the same call renders at `/healthz` as `thread_started: true` +
+  `thread_alive: false` and **degrades `status`** with *"was started and is NOT
+  RUNNING"*. Spec §2.7 predicted exactly this — *"on the two classes that publish
+  liveness this renders as 'started and is NOT RUNNING', which is at least
+  honest"* — and that is now true of the dispatcher and the monitor.
+- Nothing in Part A calls `start()` after `stop()`, and no Part A test would
+  change behaviour if the raise existed.
+
+So L3 falls **outside** Part A's blast radius and stays Task B1's, where it
+belongs beside the other three classes. Implementing it in a `/healthz` row would
+have put a new exception on a lifecycle path into a PR nobody was reviewing for
+lifecycle changes — and it would have shipped for `Dispatcher` and
+`HeartbeatMonitor` only, leaving `RetentionSweeper` and `SubscriberLoop` with the
+silent-dead-thread behaviour. **Two of four is the worst of the three options.**
 
 ## Task B1 · `start()` idempotency, all four classes
 
@@ -747,8 +826,70 @@ across test files.
 python3 -m pytest -q
 grep -n "\.stop()" src/chat_gateway/service.py     # the hook exists
 git diff main -- src/chat_gateway/adapters/ | wc -l   # expect only start() in pubsub.py
-git diff main | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"   # must be 0
+git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"   # must be 0
 ```
+
+⚠ **The flag-word check above was WRONG in this plan's first draft and is
+corrected here (CG-72's Builder, 2026-08-02) so CG-71's Builder is not sent
+chasing a phantom.** It read `git diff main | grep -c ...` — without `-- src/`.
+That form **cannot return 0 on a branch that touches the docs**, and the reason
+is this plan itself: `git diff` prints three lines of context around every hunk,
+`docs/BUILDER_QUEUE.md` contains 22 occurrences of those flag words and this file
+contains several more, so any edit landing near one drags it into the diff as
+context. A Builder would then "discover" a flag it never touched and go looking
+for a change that does not exist. The `-- src/` form directly above it was always
+the correct one.
+
+**When a stronger proof is wanted** — and it is worth having, because `-- src/`
+says nothing about the docs where the ledger actually lives — compare the counts
+on both sides per file rather than grepping the diff:
+
+```
+for f in $(git diff main --name-only); do
+  echo "$f  main=$(git show main:$f | grep -c 'LIVE-UNVERIFIED\|SHAPE-VERIFIED')" \
+       " branch=$(grep -c 'LIVE-UNVERIFIED\|SHAPE-VERIFIED' "$f")"
+done
+```
+
+Equal counts on every row, and an equal repo-wide total, is the claim *"no flag
+was cleared, added or reworded"* actually being measured.
+
+**Demonstrated by this very correction, which is why the per-file form needs one
+more refinement.** CG-72 ran that loop and it reported **this plan file** as
+`main=2 branch=4` — a "changed" row. The change is the three lines directly
+above: the flag words appear inside `grep` **patterns** in a shell snippet. No
+annotation moved. So the count comparison is necessary but not sufficient, and
+the check that actually settles it is the one for the **flagged form**:
+
+```
+git diff main | grep -cE "^[+-].*⚠.*(LIVE-UNVERIFIED|SHAPE-VERIFIED)"   # must be 0
+```
+
+A ledger entry is always the ⚠-prefixed annotation, never a bare mention. CG-72
+shipped with **0** on that check, `src/` at 4 = 4, `CLAUDE.md` at 8 = 8,
+`docs/architecture/` at 5 = 5 and `docs/consumers/` at 2 = 2 — while the naive
+whole-diff count read 103 → 105 and would have sent a Builder hunting. **Both
+numbers were true; only one of them was about the ledger.**
+
+**AND THE REFINED CHECK NOW TRIPS ON ITSELF — expect 1, not 0, and here is
+which line it is.** The `0` above was measured before the code block three lines
+up existed. Committing it put a line into the branch's diff that contains a
+warning sign and both flag words *inside a grep pattern*, so the check matches
+its own text. That is the same class of false positive as the per-file count it
+was written to replace, arriving one level deeper, and it is worth leaving
+standing rather than escaping the pattern: **a guard that cannot be tripped by
+its own documentation teaches nothing, and this one now demonstrates the trap
+in the act of describing it.** To see *which* line, swap that command's `-c` for
+`-n` — it prints the hit, and the hit is the code block above and nothing else.
+Re-run it that way rather than adding a second copy of the pattern to this file;
+one self-match is a demonstration, two is a mess.
+
+Found by CG-72's pre-merge review, which ran the check as specified and got 1.
+What settled it there was the per-file form, run on the annotation as it really
+appears — a warning sign, a space, then the flag word — over every changed file:
+identical on both sides of every row, and a repo-wide total identical at 87.
+**Run both. Neither is sufficient alone, which is the whole lesson of this
+section.**
 
 **UAT, and it must be a real process — a unit test cannot prove B2.** Run
 `python3 -m chat_gateway serve` against a scratch state dir, `kill -TERM` it, and

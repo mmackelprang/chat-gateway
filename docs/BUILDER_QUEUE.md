@@ -1,8 +1,44 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-02 (Planner — **CG-68's deferred L4 measured; three rows
+**Last updated:** 2026-08-02 (Builder — **CG-72 shipped as
+[#56](https://github.com/mmackelprang/chat-gateway/pull/56)**). Suite **314 → 324**,
+both ends measured here.
+
+**`/healthz` can now see all four threads.** A dead `delivery-dispatcher` and a
+dead `heartbeat-monitor` were, until today, reported as `status: ok` — the
+11-day-silent-capture-failure shape hard rule #5 was written after, live on every
+deployment. **Demonstrated rather than argued:** both threads killed in a real
+uvicorn server through the documented hole (an exception raised inside `_run`'s
+own handler, not `.stop()`), same harness on both sides — `main` answered `ok`
+with `reasons: []`; the branch answered `degraded` with exactly one reason each.
+
+⚠ **Review's sharpest finding was a sentence that outlived its evidence.** Both
+new staleness reasons said *"neither completing nor raising, so it is wedged
+rather than erroring"* — copied from the subscriber and retention chains, where
+it is true **only because a failure-counter branch sits above it**. These two
+blocks count nothing. Reworded; the counters are filed as **CG-74**, and two
+`/healthz` strings now name that gap in words.
+
+⚠ **A plan line that silently changed a field's meaning.** *"do not call
+`self._now()` a second time"* made `last_pass_at` publish the pass **start** while
+three other places defined it as **completion** — halving the 600s budget's real
+headroom. Fixed; the deviation is recorded at the code comment, its one home.
+
+**Two new rows filed from this row's review:** **CG-74** (the counter half of
+CG-68's F3, on the two threads that only got the liveness half) and **CG-75**
+(pre-existing: a raising `_finish` re-sends the same job every second, unbounded
+— a disk-full condition becomes a send storm against Google).
+
+**No ⚠ verification-ledger flag cleared, added or reworded** — proven by diff on
+every ledger-bearing surface: `CLAUDE.md` 8=8, `src/` 4=4, `docs/architecture/`
+5=5, `docs/consumers/` 2=2, `tests/` 3=3. The whole-repo count *does* move
+(103 → 106) and that is **not** a flag change: every one of the four added lines
+is a grep **pattern** inside the shell snippet that fixes Part B's broken guard.
+`adapters/` and `docs/architecture/` untouched.
+
+Previously 2026-08-02 (Planner — **CG-68's deferred L4 measured; three rows
 filed, one decided**). No `src/` change: spec, plan and this file only. Suite
-**314**, re-measured here (`314 passed in 58.76s`) rather than quoted from the
+**314**, re-measured there (`314 passed in 58.76s`) rather than quoted from the
 row below.
 [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) ·
 [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md).
@@ -858,7 +894,9 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-68** · time-bounded pruning of the inbound audit trail | ✅ done (#54) | **The first row that DELETES a tenant's content.** 30/7/0 via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`; the filename is the retention key, so pruning never opens a file holding message bodies. Amends `integration-guide.md:366`'s published *"never pruned"* (A4). ⚠ **New user decision A5** — the boot guard **refuses** rather than warns, and is stricter than the non-recursive glob requires (decision 4 below). Review found **0 HIGH, 6 MEDIUM, 6 LOW**; the sharpest was **M2** — the sweeper would have pruned `state/deliveries/` (ADR D7, permanent by decision), because the guard only fenced the quarantine and `state/deliveries` is its *sibling*. Suite **268 → 314**. Plan Tasks **10–14** |
 | **CG-69** · published-promise inventory (process control) | 📋 queued | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. No plan yet |
 | **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued · **decided** | Filed by CG-65's Builder (LOW). ✅ **Planner call made 2026-08-02: option (a), and the row's own argument against it was measurably wrong.** `strace` shows every append already issues the stat and the kernel already returns the mode in it — (a) costs **zero** extra syscalls in the steady state. (b) goes to CG-53 for the files (a) provably cannot reach; (c) rejected. Severity unchanged; the reason changed from *"defer, it is low"* to *"do it, it is free"*. Spec §6 |
-| **CG-72** · `/healthz` cannot see two of the four threads (rule #5) | 📋 queued | **Found while measuring CG-71; sequence it FIRST.** `subscriber` and `sweeper` publish `thread_alive`/`thread_started` and degrade; **`dispatcher` and `monitor` publish neither and cannot degrade.** A dead dispatcher = every outbound notification silently stops. A dead monitor = the dead-man switch is dead. Live on every deployment, including the one CG-55 makes. [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §2.6/§4 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part A |
+| **CG-72** · `/healthz` cannot see two of the four threads (rule #5) | ✅ done (#56) | `dispatcher` and `monitor` now publish `thread_alive`/`thread_started` + staleness and **degrade**. Proven by killing both threads in a **real** server through the documented hole — an exception raised inside `_run`'s own handler, not `.stop()`: on `main` `/healthz` answered `status: ok`, `reasons: []`; on the branch, `degraded` with one reason each. Suite **314 → 324**. Review found **0 HIGH, 3 MEDIUM, 6 LOW** — the sharpest, **M1**, was a reason string asserting *"neither completing nor raising"* on two blocks that **count no failures**, copied from siblings where a counter branch made it true; reworded, and the counters filed as **CG-74**. **M2**: `last_pass_at` stamped the pass **start** while three places defined it as completion — the plan's own "do not call `self._now()` twice" had silently changed the field's meaning. [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §2.6/§4 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part A |
+| **CG-74** · `Dispatcher` and `HeartbeatMonitor` count no failures — CG-68's F3, counter half | 📋 queued | **Filed by CG-72's Builder from its own pre-merge review (M1).** The liveness half shipped; the counter half did not. `retention.py` and `pubsub.py` both carry `*_failures` / `consecutive_*_failures` and a reason branch **above** their staleness branch — which is the only reason their *"wedged rather than erroring"* wording is true. ⚠ **Two `/healthz` strings now point at this row's absence in words** (*"nothing in this block counts failures"*); building it means correcting them. Concretely reachable: `DeliveryLog.record` is **not** wrapped by `_journal_write`, so on a full disk a work-bearing pass raises while **empty passes keep stamping** `last_pass_at` — and a retrying job is ≥30s from its next attempt, so the staleness branch never fires at all. No plan yet |
+| **CG-75** · a raising `_finish` re-sends the same job every second, unbounded | 📋 queued | **Pre-existing; surfaced by CG-72's review, not caused by it.** `_finish` calls `self._log.record(...)` **before** the job leaves `_jobs`, and the delivered path never advances `next_attempt_at`. `DeliveryLog.record` does raw `mkdir`/`open`/`write` with **no guard** — so an `OSError` there propagates out of `process_due` with the job still due, and the next pass **sends it again**, once a second, forever. A disk-full condition becomes an unbounded send storm against Google: exactly the failure `_journal_write`'s docstring exists to prevent for the journal, on the one write path that never got it. Severity **HIGH on impact, low on likelihood**. No plan yet |
 | **CG-71** · four `.start()`, zero `.stop()` — the runtime has no shutdown path | 📋 queued | CG-68's deferred L4, **measured and found broader**: not the retention row's missing cleanup but four threads with no shutdown path at all. ⚠ **`uvicorn.run()` does not return on SIGTERM** — a `try/finally` is a measured no-op. Depends on **CG-72** (same two classes; must not run concurrently). [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §5 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part B |
 | **CG-73** · five print/persist sites bypass CG-29's allowlist | 📋 queued | Filed by CG-71's Planner, **not folded in**. `retention.py` uses `describe_exception`; `delivery.py` (×2 printed, ×2 **persisted to the delivery log**) and `heartbeat.py` (×1) interpolate a raw `{exc}`. **Drift in a hard-rule-#2 control, not a proven leak** — stated at that confidence. `test_error_surfaces.py` cannot see it: it reads construction sites of *marked* classes; these are print sites of unmarked ones. No plan yet. Spec §7 |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
@@ -2097,7 +2135,58 @@ for a set of files that is **empty today**.
 
 ---
 
-### CG-72 · `/healthz` cannot see two of the four threads  📋 queued · **sequence before CG-71**
+### CG-72 · `/healthz` cannot see two of the four threads  ✅ done (#56)
+
+⚠ **Shipped 2026-08-02. Suite 314 → 324** (re-measured on `3526d50` before starting;
+never copied from a row). Everything below is the row as filed; what actually
+shipped, and the two review findings that changed it, are recorded after it.
+
+**Proven, not asserted.** Both threads were killed in a **real** `uvicorn`
+server through the hole `is_alive()`'s docstring names — an exception raised
+inside `_run`'s own handler (its `__str__` raises, which is what a `print()` to a
+closed stdout does), **not** `.stop()`. Same fault, same harness, both sides:
+
+| | `main` @`3526d50` | this branch |
+|---|---|---|
+| `status` | **`ok`** | **`degraded`** |
+| `reasons` | `[]` | one per dead thread, no more |
+| `delivery.thread_alive` | *field does not exist* | `false` |
+| `heartbeats.last_scan_at` | frozen at a real timestamp | frozen — **and now labelled** |
+
+The four states are distinguishable at the endpoint, which was the whole point:
+never-started `(False, False)` → **silence**; running `(True, True)` → silence;
+started-then-died `(True, False)` → one reason; alive-but-stale → a *different*
+one reason. Note the third case shipped with `seconds_since_last_pass: 0.0` — a
+perfectly healthy staleness number on a dead thread, which is exactly why
+`thread_alive` is not redundant with the timestamp.
+
+**Review: 0 HIGH, 3 MEDIUM, 6 LOW.** Two are worth carrying forward:
+
+- **M1 — the sentence that outlived its evidence.** Both new staleness reasons
+  said *"passes are neither completing nor raising, so it is wedged rather than
+  erroring."* That wording was copied from the subscriber and retention chains,
+  where it is true **only because a failure-counter branch sits above it**.
+  `Dispatcher` and `HeartbeatMonitor` count nothing, so the claim arrived without
+  the thing that made it true — a `/healthz` string telling an operator the
+  opposite of what the console was saying, on the endpoint whose charter is not
+  doing that. Reworded to *"either WEDGED or RAISING"* with a pointer to the
+  console line; the counters are **CG-74**.
+- **M2 — the plan's micro-optimisation that changed a meaning.** The plan said
+  *"`now` is already bound at the top of `process_due`; do not call `self._now()`
+  a second time"*, so `last_pass_at` published when the pass **began** while
+  `__init__`'s docstring, the integration guide and this row's own 600s budget
+  arithmetic all defined it as when the pass **completed** — halving the budget's
+  real headroom and making this the one place the row invented a fourth idiom
+  while naming the two classes it was copying. One line; deviation recorded at
+  the code comment, which is its one home.
+
+**L3 was signed off by the user during this row and deliberately NOT built** —
+it is Part B's. Recorded with its reasoning and a blast-radius check in the
+[plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md).
+
+---
+
+#### The row as filed  · **sequenced before CG-71**
 
 | | |
 |---|---|

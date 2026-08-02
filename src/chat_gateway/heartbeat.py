@@ -176,6 +176,9 @@ class HeartbeatMonitor:
         self._repeat = repeat_s
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        #: Was `start()` ever called? NOT cleared by `stop()`. See
+        #: `Dispatcher.started` — identical contract, identical reasoning.
+        self._started = False
         self.last_scan_at: dt.datetime | None = None
 
     def scan_once(self) -> int:
@@ -191,6 +194,36 @@ class HeartbeatMonitor:
         self.last_scan_at = dt.datetime.now(dt.timezone.utc)
         return len(fired)
 
+    @property
+    def interval_seconds(self) -> float:
+        """The configured scan interval, readable by `/healthz`.
+
+        Public for the reason `RetentionSweeper.interval_seconds` gives:
+        staleness is judgeable only relative to how often this loop is supposed
+        to run, and `service.py` must not hardcode a copy that drifts from the
+        constructor argument (`create_app`'s `monitor_interval` is settable).
+        """
+        return self._interval
+
+    @property
+    def started(self) -> bool:
+        """Was `start()` ever called? NOT cleared by `stop()`."""
+        return self._started
+
+    def is_alive(self) -> bool:
+        """Is the scan thread actually running right now?
+
+        Hard rule #5, and on this class it is the dead-man switch's own dead-man
+        switch. `_run` survives what `scan_once` raises; it does not survive
+        what its own handler raises. A dead scan thread leaves `last_scan_at`
+        frozen at a REAL timestamp and `missed` frozen at a real count, which is
+        precisely why it looks healthy — and every heartbeat check registered by
+        every consumer silently stops being evaluated. aitrader's contract
+        surface is a dead-man monitor; one that dies quietly is the worst
+        available failure of that feature.
+        """
+        return self._thread is not None and self._thread.is_alive()
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
@@ -201,6 +234,7 @@ class HeartbeatMonitor:
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="heartbeat-monitor", daemon=True)
+        self._started = True
         self._thread.start()
 
     def stop(self) -> None:
