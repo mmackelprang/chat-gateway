@@ -870,6 +870,26 @@ shipped with **0** on that check, `src/` at 4 = 4, `CLAUDE.md` at 8 = 8,
 whole-diff count read 103 → 105 and would have sent a Builder hunting. **Both
 numbers were true; only one of them was about the ledger.**
 
+**AND THE REFINED CHECK NOW TRIPS ON ITSELF — expect 1, not 0, and here is
+which line it is.** The `0` above was measured before the code block three lines
+up existed. Committing it put a line into the branch's diff that contains a
+warning sign and both flag words *inside a grep pattern*, so the check matches
+its own text. That is the same class of false positive as the per-file count it
+was written to replace, arriving one level deeper, and it is worth leaving
+standing rather than escaping the pattern: **a guard that cannot be tripped by
+its own documentation teaches nothing, and this one now demonstrates the trap
+in the act of describing it.** To see *which* line, swap that command's `-c` for
+`-n` — it prints the hit, and the hit is the code block above and nothing else.
+Re-run it that way rather than adding a second copy of the pattern to this file;
+one self-match is a demonstration, two is a mess.
+
+Found by CG-72's pre-merge review, which ran the check as specified and got 1.
+What settled it there was the per-file form, run on the annotation as it really
+appears — a warning sign, a space, then the flag word — over every changed file:
+identical on both sides of every row, and a repo-wide total identical at 87.
+**Run both. Neither is sufficient alone, which is the whole lesson of this
+section.**
+
 **UAT, and it must be a real process — a unit test cannot prove B2.** Run
 `python3 -m chat_gateway serve` against a scratch state dir, `kill -TERM` it, and
 confirm the shutdown hook's effects appear before the process dies. If nothing
