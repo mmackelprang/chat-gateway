@@ -441,6 +441,97 @@ def test_healthz_inbox_quarantine_fields_exist_without_a_quarantine_dir(env):
     assert inbox_block["quarantine_write_errors"] == 0
 
 
+# --- CG-68: the retention sweeper at /healthz --------------------------------
+
+def _app_with_sweeper(tmp_path, monkeypatch, sweeper=None):
+    """The file's own idiom (REGISTRY_YAML + a monkeypatched key env), with one
+    knob. Not a refactor of the tests above — they build their own inboxes and
+    journals, and folding them onto a shared helper would hide exactly the
+    per-test wiring those tests exist to exercise."""
+    monkeypatch.setenv("SVC_KEY_AITEAM", "cgk_test_key")
+    monkeypatch.setenv("SVC_HOOK_FW", "https://x.example/hook")
+    p = tmp_path / "r.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+    app = create_app(load_registry(p), Inbox(), {"webhook": FakeAdapter()},
+                     sweeper=sweeper)
+    return TestClient(app)
+
+
+def test_healthz_answers_when_no_sweeper_is_configured(tmp_path, monkeypatch):
+    """Audit F0: this raised KeyError, taking the whole endpoint down. Every
+    offline caller builds an app without a sweeper, so the reasons block has to
+    bind-then-gate rather than index the else-branch."""
+    resp = _app_with_sweeper(tmp_path, monkeypatch).get("/healthz")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["retention"] == {"enabled": False, "note": "no sweeper configured"}
+    assert body["status"] == "ok"
+
+
+def test_healthz_degrades_on_a_sweeper_that_stopped_working(tmp_path, monkeypatch):
+    from chat_gateway.retention import RetentionSweeper
+
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    s.sweep_failures = 2
+    s.last_sweep_error = "PermissionError"
+    body = _app_with_sweeper(tmp_path, monkeypatch, s).get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("sweep pass(es) FAILED" in r for r in body["reasons"])
+
+
+def test_healthz_degrades_when_an_audit_file_could_not_be_removed(tmp_path, monkeypatch):
+    """The other half of the split: one file the OS refused is a trail growing
+    past its stated window, which is a different investigation from the whole
+    pass dying."""
+    from chat_gateway.retention import RetentionSweeper
+
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    s.errors = 3
+    body = _app_with_sweeper(tmp_path, monkeypatch, s).get("/healthz").json()
+    assert body["status"] == "degraded"
+    assert any("could not be removed" in r for r in body["reasons"])
+
+
+def test_healthz_does_not_degrade_merely_because_files_were_deleted(tmp_path, monkeypatch):
+    """A retention policy working is not a fault. Same reasoning CLAUDE.md
+    records for `suppressed_opt_out`: degrading on a guarantee doing its job
+    teaches an operator to read `degraded` as normal."""
+    from chat_gateway.retention import RetentionSweeper
+
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    s.deleted = 400
+    body = _app_with_sweeper(tmp_path, monkeypatch, s).get("/healthz").json()
+    assert body["retention"]["files_deleted"] == 400
+    assert body["status"] == "ok"
+    assert not any("retention" in r for r in body["reasons"])
+
+
+def test_healthz_publishes_the_unrouted_floor_from_its_one_home(tmp_path, monkeypatch):
+    """Audit F5: `/healthz` must not re-derive the floor rule. If `window_for`
+    changes and this line does not, the endpoint publishes a window the sweeper
+    stopped using."""
+    from chat_gateway.retention import RetentionSweeper, window_for
+
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    body = _app_with_sweeper(tmp_path, monkeypatch, s).get("/healthz").json()
+    assert body["retention"]["window_days"] == 30
+    assert body["retention"]["unrouted_window_days"] == window_for("_unrouted", 30)
+    assert body["retention"]["unrouted_window_days"] < 30
+
+
+def test_healthz_reports_a_disabled_window_as_disabled_not_absent(tmp_path, monkeypatch):
+    """`0` is the documented escape hatch, and an operator who set it needs to
+    see that it took — a sweeper that is present but pruning nothing must not
+    read the same as no sweeper at all."""
+    from chat_gateway.retention import RetentionSweeper
+
+    s = RetentionSweeper(tmp_path / "inbox-data", days=0)
+    body = _app_with_sweeper(tmp_path, monkeypatch, s).get("/healthz").json()
+    assert body["retention"]["enabled"] is False
+    assert body["retention"]["window_days"] == 0
+    assert "note" not in body["retention"]
+
+
 # --- CG-12: suppression is visible, bare, and not a fault --------------------
 
 # A registry whose only owner of `spaces/SECRETSPACE` will never serve it — the

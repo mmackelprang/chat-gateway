@@ -34,6 +34,7 @@ from .heartbeat import (
 from .inbox import Inbox
 from .notifications import Deduper, Notification, render
 from .registry import Registry, RegistryError
+from .retention import window_for
 
 
 #: Where a producer's card must point its `onClick.action.function` for the
@@ -145,6 +146,10 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                dispatcher: Dispatcher | None = None,
                deduper: Deduper | None = None,
                heartbeats: HeartbeatStore | None = None,
+               # CG-68. Opt-in and defaulting to None, the same posture as
+               # `dispatcher` and `subscriber`: every offline test builds an app
+               # without one, and /healthz must answer 200 for those (audit F0).
+               sweeper: Any | None = None,
                monitor_interval: float = 60.0) -> FastAPI:
     """`adapters` maps identity mode -> adapter with .send(identity, message)."""
 
@@ -199,6 +204,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     app.state.monitor = monitor
     app.state.delivery_log = log
     app.state.heartbeats = checks
+    app.state.sweeper = sweeper
 
     # -- raw envelope send (synchronous; aiteam notify.py path) ---------------
     @app.post("/v1/messages", response_model=DeliveryResult)
@@ -446,6 +452,38 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 if subscriber is not None
                 else {"enabled": False, "note": "tier 2 not enabled (GATEWAY_ENABLE_PUBSUB=0)"}
             ),
+            # CG-68 / ADR-0002 D5. Rule #5 does not distinguish work DROPPED
+            # from work DELETED: a deletion path running against a directory of
+            # message bodies has to be as legible as the queue counters above.
+            "retention": (
+                {"enabled": sweeper.days > 0,
+                 "window_days": sweeper.days,
+                 # `window_for`, not a second `min(...)` (audit F5). The floor
+                 # rule has ONE home; re-deriving it here is how /healthz ends
+                 # up publishing a window the sweeper stopped using. CLAUDE.md's
+                 # test count is this repo's own worked example.
+                 "unrouted_window_days": window_for("_unrouted", sweeper.days),
+                 # DELIBERATELY not an input to `status`, at any magnitude —
+                 # same reasoning CLAUDE.md records for `suppressed_opt_out`. A
+                 # retention policy working is not a fault, and degrading on it
+                 # teaches an operator that "degraded" is the normal reading.
+                 "files_deleted": sweeper.deleted,
+                 "delete_errors": sweeper.errors,
+                 # CG-68 audit F3. `last_sweep_at` alone could not tell an idle
+                 # sweeper from a dead one, and a raising sweep was printed but
+                 # never counted — so the three fields below travel together.
+                 "sweep_failures": sweeper.sweep_failures,
+                 # A TYPE NAME, never a filesystem path — this endpoint is
+                 # UNAUTHENTICATED, and `str(OSError)` from a failed unlink
+                 # embeds the absolute path of a file named after a tenant.
+                 # `_run` builds this through `describe_exception` (CG-29's
+                 # allowlist, audit F4), which is what makes printing it here
+                 # and interpolating it into a `reasons` line safe.
+                 "last_sweep_error": sweeper.last_sweep_error,
+                 "last_sweep_at": sweeper.last_sweep_at}
+                if sweeper is not None
+                else {"enabled": False, "note": "no sweeper configured"}
+            ),
         }
 
         reasons: list[str] = []
@@ -519,6 +557,28 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "— boot compaction already removed the records, so the next "
                 "restart clears it"
             )
+        # CG-68. BIND THEN GATE ON `enabled` — the else-branch above has no
+        # `delete_errors` key, and indexing it unconditionally raised KeyError
+        # on every app built without a sweeper, which is the normal offline
+        # case (audit F0, HIGH). The endpoint hard rule #5 exists to keep honest
+        # would not have answered at all. Same two-branch shape, same idiom, as
+        # the `subscriber` block below.
+        ret = body["retention"]
+        if ret["enabled"]:
+            if ret["delete_errors"]:
+                reasons.append(
+                    f"retention: {ret['delete_errors']} audit file(s) could not "
+                    "be removed — the inbound audit trail is growing past its "
+                    "stated window. Check the inbox dir's permissions"
+                )
+            if ret["sweep_failures"]:
+                reasons.append(
+                    f"retention: {ret['sweep_failures']} sweep pass(es) FAILED "
+                    f"({ret['last_sweep_error']}) — nothing is being pruned, so "
+                    "`files_deleted` and `delete_errors` are both sitting at a "
+                    "reassuring number while the window is not being enforced. "
+                    "The audit trail holds message text and sender addresses"
+                )
         sub = body["subscriber"]
         if sub["enabled"]:
             if sub["last_poll_at"] is None:
