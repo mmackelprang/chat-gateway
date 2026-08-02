@@ -776,10 +776,13 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         #
         # So both strings state the disjunction and hand the operator the one
         # place the difference IS visible — `_run`'s console line. Adding the
-        # failure counters that would let /healthz answer it *here* belongs to a
-        # queue row of its own: it is a new degrade input on an endpoint
-        # consumers alarm on, which is a decision, not a wording fix. Until one
-        # lands, honest ambiguity beats a confident wrong answer.
+        # failure counters that would let /healthz answer it *here* is CG-74,
+        # filed by this row's Builder off this row's own review: it is a new
+        # degrade input on an endpoint consumers alarm on, which is a decision,
+        # not a wording fix. Until it lands, honest ambiguity beats a confident
+        # wrong answer — and when it lands, BOTH strings above must lose their
+        # "counts no failures" clause, which is why that clause names the gap
+        # rather than merely hedging.
         if queue["thread_started"] and not queue["thread_alive"]:
             reasons.append(
                 "delivery: the dispatch thread was started and is NOT RUNNING — "
