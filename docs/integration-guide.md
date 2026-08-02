@@ -414,10 +414,21 @@ curl -s $GW/healthz                     # honest health — no auth required
 This is where the queue journals — and, since 2026-08-02, the retention sweeper,
 the outbound dispatcher and the heartbeat monitor — report themselves **to you**.
 A boot line on the gateway's console says some of it as well, but that is the
-operator's copy and you cannot read it. **Nine** fields arrived with the journals
-on 2026-07-31, **fifteen** with the sweeper, and **twelve** with the two thread
-liveness blocks on 2026-08-02; **seventeen of the thirty-six can flip `status` to
-`degraded`** — so a consumer that alarms on `status` should know what they mean
+operator's copy and you cannot read it. The table below has **thirty-six** rows:
+**nine** arrived with the journals on 2026-07-31, **fifteen** with the sweeper,
+and **twelve** with the two thread liveness blocks on 2026-08-02 — though only
+**eleven** of that last twelve are new **keys** in the body.
+`heartbeats.last_scan_at` was already published and is documented for the first
+time here, because it is the row that made a dead monitor look healthy. If you
+diff the JSON across that date you will see eleven additions, not twelve; the
+distinction is rows-in-this-table versus fields-in-the-response.
+
+Of the thirty-six rows, **fourteen carry `**yes**` in the Degrades? column**.
+Counted as *fields* the number is **seventeen**, and both are right: each of the
+three liveness triples (`delivery.*`, `retention.*`, `heartbeats.*`) is read in
+**combination**, so its `thread_started` row — marked *"no on its own"* — is part
+of the judgement that degrades. Fourteen is what the column says; seventeen is
+what participates. A consumer that alarms on `status` should know what they mean
 before one fires at 03:00. `status` is computed **from** `reasons`: anything that
 can degrade this endpoint says so in words, because a number nobody reads is not
 honest health.
@@ -445,7 +456,7 @@ contract.
 | `delivery.thread_started` | whether that thread was ever started. Read **with** the row above: alone, "not alive" cannot tell a dispatcher that was never started from one that died, and only the second is a fault | no on its own |
 | `delivery.last_pass_at` | when a dispatch pass last **completed**. A pass that found nothing due **still stamps it** — deliberately, because at this gateway's traffic shape almost every pass is empty, and if only a non-empty pass stamped then "healthy and idle" would be byte-identical to "the thread is dead" for hours | no |
 | `delivery.seconds_since_last_pass` | how stale `last_pass_at` is, as a **number**. `null` before the first pass | **yes** — past the budget below |
-| `delivery.stale_after_seconds` | the silence budget: **600s**, and deliberately looser than the poll loop's. `process_due` walks due jobs sequentially and each send is bounded only by its 30s client timeout, so a backlog all timing out holds the timestamp still while the dispatcher works perfectly. Ten minutes to notice a dead delivery thread is the price of not crying wolf at every slow Google call — and it is bought against a baseline of **never noticing at all** | no |
+| `delivery.stale_after_seconds` | the silence budget: **600s**, and deliberately looser than the poll loop's. `process_due` walks due jobs sequentially and each send is bounded by a 30s client timeout — plus, for `mode: app` sends, a token refresh that runs on google-auth's own transport and is **not** bounded by it (no number is published for that leg because none has been measured). So a backlog all timing out holds the timestamp still while the dispatcher works perfectly. Ten minutes to notice a dead delivery thread is the price of not crying wolf at every slow Google call — and it is bought against a baseline of **never noticing at all** | no |
 | `delivery.pass_interval_seconds` | the interval the budget is derived from — one second | no |
 | `retention.enabled` | whether the audit trail is being pruned at all. `false` means either no sweeper is wired or the window is `0` — the two are distinguishable: only the first carries a `note` and omits every field below | no |
 | `retention.window_days` | the tenant window actually in force on this deployment, in days. Read this rather than assuming the 30-day default — it is one env var | no |
@@ -473,10 +484,14 @@ Four things the field names do not tell you:
 
 - **Two of the `delivery.*` fields count both queues.**
   `journal_skipped_lines` and `journal_write_errors` are sums across the
-  outbound *and* inbox journals — despite the prefix. The other three
+  outbound *and* inbox journals — despite the prefix. The other **nine**
   `delivery.*` fields, and **all four** `inbox.*` fields, are per-queue exactly
-  as their prefixes say. Do not read the prefix as a guarantee on those two.
-- **Seventeen degrading fields, and the map to `reasons` lines is one-to-one in
+  as their prefixes say — including the six added on 2026-08-02, which describe
+  the outbound dispatch thread and nothing else. (This read *"the other three"*
+  until that date, which was true of the five-row block it was written for.) Do
+  not read the prefix as a guarantee on those two.
+- **Seventeen degrading fields — the field count from above, not the fourteen
+  rows the column marks — and the map to `reasons` lines is one-to-one in
   neither direction.** `expired_at_boot` and `unroutable_at_boot` share one
   entry: both mean "queued, then not delivered", and one investigation reads
   them together. In the other direction the `retention.*` liveness fields —
@@ -488,10 +503,13 @@ Four things the field names do not tell you:
   guarantee — which is why they are three rows each rather than one, and why you
   should alarm on `status` rather than on any single row. (It was five fields and
   four lines until 2026-07-31; `quarantine_write_errors` added one of each,
-  `retention.*` added more on 2026-08-02, and the two thread blocks added six
-  fields and two lines the same day. Recount against `service.py` rather than
-  trusting this sentence — a copied count is what `CLAUDE.md`'s test-count note
-  is about.)
+  `retention.*` added five fields and three lines on 2026-08-02, and the two
+  thread blocks added six fields and two lines the same day — 17 and 10. Recount
+  against `service.py`'s `reasons` chain rather than trusting this sentence — a
+  copied count is what `CLAUDE.md`'s test-count note is about — but count the way
+  this table does, or you will land on a third number: **fields that participate
+  in a degrade**, which includes each triple's `thread_started`, and **`reasons`
+  entries**, of which a triple can emit at most one.)
 - **`retention.*` is about the audit trail, not about your queue.** Everything
   else in this table describes work that was queued and might have been lost.
   These describe a file being **deleted on schedule**, which is the intended

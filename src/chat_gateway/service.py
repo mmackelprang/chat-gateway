@@ -75,17 +75,31 @@ POLL_STALE_INTERVAL_MULTIPLE = 6
 #:
 #: The floor is chosen against a real bound, as `POLL_STALE_AFTER_SECONDS`'s is,
 #: and the bound here is worse: `process_due` walks every due job SEQUENTIALLY
-#: and each `adapter.send` is bounded only by its client timeout — 30s for both
-#: `webhook` and `chat_api`. A backlog of N jobs all timing out therefore holds
-#: `last_pass_at` still for ~30N seconds while the dispatcher is working
-#: perfectly. 600s clears twenty consecutive timing-out sends, which is far past
-#: any realistic pass at this gateway's traffic shape (tens of messages a day,
-#: journal.py) and is still one dashboard refresh rather than eleven days.
+#: and each `adapter.send` is bounded by a 30s client timeout — plus, for
+#: `chat_api`, a token refresh that is NOT bounded by it. `send` evaluates
+#: `self._tokens()` inside the `headers=` argument, i.e. before `client.post` is
+#: entered, and `GoogleServiceAccountTokens.__call__` refreshes on google-auth's
+#: own transport, which the httpx timeout does not reach. No number is quoted
+#: for that leg because none has been measured — it is named so a reader does
+#: not take 30s as the whole of a send. A backlog of N jobs all timing out
+#: therefore holds `last_pass_at` still for at least ~30N seconds while the
+#: dispatcher is working perfectly. 600s clears twenty consecutive timing-out
+#: sends, which is far past any realistic pass at this gateway's traffic shape
+#: (tens of messages a day, journal.py) and is still one dashboard refresh
+#: rather than eleven days.
 #:
 #: Stated rather than glossed: this is a LOOSER detector than the subscriber's.
 #: Ten minutes to notice a dead delivery thread is the price of not crying wolf
 #: at every slow Google call, and it is bought against a baseline of NEVER.
 DISPATCH_STALE_AFTER_SECONDS = 600.0
+#: INERT AT TODAY'S INTERVAL, and carried anyway — the one constant in this file
+#: whose multiple never wins. `Dispatcher.interval_seconds` returns the module
+#: constant `PASS_INTERVAL_S` (1.0) and is not per-instance settable, unlike the
+#: sweeper's and the monitor's, so `max(600.0, 60 * 1.0)` is always the floor.
+#: It exists so the budget still tracks the loop if `PASS_INTERVAL_S` ever
+#: moves: at a 10s pass the floor stops meaning "twenty timing-out sends" and
+#: this takes over. Deleting it would leave a bare 600.0 with nothing tying it
+#: to the interval it was derived from.
 DISPATCH_STALE_INTERVAL_MULTIPLE = 60
 
 #: Silence before /healthz calls the HEARTBEAT MONITOR dead. `scan_once` does no
