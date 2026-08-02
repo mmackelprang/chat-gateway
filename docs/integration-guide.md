@@ -414,12 +414,12 @@ curl -s $GW/healthz                     # honest health — no auth required
 This is where the queue journals — and, since 2026-08-02, the retention
 sweeper — report themselves **to you**. A boot line on the gateway's console
 says some of it as well, but that is the operator's copy and you cannot read
-it. **Nine** fields arrived with the journals on 2026-07-31 and **eight more**
-with the sweeper; **eight of the seventeen can flip `status` to `degraded`** —
-so a consumer that alarms on `status` should know what they mean before one
-fires at 03:00. `status` is computed **from** `reasons`: anything that can
-degrade this endpoint says so in words, because a number nobody reads is not
-honest health.
+it. **Nine** fields arrived with the journals on 2026-07-31 and **fifteen** with
+the sweeper; **eleven of the twenty-four can flip `status` to `degraded`** — so
+a consumer that alarms on `status` should know what they mean before one fires
+at 03:00. `status` is computed **from** `reasons`: anything that can degrade
+this endpoint says so in words, because a number nobody reads is not honest
+health.
 
 | Field | What it means | Degrades? |
 |---|---|---|
@@ -436,10 +436,17 @@ honest health.
 | `retention.window_days` | the tenant window actually in force on this deployment, in days. Read this rather than assuming the 30-day default — it is one env var | no |
 | `retention.unrouted_window_days` | the shorter floor applied to the gateway's own `_unrouted` bucket. Not per-tenant policy: `_unrouted` holds unattributable events that answer to nobody | no |
 | `retention.files_deleted` | day-files pruned since this process started. **Deliberately not a fault at any magnitude** — a retention policy working is not a failure, and degrading on it would teach you to ignore `degraded` | no — the feature working |
-| `retention.delete_errors` | day-files the OS **refused** to unlink. The trail is growing past the window this guide states, so the retention promise above is not currently being kept | **yes** |
-| `retention.sweep_failures` | whole sweep passes that **raised**. Louder than the row above: nothing is being pruned, so `files_deleted` and `delete_errors` both sit at a reassuring number while the window is not enforced at all | **yes** |
-| `retention.last_sweep_error` | the exception **type** from the last failed pass — a type name, never a path. Companion to the row above, not an independent signal | no — reported with `sweep_failures` |
-| `retention.last_sweep_at` | when a pass last **completed**. A pass over a directory that does not exist still stamps this, so `null` on a running gateway means the sweeps are not happening, not that there was nothing to do | no |
+| `retention.audit_dir_configured` | whether there is an audit directory to sweep at all. `false` means the deployment keeps **no** inbound audit trail (`CHAT_GATEWAY_INBOX_DIR` empty), which is a different fact from an empty window — without this row, `files_deleted: 0` reads the same for both | no |
+| `retention.delete_errors` | day-files the OS **refused** to unlink. The trail is growing past the window this guide states, so the retention promise above is not currently being kept. **Cumulative and does not reset** — a file the OS refused is still sitting there past its window until a human intervenes | **yes** |
+| `retention.sweep_failures` | whole sweep passes that **raised**, over the life of the process. History, not a live fault: read it beside the row below, which is the one that degrades | no — see the next row |
+| `retention.consecutive_sweep_failures` | sweep passes that have raised **since the last good one**, so it returns to `0` on recovery. Louder than `delete_errors`: nothing is being pruned at all, so `files_deleted` and `delete_errors` both sit at a reassuring number while the window is not enforced | **yes** |
+| `retention.last_sweep_error` | the exception **type** from the last failed pass — a type name, never a path. Companion to the row above, not an independent signal, and cleared on recovery | no — reported with the row above |
+| `retention.last_sweep_at` | when a pass last **completed**. A pass that found nothing — no directory yet, or none configured — still stamps it, so this is **not** how you spot a dead sweeper: a dead one leaves a real, frozen, non-`null` timestamp here. Use the four rows below | no |
+| `retention.thread_alive` | whether the sweep thread is running **right now**. The direct signal; every counter above only says what happened when a pass last ran | **yes** — read with `thread_started` |
+| `retention.thread_started` | whether the thread was ever started. Read **with** the row above: alone, "not alive" cannot tell a sweeper that was never started from one that died, and only the second is a fault | no on its own |
+| `retention.seconds_since_last_sweep` | how stale `last_sweep_at` is, as a **number** rather than two timestamps for you to subtract. `null` before the first pass | **yes** — past the budget below |
+| `retention.stale_after_seconds` | the silence budget: twice the sweep interval. Published so the row above is checkable rather than magic | no |
+| `retention.sweep_interval_seconds` | the configured interval the budget is derived from — six hours by default | no |
 
 Four things the field names do not tell you:
 
@@ -448,14 +455,17 @@ Four things the field names do not tell you:
   outbound *and* inbox journals — despite the prefix. The other three
   `delivery.*` fields, and **all four** `inbox.*` fields, are per-queue exactly
   as their prefixes say. Do not read the prefix as a guarantee on those two.
-- **Eight degrading fields, seven `reasons` lines.** `expired_at_boot` and
-  `unroutable_at_boot` share one entry: both mean "queued, then not delivered",
-  and one investigation reads them together. (It was five and four until
-  2026-07-31; `quarantine_write_errors` added one of each, and the two
-  `retention.*` faults added one each on 2026-08-02 — they do **not** share a
-  line, because one file the OS refused and the whole pass dying are different
-  investigations. Recount against `service.py` rather than trusting this
-  sentence — a copied count is what `CLAUDE.md`'s test-count note is about.)
+- **Eleven degrading fields, and the map to `reasons` lines is one-to-one in
+  neither direction.** `expired_at_boot` and `unroutable_at_boot` share one
+  entry: both mean "queued, then not delivered", and one investigation reads
+  them together. In the other direction the three `retention.*` liveness fields
+  — `thread_started`, `thread_alive`, `seconds_since_last_sweep` — are read in
+  **combination**, and produce exactly **one** entry between them at any moment:
+  a dead thread also looks stale, and one fault must not print two reasons. (It
+  was five fields and four lines until 2026-07-31; `quarantine_write_errors`
+  added one of each, and `retention.*` added the rest on 2026-08-02. Recount
+  against `service.py` rather than trusting this sentence — a copied count is
+  what `CLAUDE.md`'s test-count note is about.)
 - **`retention.*` is about the audit trail, not about your queue.** Everything
   else in this table describes work that was queued and might have been lost.
   These describe a file being **deleted on schedule**, which is the intended

@@ -34,7 +34,7 @@ from .heartbeat import (
 from .inbox import Inbox
 from .notifications import Deduper, Notification, render
 from .registry import Registry, RegistryError
-from .retention import window_for
+from .retention import SWEEP_STALE_INTERVAL_MULTIPLE, window_for
 
 
 #: Where a producer's card must point its `onClick.action.function` for the
@@ -76,6 +76,16 @@ def _stale_after(subscriber) -> float:
     """Seconds of silence tolerated before the last poll is called stale."""
     return max(POLL_STALE_AFTER_SECONDS,
                POLL_STALE_INTERVAL_MULTIPLE * subscriber.interval_seconds)
+
+
+def _sweep_stale_after(sweeper) -> float:
+    """Seconds of silence tolerated before the last completed sweep is stale.
+
+    Same shape as `_stale_after` above, no floor beside it. The multiple, and
+    why this loop does not need the floor the poll loop does, live with the
+    constant in `retention.py` — one home, not two.
+    """
+    return SWEEP_STALE_INTERVAL_MULTIPLE * sweeper.interval_seconds
 
 
 def _journal_skipped(dispatch, inbox) -> int:
@@ -469,10 +479,24 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                  # teaches an operator that "degraded" is the normal reading.
                  "files_deleted": sweeper.deleted,
                  "delete_errors": sweeper.errors,
+                 # Whether there is an audit directory to sweep at all. Without
+                 # it, `files_deleted: 0` is the ONLY signal, and it reads
+                 # identically for "no audit trail is configured on this
+                 # deployment" and "the trail is configured and nothing has
+                 # expired yet" (pre-merge review, 2026-08-02). A BOOLEAN, never
+                 # the path: this endpoint is UNAUTHENTICATED.
+                 "audit_dir_configured": sweeper.audit_dir_configured,
                  # CG-68 audit F3. `last_sweep_at` alone could not tell an idle
                  # sweeper from a dead one, and a raising sweep was printed but
-                 # never counted — so the three fields below travel together.
+                 # never counted — so the fields below travel together.
+                 #
+                 # CUMULATIVE, and deliberately NOT what degrades — the same
+                 # relationship `poll_failures` has to `consecutive_poll_failures`
+                 # in the block above. It never returns to zero, so degrading on
+                 # it pinned `status` at `degraded` for the life of the process
+                 # after a single failure that had already recovered.
                  "sweep_failures": sweeper.sweep_failures,
+                 "consecutive_sweep_failures": sweeper.consecutive_sweep_failures,
                  # A TYPE NAME, never a filesystem path — this endpoint is
                  # UNAUTHENTICATED, and `str(OSError)` from a failed unlink
                  # embeds the absolute path of a file named after a tenant.
@@ -480,7 +504,31 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                  # allowlist, audit F4), which is what makes printing it here
                  # and interpolating it into a `reasons` line safe.
                  "last_sweep_error": sweeper.last_sweep_error,
-                 "last_sweep_at": sweeper.last_sweep_at}
+                 "last_sweep_at": (sweeper.last_sweep_at.isoformat()
+                                   if sweeper.last_sweep_at else None),
+                 # DIRECT liveness, exactly as the subscriber block above, and
+                 # for the same reason stated there: every counter describes
+                 # what happened the last time a pass ran, none of them says
+                 # whether a pass will ever run again. `_run`'s `except` covers
+                 # the sweep, not its own handler — a `print()` to a blocked
+                 # stdout escapes the loop and kills the thread with every field
+                 # here frozen at a plausible value.
+                 "thread_alive": sweeper.is_alive(),
+                 # Read WITH the row above, never alone: a loop that was never
+                 # started looks identical to one that died, and only the second
+                 # is a fault. Every offline test builds a sweeper it never
+                 # starts.
+                 "thread_started": sweeper.started,
+                 # A NUMBER, not two timestamps for the reader to subtract. The
+                 # first version of this block published `last_sweep_at` and
+                 # never compared it to the clock, so a three-week-old stamp read
+                 # exactly like a three-second-old one.
+                 "seconds_since_last_sweep": (
+                     round((now - sweeper.last_sweep_at).total_seconds(), 1)
+                     if sweeper.last_sweep_at else None),
+                 "stale_after_seconds": _sweep_stale_after(sweeper),
+                 # Published so the budget above is checkable rather than magic.
+                 "sweep_interval_seconds": sweeper.interval_seconds}
                 if sweeper is not None
                 else {"enabled": False, "note": "no sweeper configured"}
             ),
@@ -513,6 +561,24 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "durable, so a restart will lose or double-send the affected "
                 "entries. Check free space and the state dir's permissions"
             )
+        # CG-68. BIND THEN GATE ON `enabled` — the else-branch of the retention
+        # block has no `delete_errors` key, and indexing it unconditionally
+        # raised KeyError on every app built without a sweeper, which is the
+        # normal offline case (audit F0, HIGH). The endpoint hard rule #5 exists
+        # to keep honest would not have answered at all. Same two-branch shape,
+        # same idiom, as the `subscriber` block below.
+        #
+        # BOUND HERE, above the inbox lines, rather than beside the retention
+        # reasons further down: the two inbox tails describe the retention
+        # window and have to branch on the same flag (pre-merge review,
+        # 2026-08-02). Both asserted deletion unconditionally, so with
+        # `CHAT_GATEWAY_INBOX_RETENTION_DAYS=0` — the documented escape hatch —
+        # or with no sweeper at all, an unauthenticated endpoint told an
+        # operator their last-copy audit file was on a delete timer that is not
+        # running, and pointed at a `window_days` field that does not exist in
+        # the no-sweeper branch. That is Task 14's own defect shape pointed the
+        # other way.
+        ret = body["retention"]
         if body["inbox"]["unrevivable_at_boot"]:
             preserved = body["inbox"]["quarantined_at_boot"]
             # CG-65. The tail BRANCHES on `preserved`, and that is hard rule #5,
@@ -527,8 +593,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             # CG-68 changed the `else` TAIL and nothing else. It read "carries
             # no retention guarantee", which was true on 2026-08-01 and false
             # the moment `retention.py` shipped — an unauthenticated endpoint
-            # describing machinery the process is not running. The conditional
-            # above is untouched: it is the rule-#5 control, not phrasing.
+            # describing machinery the process is not running. The `preserved`
+            # conditional is untouched: it is the rule-#5 control, not phrasing.
+            #
+            # That tail then had to branch a SECOND time, on `ret["enabled"]`,
+            # for the identical reason in the identical direction: the first
+            # version asserted the delete timer unconditionally, so a deployment
+            # that set the window to `0` was told its last copy was being pruned.
+            # Same control, same rule, one more axis.
             reasons.append(
                 f"inbox replay dropped {body['inbox']['unrevivable_at_boot']} "
                 "journalled reply(ies) that no longer parse as an InboundReply — "
@@ -541,7 +613,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                    " — so the per-app JSONL audit under the inbox dir is the "
                    "only record of what arrived, AND THAT FILE IS PRUNED on "
                    "the retention window (retention.window_days above), so it "
-                   "will not be there indefinitely")
+                   "will not be there indefinitely"
+                   if ret["enabled"] else
+                   " — so the per-app JSONL audit under the inbox dir is the "
+                   "only record of what arrived. Pruning is NOT in force on "
+                   "this deployment (retention.enabled above), so that file is "
+                   "not on a delete timer — but nothing else records the reply")
                 + "; the ids are on the boot console"
             )
         if body["inbox"]["quarantine_write_errors"]:
@@ -549,13 +626,23 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             # already failed, so this really IS the last copy — and since this
             # row it has a delete timer on it. "Copy it now" is the actionable
             # half, and it was not sayable while the file was permanent.
+            #
+            # It is sayable only when the timer is RUNNING, which is why this
+            # branches on `ret["enabled"]` too. Urgency an operator cannot act
+            # on is the same defect as a missing warning: it teaches them the
+            # line is boilerplate.
             reasons.append(
                 f"inbox quarantine: {body['inbox']['quarantine_write_errors']} "
                 "write(s) FAILED — at least one unrevivable reply has no "
                 "preserved copy, so the per-app JSONL audit under the inbox dir "
-                "is its only record AND THAT FILE IS ON A DELETE TIMER "
-                "(retention.window_days above). Copy it now if you need it. "
-                "Check free space and the state dir's permissions"
+                "is its only record"
+                + (" AND THAT FILE IS ON A DELETE TIMER "
+                   "(retention.window_days above). Copy it now if you need it."
+                   if ret["enabled"] else
+                   ". Pruning is NOT in force on this deployment "
+                   "(retention.enabled above), so that file is not on a delete "
+                   "timer — it is still the only copy.")
+                + " Check free space and the state dir's permissions"
             )
         if queue["expired_at_boot"] or queue["unroutable_at_boot"]:
             reasons.append(
@@ -569,13 +656,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "— boot compaction already removed the records, so the next "
                 "restart clears it"
             )
-        # CG-68. BIND THEN GATE ON `enabled` — the else-branch above has no
-        # `delete_errors` key, and indexing it unconditionally raised KeyError
-        # on every app built without a sweeper, which is the normal offline
-        # case (audit F0, HIGH). The endpoint hard rule #5 exists to keep honest
-        # would not have answered at all. Same two-branch shape, same idiom, as
-        # the `subscriber` block below.
-        ret = body["retention"]
+        # `ret` is bound above the inbox lines, which need the same flag.
         if ret["enabled"]:
             if ret["delete_errors"]:
                 reasons.append(
@@ -583,13 +664,62 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                     "be removed — the inbound audit trail is growing past its "
                     "stated window. Check the inbox dir's permissions"
                 )
-            if ret["sweep_failures"]:
+            # CONSECUTIVE, not cumulative — the counter that returns to zero on
+            # the next good pass. `sweep_failures` stays in the body as the
+            # lifetime figure and drives nothing, exactly as `poll_failures`
+            # does below. Gating on the cumulative one degraded forever after a
+            # single recovered failure and rendered the already-cleared
+            # `last_sweep_error` as the literal "(None)" while the sweeper was
+            # demonstrably still pruning.
+            if ret["consecutive_sweep_failures"]:
                 reasons.append(
-                    f"retention: {ret['sweep_failures']} sweep pass(es) FAILED "
-                    f"({ret['last_sweep_error']}) — nothing is being pruned, so "
-                    "`files_deleted` and `delete_errors` are both sitting at a "
-                    "reassuring number while the window is not being enforced. "
-                    "The audit trail holds message text and sender addresses"
+                    f"retention: {ret['consecutive_sweep_failures']} consecutive "
+                    f"sweep pass(es) FAILED ({ret['last_sweep_error']}) — nothing "
+                    "is being pruned, so `files_deleted` and `delete_errors` are "
+                    "both sitting at a reassuring number while the window is not "
+                    "being enforced. The audit trail holds message text and "
+                    "sender addresses"
+                )
+            # The two silence checks, in the subscriber block's order and for
+            # the subscriber block's reason: a loop that is loudly failing has a
+            # more actionable reason already, and a dead thread will also look
+            # stale — a dead thread and a frozen timestamp are ONE fault, so
+            # they must not produce two reasons.
+            #
+            # A SWEEPER THAT WAS STARTED AND IS NO LONGER RUNNING moves no
+            # counter and no timestamp, so nothing above can see it. `_run`
+            # catches what `sweep()` raises; it does not catch what its own
+            # handler raises.
+            elif ret["thread_started"] and not ret["thread_alive"]:
+                reasons.append(
+                    "retention: the sweep thread was started and is NOT RUNNING "
+                    "— the audit trail is no longer being pruned and no counter "
+                    "in this block will ever move again. `last_sweep_at` is "
+                    "frozen at a real timestamp, which is why it looks healthy; "
+                    "restart the service"
+                )
+            # ...and a thread that is alive but no longer completing passes.
+            # `seconds_since_last_sweep` is None only before the first pass;
+            # `__main__` sweeps once at boot BEFORE `start()`, so on a real
+            # deployment a started sweeper with no completed pass is itself the
+            # fault, not a startup race.
+            elif ret["thread_started"] and ret["seconds_since_last_sweep"] is None:
+                reasons.append(
+                    "retention: the sweep thread was started but no pass has "
+                    "ever completed — the boot sweep runs before the thread "
+                    "does, so this should be impossible and the window is not "
+                    "being enforced"
+                )
+            elif ret["thread_alive"] and (
+                    ret["seconds_since_last_sweep"] > ret["stale_after_seconds"]):
+                reasons.append(
+                    f"retention: the thread is alive but the last completed "
+                    f"sweep was {ret['seconds_since_last_sweep']}s ago, over the "
+                    f"{ret['stale_after_seconds']}s budget for a "
+                    f"{ret['sweep_interval_seconds']}s-interval loop — passes are "
+                    "neither completing nor raising, so it is wedged rather than "
+                    "erroring. The audit trail holds message text and sender "
+                    "addresses"
                 )
         sub = body["subscriber"]
         if sub["enabled"]:

@@ -401,6 +401,7 @@ def test_healthz_degrades_when_a_quarantine_write_FAILED(tmp_path, monkeypatch):
     just its own number. Two counters, two investigations."""
     from chat_gateway.inbox import Inbox
     from chat_gateway.journal import Journal
+    from chat_gateway.retention import RetentionSweeper
 
     monkeypatch.setenv("SVC_KEY_AITEAM", "cgk_test_key")
     monkeypatch.setenv("SVC_HOOK_FW", "https://x.example/hook")
@@ -413,7 +414,12 @@ def test_healthz_degrades_when_a_quarantine_write_FAILED(tmp_path, monkeypatch):
     blocker.write_text("I am a file, not a directory", encoding="utf-8")
     inbox = Inbox(journal=Journal(jpath), quarantine_dir=blocker / "quarantine")
     inbox.restore()
-    client = TestClient(create_app(load_registry(p), inbox, {"webhook": FakeAdapter()}))
+    # CG-68 pre-merge review: an ENABLED sweeper, because the two tails below
+    # assert a running delete timer. They used to assert it with no sweeper at
+    # all, which is the defect the two tests after this one now pin.
+    sweeper = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    client = TestClient(create_app(load_registry(p), inbox,
+                                   {"webhook": FakeAdapter()}, sweeper=sweeper))
 
     body = client.get("/healthz").json()
     assert body["inbox"]["quarantined_at_boot"] == 0
@@ -483,10 +489,99 @@ def test_healthz_degrades_on_a_sweeper_that_stopped_working(tmp_path, monkeypatc
 
     s = RetentionSweeper(tmp_path / "inbox-data", days=30)
     s.sweep_failures = 2
+    s.consecutive_sweep_failures = 2
     s.last_sweep_error = "PermissionError"
     body = _app_with_sweeper(tmp_path, monkeypatch, s).get("/healthz").json()
     assert body["status"] == "degraded"
-    assert any("sweep pass(es) FAILED" in r for r in body["reasons"])
+    line = next(r for r in body["reasons"] if "sweep pass(es) FAILED" in r)
+    assert "PermissionError" in line
+
+
+def test_healthz_stops_degrading_once_a_sweep_pass_recovers(tmp_path, monkeypatch):
+    """The lifetime counter is history, not a fault. Gating the reason on it
+    pinned `status` at `degraded` for the life of the process after ONE
+    transient failure — and rendered the already-cleared `last_sweep_error` as
+    the literal "(None)" in a line claiming "nothing is being pruned" while the
+    sweeper was demonstrably still pruning. Same split as `poll_failures` vs
+    `consecutive_poll_failures` ten lines below it in `service.py`."""
+    from chat_gateway.retention import RetentionSweeper
+
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    s.sweep_failures = 1              # it DID fail once, and that stays visible
+    s.consecutive_sweep_failures = 0  # ...and then it recovered
+    s.deleted = 12
+    body = _app_with_sweeper(tmp_path, monkeypatch, s).get("/healthz").json()
+    assert body["retention"]["sweep_failures"] == 1
+    assert body["status"] == "ok"
+    assert not any("retention" in r for r in body["reasons"])
+
+
+def test_healthz_degrades_when_the_sweep_thread_died(tmp_path, monkeypatch):
+    """Hard rule #5's founding shape, in the retention block: a dead thread
+    freezes every field here at a plausible value and no counter ever moves
+    again. `last_sweep_at` holds a REAL timestamp, which is what makes it read
+    as healthy — so `null` is not the dead-sweeper signature, a frozen non-null
+    is."""
+    from chat_gateway.retention import RetentionSweeper
+
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    s.last_sweep_at = dt.datetime.now(dt.timezone.utc)
+    s._started = True                 # started, and the thread is not running
+    body = _app_with_sweeper(tmp_path, monkeypatch, s).get("/healthz").json()
+    assert body["retention"]["thread_started"] is True
+    assert body["retention"]["thread_alive"] is False
+    assert body["retention"]["last_sweep_at"] is not None
+    assert body["status"] == "degraded"
+    assert any("NOT RUNNING" in r and "retention" in r for r in body["reasons"])
+
+
+def test_healthz_degrades_when_the_last_sweep_is_past_its_budget(tmp_path, monkeypatch):
+    """`last_sweep_at` was published and never compared to the clock, so a
+    three-week-old stamp read exactly like a three-second-old one."""
+    from chat_gateway.retention import (SWEEP_STALE_INTERVAL_MULTIPLE,
+                                        RetentionSweeper)
+
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30, interval_s=3600)
+    s.last_sweep_at = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=3)
+    s.start()
+    try:
+        body = _app_with_sweeper(tmp_path, monkeypatch, s).get("/healthz").json()
+    finally:
+        s.stop()
+    ret = body["retention"]
+    assert ret["thread_alive"] is True
+    assert ret["stale_after_seconds"] == 3600 * SWEEP_STALE_INTERVAL_MULTIPLE
+    assert ret["seconds_since_last_sweep"] > ret["stale_after_seconds"]
+    assert body["status"] == "degraded"
+    assert any("wedged rather than erroring" in r for r in body["reasons"])
+
+
+def test_healthz_does_not_shout_about_a_sweeper_that_was_never_started(tmp_path,
+                                                                      monkeypatch):
+    """The counterweight to the two tests above, and the reason `thread_started`
+    is published beside `thread_alive`: every offline caller builds a sweeper it
+    never starts, and that is not a fault."""
+    from chat_gateway.retention import RetentionSweeper
+
+    s = RetentionSweeper(tmp_path / "inbox-data", days=30)
+    body = _app_with_sweeper(tmp_path, monkeypatch, s).get("/healthz").json()
+    assert (body["retention"]["thread_started"],
+            body["retention"]["thread_alive"]) == (False, False)
+    assert body["status"] == "ok"
+
+
+def test_healthz_tells_no_audit_dir_apart_from_nothing_to_delete(tmp_path, monkeypatch):
+    """`files_deleted: 0` reads identically for both, and one of them means the
+    audit trail is switched off entirely."""
+    from chat_gateway.retention import RetentionSweeper
+
+    off = _app_with_sweeper(tmp_path, monkeypatch,
+                            RetentionSweeper("", days=30)).get("/healthz").json()
+    assert off["retention"]["audit_dir_configured"] is False
+    on = _app_with_sweeper(tmp_path, monkeypatch,
+                           RetentionSweeper(tmp_path / "inbox-data", days=30)
+                           ).get("/healthz").json()
+    assert on["retention"]["audit_dir_configured"] is True
 
 
 def test_healthz_degrades_when_an_audit_file_could_not_be_removed(tmp_path, monkeypatch):
@@ -527,6 +622,49 @@ def test_healthz_publishes_the_unrouted_floor_from_its_one_home(tmp_path, monkey
     assert body["retention"]["window_days"] == 30
     assert body["retention"]["unrouted_window_days"] == window_for("_unrouted", 30)
     assert body["retention"]["unrouted_window_days"] < 30
+
+
+@pytest.mark.parametrize("window", [None, 0], ids=["no-sweeper", "window-0"])
+def test_healthz_claims_no_delete_timer_when_retention_is_not_in_force(
+        tmp_path, monkeypatch, window):
+    """Task 14's own defect shape, pointed the other way.
+
+    Both tails asserted deletion UNCONDITIONALLY, so an operator running the
+    documented `CHAT_GATEWAY_INBOX_RETENTION_DAYS=0` escape hatch — which
+    "restores pre-CG-68 behaviour exactly" — was told on an unauthenticated
+    endpoint that their last-copy audit file was on a delete timer. With no
+    sweeper at all both lines additionally pointed at `retention.window_days`,
+    a field that does not exist in that branch of the body.
+    """
+    from chat_gateway.inbox import Inbox
+    from chat_gateway.journal import Journal
+    from chat_gateway.retention import RetentionSweeper
+
+    monkeypatch.setenv("SVC_KEY_AITEAM", "cgk_test_key")
+    monkeypatch.setenv("SVC_HOOK_FW", "https://x.example/hook")
+    p = tmp_path / "r.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+
+    jpath = tmp_path / "inbox.jsonl"
+    Journal(jpath).open(1, "inbound", {"app": "aiteam-harness", "NOT": "an InboundReply"})
+    blocker = tmp_path / "blocked"
+    blocker.write_text("I am a file, not a directory", encoding="utf-8")
+    inbox = Inbox(journal=Journal(jpath), quarantine_dir=blocker / "quarantine")
+    inbox.restore()
+    sweeper = (None if window is None
+               else RetentionSweeper(tmp_path / "inbox-data", days=window))
+    body = TestClient(create_app(load_registry(p), inbox,
+                                 {"webhook": FakeAdapter()}, sweeper=sweeper)) \
+        .get("/healthz").json()
+
+    line = next(r for r in body["reasons"] if "no longer parse" in r)
+    q_line = next(r for r in body["reasons"] if "quarantine" in r and "FAILED" in r)
+    for text in (line, q_line):
+        assert "not on a delete timer" in text
+        assert "retention.window_days" not in text   # absent in the None branch
+        assert "IS PRUNED" not in text and "DELETE TIMER" not in text
+        # ...and the Task 14 phrase must not creep back in as the fix for this.
+        assert "carries no retention guarantee" not in text
 
 
 def test_healthz_reports_a_disabled_window_as_disabled_not_absent(tmp_path, monkeypatch):

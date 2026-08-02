@@ -163,9 +163,11 @@ class Inbox:
         **The quarantine file under the state dir is the recovery record** — the
         whole journal record, payload included, is written there before boot
         compaction erases it, and it is never pruned. The per-app JSONL audit
-        beside this queue also holds what arrived, but it is **pruned on a
+        beside this queue also holds what arrived, but it is **subject to a
         time-bounded window** (`retention.py`, CG-68) and must not be relied on
-        as the only copy.
+        as the only copy. *Subject to*, not *pruned on*: whether a sweeper is
+        wired and what window it holds are facts this class cannot see, and `0`
+        disables pruning entirely.
 
         The console line names the id and the exception TYPE, never the record.
         A pydantic `ValidationError` embeds the input it rejected, and an
@@ -192,9 +194,19 @@ class Inbox:
                           + ("the whole record was preserved in the quarantine dir "
                              "under the state dir, which is never pruned"
                              if preserved else
+                             # SUBJECT TO, not IS DELETED ON (pre-merge review,
+                             # 2026-08-02). `Inbox` cannot see whether a sweeper
+                             # exists or what window it holds, and
+                             # `CHAT_GATEWAY_INBOX_RETENTION_DAYS=0` is a
+                             # documented escape hatch — so the unconditional
+                             # form told some deployments their last copy was on
+                             # a timer that is not running. Softened rather than
+                             # coupled: passing the window in here would join two
+                             # modules to dodge a wording problem, and the env
+                             # var's NAME is what Task 13's row asked for.
                              "NO quarantine copy was written — the per-app JSONL "
                              "audit under the inbox dir is the only recovery "
-                             "record, and it is DELETED on the "
+                             "record, and it is subject to the "
                              "CHAT_GATEWAY_INBOX_RETENTION_DAYS window"),
                           flush=True)
                     continue
