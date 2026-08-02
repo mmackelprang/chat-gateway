@@ -759,7 +759,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
 | **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | ✅ done (#52) | Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. Pre-merge review found a **data-loss race** in compact-on-drain — both producers journal the `open` before taking the queue lock, so `compact([])` could erase a record already on disk; fixed by recomputing survivors under the journal's own lock. Suite **247 → 268**. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
-| **CG-68** · time-bounded pruning of the inbound audit trail | 📋 queued | ✅ **decisions approved** (30/7/0, unlink, amend the contract); ✅ **gate released** — CG-65 merged as #52. Answers ADR-0002 §9 **Q6** by amending a **published** guarantee. ⚠ **Plan corrected 2026-08-01** by a pre-execution audit: Tasks 10–13 do **not** carry CG-65's compact-on-drain race, but six neighbours were found — one **HIGH** (`/healthz` `KeyError` with no sweeper) — and **Task 14** was added for five present-tense strings this row inverts, two of them on `/healthz`. Plan Tasks **10–14** |
+| **CG-68** · time-bounded pruning of the inbound audit trail | 🚀 in-flight | ✅ **decisions approved** (30/7/0, unlink, amend the contract); ✅ **gate released** — CG-65 merged as #52. Answers ADR-0002 §9 **Q6** by amending a **published** guarantee. ⚠ **Plan corrected 2026-08-01** by a pre-execution audit: Tasks 10–13 do **not** carry CG-65's compact-on-drain race, but six neighbours were found — one **HIGH** (`/healthz` `KeyError` with no sweeper) — and **Task 14** was added for five present-tense strings this row inverts, two of them on `/healthz`. Plan Tasks **10–14** |
 | **CG-69** · published-promise inventory (process control) | 📋 queued | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. No plan yet |
 | **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued | Filed by CG-65's Builder from its own pre-merge review (LOW), **deferred rather than folded in**. No plan yet |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
@@ -1737,7 +1737,7 @@ secure"; state what reaches disk, for how long, and at what mode.**
 
 ---
 
-### CG-68 · Time-bounded pruning of the inbound audit trail  📋 queued
+### CG-68 · Time-bounded pruning of the inbound audit trail  🚀 in-flight
 
 | | |
 |---|---|
