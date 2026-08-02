@@ -270,7 +270,25 @@ class Dispatcher:
         # tens of messages a day (journal.py), so the overwhelming majority of
         # passes are empty — if only a non-empty pass stamped, "healthy and idle"
         # would be byte-identical to "the thread is dead" for hours at a time.
-        self.last_pass_at = now
+        #
+        # A FRESH READING, not the `now` bound at the top — and this DEVIATES
+        # from the CG-72 plan, which said in as many words "`now` is already
+        # bound at the top of `process_due`; do not call `self._now()` a second
+        # time." That line was written as a micro-optimisation and it silently
+        # changed the field's MEANING: `now` is when the pass BEGAN, and three
+        # separate places in this repo already specify when it COMPLETED —
+        # `__init__`'s docstring on this attribute, the `delivery.last_pass_at`
+        # row in `docs/integration-guide.md`, and the 600s budget's own
+        # arithmetic in `service.py` ("600s clears twenty consecutive timing-out
+        # sends"). With a start-stamp that arithmetic is wrong: observed
+        # staleness peaks at roughly TWICE the pass duration, so the budget
+        # would clear about ten such sends, not twenty. Both sibling classes
+        # take the fresh reading — `RetentionSweeper.sweep` and
+        # `HeartbeatMonitor.scan_once` — so reusing `now` would make this the
+        # one place that invents a fourth idiom while claiming to copy the two
+        # it names. `self._now` is injectable and side-effect-free; calling it
+        # twice costs a clock read.
+        self.last_pass_at = self._now()
         return attempted
 
     def _finish(self, job: Job, status: str, detail: str) -> None:
