@@ -1830,6 +1830,23 @@ half (`0600`) is unaffected and can proceed."*
    a person's message are sensitive, which is rule-#1 territory.
 3. ✅ **Amending the shared contract is signed off**, on the basis that it is
    owed to every consumer rather than to jobhunt alone.
+4. ✅ **Added 2026-08-02, mid-execution — F2's boot guard REFUSES rather than
+   warns.** `RetentionSweeper._check_disjoint` stays **stricter than the
+   non-recursive glob strictly requires**: `CHAT_GATEWAY_INBOX_DIR=state` — an
+   operator putting everything in one place — fails at boot even though
+   `glob("*.jsonl")` would never have descended into `state/quarantine/`.
+   ⚠ **This was the Planner's own judgement call, phrased in the plan as a trade
+   it had chosen, and it sat outside the three sign-offs above** — which is
+   precisely the shape a reviewer softens on the grounds that it is "currently
+   harmless". The user was asked directly and elected refuse. The reasoning they
+   accepted, kept rather than summarized: *"currently harmless" is a property of
+   **one line of code** staying non-recursive.* The day someone reaches for
+   `rglob` for an unrelated reason that safety evaporates silently, and **a
+   warning nobody reads becomes tenant data loss.** Refusing costs one clear
+   boot error naming both env vars; the alternative costs the only copy of
+   replies that were never delivered. Pinned in **both** directions
+   (`test_a_safe_but_all_in_one_layout_is_refused_on_purpose` and
+   `test_the_default_sibling_layout_is_NOT_refused`) so neither half drifts.
 
 ⚠ **What remained was sequencing, not approval — and it is now DONE.** That
 line read *"CG-65 must merge first"*; #52 merged 2026-07-31. Kept as a released
