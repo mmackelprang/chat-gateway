@@ -167,6 +167,30 @@ def _journal_write_errors(dispatch, inbox) -> int:
                for owner in (dispatch, inbox))
 
 
+def _audit_write_errors(dispatch, log) -> int:
+    """Delivery-log audit writes that FAILED, across every log /healthz can reach.
+
+    Two owners rather than one, for the reason `_journal_write_errors` has two —
+    and here the second is not hypothetical. `create_app` builds its own
+    `DeliveryLog` when none is injected (`log = delivery_log or DeliveryLog()`),
+    while an injected `dispatcher` carries whichever log IT was built with, and
+    `create_app(dispatcher=Dispatcher(adapters, other_log))` is a shape the
+    tests already build. Reading one of the two would report zero while the
+    other was losing records.
+
+    Deduped by IDENTITY, so the ordinary case — one object doing both jobs — is
+    not double-counted. `getattr` with a default, like its sibling, so an
+    injected test double without the attribute reads as zero rather than
+    breaking the endpoint (CG-68 audit F0 is what an unconditional lookup on
+    this endpoint costs).
+    """
+    seen: dict[int, object] = {}
+    for owner in (getattr(dispatch, "delivery_log", None), log):
+        if owner is not None:
+            seen[id(owner)] = owner
+    return sum(getattr(owner, "audit_write_errors", 0) for owner in seen.values())
+
+
 def _interaction_config(registry: Registry, app_id: str) -> dict | None:
     """The card convention, published so producers never hardcode it.
 
@@ -432,6 +456,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                          # something. Rule #5.
                          "journal_skipped_lines": _journal_skipped(dispatch, inbox),
                          "journal_write_errors": _journal_write_errors(dispatch, inbox),
+                         # CG-75. Audit-file writes that failed. Sibling of the
+                         # line above and counted for the same reason: this
+                         # write used to RAISE, which turned a full disk into an
+                         # unbounded re-send storm. It no longer raises, so this
+                         # counter is the only thing that says so.
+                         "audit_write_errors": _audit_write_errors(dispatch, log),
                          # CG-72. The third way of judging outbound, and the one
                          # nothing else can substitute for. `pending_jobs` cannot
                          # do it: a dead dispatcher and a busy one both show a
@@ -643,6 +673,16 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "durable, so a restart will lose or double-send the affected "
                 "entries. Check free space and the state dir's permissions"
             )
+        if queue["audit_write_errors"]:
+            reasons.append(
+                f"delivery log: {queue['audit_write_errors']} audit write(s) "
+                "FAILED since start — those deliveries have NO on-disk record, "
+                "and the per-app inbound audit files cannot substitute because "
+                "they record what arrived, never what left. Delivery itself is "
+                "unaffected (the write is deliberately swallowed rather than "
+                "raised, CG-75). CUMULATIVE and will not clear while this "
+                "process runs. Check free space and the state dir's permissions"
+            )
         # CG-68. BIND THEN GATE ON `enabled` — the else-branch of the retention
         # block has no `delete_errors` key, and indexing it unconditionally
         # raised KeyError on every app built without a sweeper, which is the
@@ -761,28 +801,33 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # endpoint whose whole job is not claiming what it has not measured
         # (hard rule #5).
         #
-        # REACHABLE, not theoretical: `DeliveryLog.record` does a raw
-        # `mkdir`/`open`/`write` and is deliberately NOT wrapped by
-        # `_journal_write`, so a full disk raises `OSError` straight out of
-        # `process_due` — and only on passes that HAD work. Both halves of that
-        # are bad in different ways. A job whose send SUCCEEDS raises before it
-        # is removed from `_jobs`, so every pass explodes, the stamp freezes,
-        # and this branch fires with the wrong explanation. A job that is
-        # RETRYING is 30s or more from its next attempt (`BACKOFF_S`), so the
-        # empty passes in between go on stamping, `last_pass_at` never goes
-        # stale, and this branch does not fire at all. `HeartbeatMonitor` meets
-        # the same write through `Dispatcher.enqueue`, with the same
-        # idle-scans-still-stamp split.
+        # REACHABLE, and it WAS reachable through this exact door until CG-75.
+        # `DeliveryLog.record` did a raw `mkdir`/`open`/`write` with no guard, so
+        # a full disk raised `OSError` straight out of `process_due` — and only
+        # on passes that HAD work. Measured at the time: one message, one
+        # successful send, then sixty sends to Google in sixty seconds, because
+        # the job never left `_jobs` and the delivered path never advances
+        # `next_attempt_at`. On the RETRY path the opposite: the raise landed
+        # after the backoff had already been applied, so the job sat 30s or more
+        # from its next attempt, every pass in between was empty, every empty
+        # pass stamped, and this branch did not fire for the whole 72.5-minute
+        # backoff ladder.
         #
-        # So both strings state the disjunction and hand the operator the one
-        # place the difference IS visible — `_run`'s console line. Adding the
-        # failure counters that would let /healthz answer it *here* is CG-74,
-        # filed by this row's Builder off this row's own review: it is a new
-        # degrade input on an endpoint consumers alarm on, which is a decision,
-        # not a wording fix. Until it lands, honest ambiguity beats a confident
-        # wrong answer — and when it lands, BOTH strings above must lose their
-        # "counts no failures" clause, which is why that clause names the gap
-        # rather than merely hedging.
+        # CG-75 closed that door: the audit write is guarded inside
+        # `DeliveryLog.record` and counted at `delivery.audit_write_errors`,
+        # which degrades. A full disk now shows up there and at
+        # `journal_write_errors`, not as a storm and not as silence.
+        #
+        # WHAT IS STILL UNRESOLVED is why these two strings are hedged, and it
+        # is narrower than it was: `Dispatcher` and `HeartbeatMonitor` count no
+        # failed passes at all, so if something ELSE raises out of the loop this
+        # endpoint still cannot tell a wedged loop from a raising one. Adding
+        # those counters is CG-74, filed by this row's Builder off this row's own
+        # review: it is a new degrade input on an endpoint consumers alarm on,
+        # which is a decision, not a wording fix. Until it lands, honest
+        # ambiguity beats a confident wrong answer — and when it lands, BOTH
+        # strings below must lose their "counts no failures" clause, which is why
+        # that clause names the gap rather than merely hedging.
         if queue["thread_started"] and not queue["thread_alive"]:
             reasons.append(
                 "delivery: the dispatch thread was started and is NOT RUNNING — "
@@ -809,9 +854,10 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "block can tell you which, because it counts no failures. The "
                 "gateway's console can: a wedged pass is silent, a raising one "
                 "prints `dispatcher: pass error (will retry)` once a second. A "
-                "send blocked past its client timeout is the wedged shape; a "
-                "full disk, which makes the delivery log's own write raise, is "
-                "the other one"
+                "send blocked past its client timeout is the wedged shape. A "
+                "full disk is NOT the other one any more — since CG-75 it "
+                "raises nowhere in this loop and reports at "
+                "`audit_write_errors` and `journal_write_errors` instead"
             )
         # ...and the dead-man switch's own liveness. Same chain, same order.
         # A heartbeat monitor that has died stops evaluating every consumer's
@@ -840,8 +886,10 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "and nothing in this block can tell you which, because it "
                 "counts no failures. The gateway's console can: a raising scan "
                 "prints `heartbeat: scan error (will retry)` once an interval. "
-                "A scan that fires a check enqueues through the delivery log, "
-                "so a full disk raises there while an idle scan still stamps"
+                "A full disk still raises through a scan that fires a check — "
+                "but through `enqueue`'s journal write, which is unguarded on "
+                "purpose, NOT through the delivery log, which CG-75 guarded. An "
+                "idle scan stamps either way"
             )
         # `ret` is bound above the inbox lines, which need the same flag.
         if ret["enabled"]:
