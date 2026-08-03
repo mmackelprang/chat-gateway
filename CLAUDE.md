@@ -391,6 +391,13 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   a co-owner of the same space *received* that same event, and `events_seen` is
   the event count. Deliberately **not** inputs to `status` — a guarantee working
   is not a fault, and degrading on one teaches an operator to ignore `degraded`.
+  That per-counter verdict is now a standing requirement rather than this
+  bullet's one-off: every counter added since is decided explicitly, one at a
+  time, and the reasoning for the delivery and heartbeat loops' failure counters
+  — including why one of them degrades cumulatively where its twin does not —
+  lives in `docs/superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md`
+  §5, with the field-by-field table in `docs/integration-guide.md`. One home
+  each; do not restate either here.
 - **An exception message is printed in full only if this repo wrote every byte
   of it** (CG-29, 2026-07-30). Hard rule #2 made the subscriber name exceptions
   by TYPE — a pydantic `ValidationError` embeds the input it rejected, and these
