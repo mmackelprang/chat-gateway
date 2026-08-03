@@ -663,7 +663,8 @@ Four properties, each deliberate:
   and it is the exact shape of the `/healthz`-that-lies failure rule #5 exists
   for.
   ⚠ **Re-tested 2026-08-03 against the degrade machinery that did not exist when
-  this was written** (CG-72, CG-74, CG-75, and CG-76 in flight). The obvious
+  this was written** (CG-72, CG-74, CG-75, and CG-76, which landed as #63 the
+  same day this was re-tested). The obvious
   challenge is that `/healthz` is far better at reporting trouble now, so
   "boot degraded and complain loudly" might have become the better option.
   **It has not, and the reason is sharper than the original one.** The channel

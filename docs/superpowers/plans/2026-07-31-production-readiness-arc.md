@@ -774,9 +774,12 @@ Our design does not need that rule, and this row must not be justified by it.
   say what class of thing it exposes, and **link** to the one home: the
   field-by-field table in `docs/integration-guide.md` § *Durability counters at
   `/healthz`*. That table's own counts have been wrong **five** times (CG-69's
-  spec, category (c)) and **CG-76 is in flight right now** adding four degrade
-  inputs and new fields. A list copied here is a list that is wrong the day CG-76
-  lands — the two-homes-for-a-moving-fact trap `CLAUDE.md` opens with.
+  spec, category (c)) and **CG-76 landed as #63 on 2026-08-03**, adding four
+  degrade inputs and new fields — ⚠ *this sentence read "is in flight right now …
+  wrong the day CG-76 lands" and was falsified within hours of being written,
+  which is the point it was making.* A list copied here is a list that is wrong
+  on someone else's schedule — the two-homes-for-a-moving-fact trap `CLAUDE.md`
+  opens with.
 - ⚠ **The D2 tailnet ACL is DEFERRED — corrected 2026-08-03.** This Part said
   *"✅ Decided (D2): the drafted homelab tailnet ACL lands BEFORE this is
   deployed, so the endpoint is fenced from the start."* **That is no longer
@@ -833,19 +836,24 @@ tell "planned" from "ran".
 
 ## A7 · Verify Part A
 
-⚠ **The baseline is 345, not this plan's `202`.** That number moves with every
+⚠ **The baseline is 359, not this plan's `202`.** That number moves with every
 shipped item — **take it from the suite, not from here.** Measured on `main`
-(`4e55368`) 2026-08-03: **345 passed.** Eight PRs merged between this Part being
+(`7086482`) 2026-08-03: **359 passed.** Nine PRs merged between this Part being
 written and being dispatched.
 
+⚠ **This line has now been stale TWICE, hours apart.** It was refreshed to
+`345` (`4e55368`) earlier the same day and CG-76 landed as #63 before the refresh
+was even pushed, taking it to 359. **That is the argument for the instruction,
+not an exception to it:** re-run the suite, do not read this number.
+
 ```bash
-python -m pytest -q                           # 345 + the new tests, all passing
+python -m pytest -q                           # the current baseline + the new tests
 python -m pytest -q tests/test_env_file.py
 python -c "import chat_gateway.__main__"      # import-time wiring is sound
 ```
 
 Confirm `CHAT_GATEWAY_ENV_FILE` unset ⇒ byte-identical behaviour to `main`. That
-is what makes the loader a no-op in all 345 existing tests and on the dev box —
+is what makes the loader a no-op in **every** existing test and on the dev box —
 and it is a **claim to verify, not to assert**: the whole suite passing unchanged
 is the evidence.
 
