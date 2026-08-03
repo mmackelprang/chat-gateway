@@ -21,7 +21,10 @@ write-path spec §5 said `scan_failures` was *"the only thing standing between a
 silently-dropped aitrader alert and a green `/healthz`."* It is the only signal
 for a scan that **RAISES**; five of six doors raise nothing. The original wording
 is struck in place with how it was found and what is true instead. ⚠ **Fifth
-instance this week** — logged on **CG-69**, which still has no plan.
+instance this week** — logged on **CG-69**. ⚠ *That sentence ended "which still
+has no plan" when it was written hours ago, and the CG-69 PR below falsified it
+the same day. Corrected here rather than left standing — which is the control
+CG-69 designs, applied to a sentence about CG-69.*
 
 ⚠ **CG-77 filed** (clock skew silently disarms the dead-man switch) — measured,
 deliberately **not** folded in: it is a different defect class, preventing an
@@ -33,6 +36,16 @@ alert from *becoming* due rather than dropping one that did.
 returned nothing under either CG-55 entry). Added now, with the gap recorded
 rather than quietly closed — a decision that exists but is written down nowhere
 is the same failure mode CG-69 exists to catch.
+
+**Also 2026-08-03 (Planner — CG-69 designed).** The published-promise control is
+specced and planned, **inverted and much smaller than the row proposed**: not an
+inventory of prose claims but executable `module.py::Symbol` anchors in the live
+contracts, plus two pins on code-side sets of size 1 and 2. Measured on
+`d09a07c`, suite **345** (re-run, not copied): **8 of the 14 code citations in
+`docs/consumers/` and `CLAUDE.md` point at the wrong code today** — three of them
+in `aitrader.md`'s hard-rule-#6 enforcement table — while the same files'
+name-anchored citations are **0 of 8** wrong. No `src/` change, no ⚠ flag
+touched, `docs/architecture/` untouched.
 
 **Previously (Builder, same day): CG-74 shipped ([#60](https://github.com/mmackelprang/chat-gateway/pull/60)):
 `/healthz` can tell a WEDGED loop from a RAISING one, and a dropped dead-man
@@ -1044,7 +1057,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
 | **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | ✅ done (#52) | Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. Pre-merge review found a **data-loss race** in compact-on-drain — both producers journal the `open` before taking the queue lock, so `compact([])` could erase a record already on disk; fixed by recomputing survivors under the journal's own lock. Suite **247 → 268**. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
 | **CG-68** · time-bounded pruning of the inbound audit trail | ✅ done (#54) | **The first row that DELETES a tenant's content.** 30/7/0 via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`; the filename is the retention key, so pruning never opens a file holding message bodies. Amends `integration-guide.md:366`'s published *"never pruned"* (A4). ⚠ **New user decision A5** — the boot guard **refuses** rather than warns, and is stricter than the non-recursive glob requires (decision 4 below). Review found **0 HIGH, 6 MEDIUM, 6 LOW**; the sharpest was **M2** — the sweeper would have pruned `state/deliveries/` (ADR D7, permanent by decision), because the guard only fenced the quarantine and `state/deliveries` is its *sibling*. Suite **268 → 314**. Plan Tasks **10–14** |
-| **CG-69** · published-promise inventory (process control) | 📋 queued · ⚠ **evidence list now at FIVE** | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. ⚠ **Instances 4 and 5 added 2026-08-03** — #4 CG-74 falsifying its own spec's `/healthz` strings, #5 CG-76 finding the delivery write-path spec §5's *"the only thing standing between a silently-dropped aitrader alert and a green `/healthz`"* to be false. **Every one was caught only because somebody independently went looking**, and #5 took two independent sweeps of the same code path to find its last two doors. **Still no plan** — deliberately not written by CG-76's Planner, which was told not to |
+| **CG-69** · published-promise inventory (process control) | 📋 queued · ⚠ **evidence list now at FIVE** · ✅ **designed 2026-08-03** | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. ⚠ **Instances 4 and 5 added 2026-08-03 by CG-76's Planner** — #4 CG-74 falsifying its own spec's `/healthz` strings, #5 CG-76 finding the delivery write-path spec §5's *"the only thing standing between a silently-dropped aitrader alert and a green `/healthz`"* to be false. **Every one was caught only because somebody independently went looking**, and #5 took two independent sweeps of the same code path to find its last two doors. ⚠ *That entry ended "**Still no plan**" when it was written; this PR falsified it hours later and it is corrected rather than left standing.* **Designed the same day — inverted and one fifth the size the row proposed**, because measurement falsified the row's stated cause (**instances 4 and 5 are both inside the sweep's own list**, and the sweep found counterexamples where the diff *did* contain the sentence) and showed the row's proposed pairing has already rotted: **8 of the 14 code citations in the live contracts point at the wrong code**, three of them in `aitrader.md`'s hard-rule-#6 enforcement table, while the same files' name-anchored citations are 0 of 8 wrong. [spec](superpowers/specs/2026-08-03-published-promise-inventory-design.md) · [plan](superpowers/plans/2026-08-03-published-promise-inventory.md) |
 | **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued · **decided** | Filed by CG-65's Builder (LOW). ✅ **Planner call made 2026-08-02: option (a), and the row's own argument against it was measurably wrong.** `strace` shows every append already issues the stat and the kernel already returns the mode in it — (a) costs **zero** extra syscalls in the steady state. (b) goes to CG-53 for the files (a) provably cannot reach; (c) rejected. Severity unchanged; the reason changed from *"defer, it is low"* to *"do it, it is free"*. Spec §6 |
 | **CG-72** · `/healthz` cannot see two of the four threads (rule #5) | ✅ done (#56) | `dispatcher` and `monitor` now publish `thread_alive`/`thread_started` + staleness and **degrade**. Proven by killing both threads in a **real** server through the documented hole — an exception raised inside `_run`'s own handler, not `.stop()`: on `main` `/healthz` answered `status: ok`, `reasons: []`; on the branch, `degraded` with one reason each. Suite **314 → 324**. Review found **0 HIGH, 3 MEDIUM, 6 LOW** — the sharpest, **M1**, was a reason string asserting *"neither completing nor raising"* on two blocks that **count no failures**, copied from siblings where a counter branch made it true; reworded, and the counters filed as **CG-74**. **M2**: `last_pass_at` stamped the pass **start** while three places defined it as completion — the plan's own "do not call `self._now()` twice" had silently changed the field's meaning. [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §2.6/§4 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part A |
 | **CG-75** · a raising `_finish` re-sends the same job every second, unbounded | ✅ done (#58) | **Pre-existing; surfaced by CG-72's review, not caused by it.** `_finish` calls `self._log.record(...)` **before** the job leaves `_jobs`, and the delivered path never advances `next_attempt_at`. `DeliveryLog.record` does raw `mkdir`/`open`/`write` with **no guard** — so an `OSError` there propagates out of `process_due` with the job still due, and the next pass **sends it again**, once a second, forever. **Measured 2026-08-03, not reasoned about: one message, one successful send, then 60 passes → 60 SENDS TO GOOGLE in 60 seconds.** Exactly the failure `_journal_write`'s docstring exists to prevent for the journal, on the one write path that never got it. Severity **HIGH on impact**; the *"low likelihood"* half is now recorded as **an artifact of never having been deployed** — hence the CG-55 dependency (user decision 2026-08-02). [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §3 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part A** |
@@ -2190,15 +2203,17 @@ reasoning `CLAUDE.md` records for `suppressed_opt_out`).
 
 ---
 
-### CG-69 · A published-promise inventory — the process control  📋 queued
+### CG-69 · A published-promise inventory — the process control  📋 queued · ✅ **designed 2026-08-03**
 
 | | |
 |---|---|
 | **Origin** | filed by CG-65's Planner, 2026-07-31 |
 | **Depends on** | nothing |
-| **Touches** | `tests/` (a new guard), `docs/` |
+| **Touches** | `tests/` (one new guard module), `docs/consumers/aitrader.md`, `CLAUDE.md`, this file. **No `src/` change at all** |
 | **Merge gate** | no |
-| **Plan** | none yet — filed, deliberately not designed here |
+| **Falsifies** | nothing. Task 1 changes *pointers*, never claims; every sentence keeps its exact wording |
+| **Spec** | [design](superpowers/specs/2026-08-03-published-promise-inventory-design.md) |
+| **Plan** | [implementation](superpowers/plans/2026-08-03-published-promise-inventory.md) — 6 tasks, Task 6 droppable |
 
 **Three changes in one day invalidated a guarantee recorded in a file nobody in
 the loop was reading.** The shape is identical in all three, and it is not
@@ -2248,6 +2263,68 @@ claim 3 names `inbox.py::_audit`, which CG-68 modifies.
 ⚠ **Filed, not folded into CG-65.** Folding a good idea into an open row is the
 scope creep this queue keeps correcting — and it would be a fourth instance of
 shipping something whose consequences nobody had written down.
+
+#### ✅ The Planner call, 2026-08-03 — build it, **inverted and one fifth the size**
+
+**Everything above stands as the problem statement. Two things in it are
+falsified by measurement, and both change the design.** Reasoning and every
+number: [spec](superpowers/specs/2026-08-03-published-promise-inventory-design.md).
+
+1. **"The diff never contained the sentence it broke" is not the discriminator.**
+   A full history sweep found **41** instances — **19** category (a), a live
+   claim falsified by a later code change; **11** wrong when written; **4**
+   moving facts with two homes; **7** external-world. ⚠ **Instances 4 and 5
+   above are both already inside that list**, and **19 is the denominator this
+   control is measured against** — the other 22 are outside any guard's reach.
+   Four are counterexamples. The sharpest: `adapters/pubsub.py`'s docstring named
+   *"queue item CG-10"* as open work; **CG-10 then rewrote 150 lines of that same
+   file**, with hunks landing one line from one false sentence and bracketing
+   another. Missed — then missed **again** by CG-21's dedicated sweep, unfixed
+   for ten PRs. What actually separates caught from missed is **file ownership**:
+   `/healthz` stopped drifting once hard rule #5 made it a *named category every
+   row must check, backed by tests*; `docs/consumers/*` kept drifting because
+   nothing named it. The control's job is to do for the contracts what rule #5
+   did for `/healthz`, not to enumerate claims at diff time.
+
+2. **The pairing mechanism this row proposes has already been tried here by
+   hand, and has already rotted.** Of the 14 `file.py:LINE` citations in the live
+   contract docs, **8 point at unrelated code today** — including **three of the
+   four enforcement points `aitrader.md` §8 lists under hard rule #6**, the
+   clause a real-money tenant treats as a security guarantee. Over the same
+   window the same files' **name**-anchored citations are **0 of 8 wrong**. The
+   anchor form is the entire difference. ⚠ **This row's own three citations have
+   drifted too** — `aitrader.md:217` no longer holds the sentence it quotes.
+
+**So: not an inventory of prose. An executable anchor on the pairings the docs
+already contain, plus two pins on code-side sets that are measurably tiny.**
+
+- **Do build.** (1) `module.py::Qualified.Name` anchors in `docs/consumers/*.md`,
+  `docs/integration-guide.md` and `CLAUDE.md`, with a test that every anchor
+  resolves and the line-number form cannot return — the convention this repo
+  already writes **45 times in its working documents and 0 times in its
+  contracts**. (2) A pin on the set of places `src/` can delete a file — **one
+  member today**, and *"never pruned"* / *"the only copy"* are claims about
+  exactly that set. (3) A pin that every default tenant-data directory is
+  `.gitignore`d — instance 2, mechanically. (4) A **`Falsifies`** field in this
+  row shape: free, and the best-performing control in the whole record.
+- **Do NOT build** an inventory of absolute prose claims, in any form. 226
+  absolute-carrying lines in the proposed scope; and the one promise family
+  *"never pruned"* / *"the only copy"* has **93 occurrences repo-wide of which 7
+  are live contract** — the other 86 are ADR-0002, the retention plan and
+  shipped rows, which this repo keeps verbatim on purpose. A text-keyed guard
+  cannot tell a live promise from a retired one and would be deleted.
+
+**Honest limits, recorded rather than claimed away.** None of this catches a
+claim that was **wrong when written** — the largest category in the sweep, and
+the class today's spec-§5 defect belongs to. The one pin that might have (every
+`except` that never re-raises) was measured at **26 sites** and dropped. That
+class is served by the `Falsifies` field and by a reviewer reading the code, and
+saying otherwise would be the same over-promise this row exists to prevent.
+
+⚠ **The stale-citation repair is Task 1 of THIS row, not a follow-up.** CG-75
+settled it: *"rule #5 does not permit leaving a false statement standing for the
+duration of a second PR."* Three of the eight are in a tenant's hard-rule-#6
+table.
 
 ---
 
