@@ -1,7 +1,17 @@
-# Deploy home: /srv/chat-gateway on an always-on Docker host (homelab
-# conventions: .env off-repo mode 600, stateful dirs on the data disk,
-# SECRETS.md pointers, service registered in the homelab repo's docs).
-# LAN/tailnet only — Pub/Sub is outbound pull; never publish this through a
+# LOCAL / DEV-BOX path. `build: .` and the relative bind mounts below are what
+# make this convenient here and unusable on the NAS: that target is a TrueNAS
+# CUSTOM APP, whose compose document is submitted over an API (no build context,
+# absolute mounts only) and then captured into the homelab repo. The NAS artifact
+# and its runbook are docs/deploy/nas.md — do not adapt this file by hand.
+#
+# The publish form below is the DEV BOX's, and does not describe the deployment:
+# "8085:8085" binds 0.0.0.0, every interface. The NAS publishes on the LAN
+# ADDRESS by decision (queue CG-55, "Two user decisions, 2026-08-03"), so that
+# port is not tailnet-reachable there. Do not copy this line to the box and do
+# not read it as the deployed posture.
+#
+# No public ingress, on either host — Pub/Sub is an outbound pull, so nothing
+# here ever needs to be reachable from the internet. Never publish this through a
 # reverse proxy.
 services:
   chat-gateway:
@@ -19,9 +29,9 @@ services:
       - ./config:/config:ro
       - /data/chat-gateway:/data
       # tier 2: mount the SA key read-only and point
-      # GOOGLE_APPLICATION_CREDENTIALS at it in .env. Substitute the filename of
-      # the key you actually minted — this line named `chat-gateway-sa.json`
-      # until 2026-07-30 (CG-19), which is the key of the DELETED
-      # `chat-gateway-prod` project and authenticates to nothing. The live
-      # filename is recorded in docs/google-cloud-setup.md, not here.
-      # - /srv/chat-gateway/<your-sa-key>.json:/secrets/sa.json:ro
+      # GOOGLE_APPLICATION_CREDENTIALS at it in .env. The FILENAME is deliberately
+      # not written here: CG-51 made the setup scripts DERIVE it from PROJECT_ID,
+      # and a filename pinned in a comment is what CG-19 found stale. The live one
+      # is recorded in docs/google-cloud-setup.md. Note `iac/chat-gateway-sa.json`
+      # is DEAD — it belongs to the deleted `chat-gateway-prod` project.
+      # - ./secrets:/secrets:ro
