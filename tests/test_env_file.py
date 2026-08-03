@@ -1,6 +1,7 @@
 """CHAT_GATEWAY_ENV_FILE — the seam that keeps secrets out of the NAS compose."""
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -47,6 +48,77 @@ def test_a_line_without_an_equals_is_ignored_not_guessed_at():
 def test_an_equals_inside_the_value_survives():
     # A base64 key or a URL query is full of '='. Only the FIRST splits.
     assert parse_env_file("K=a=b=c\n") == {"K": "a=b=c"}
+
+
+# ---------------------------------------------------------------------------
+# Inline comments — the rule this parser shares with docker-compose because the
+# SAME FILE is read by both (compose's `env_file: .env` on the dev box, this
+# loader on the NAS). See `parse_env_file`'s docstring for why divergence would
+# make a working file change meaning at the destination.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("K=value   # note", "value"),        # whitespace-preceded # ends the value
+    ("K=   # note", ""),                  # ...leaving nothing behind
+    ("K=#note", ""),                      # first non-whitespace char
+    ("K=abc#def", "abc#def"),             # NOT preceded by whitespace: a value
+    ('K="a # b"  # note', "a # b"),       # quoting is the escape hatch
+    ("K='a # b'", "a # b"),               # either quote character
+    ("K=a=b=c", "a=b=c"),                 # only the first `=` splits
+    ("K=value", "value"),                 # no comment, nothing to do
+    ("export K=value # note", "value"),   # after `export ` is stripped
+])
+def test_an_inline_comment_ends_the_value_on_composes_rule(line, expected):
+    assert parse_env_file(line + "\n") == {"K": expected}
+
+
+def test_an_unterminated_quote_is_not_guessed_at():
+    """Same posture as a line with no `=`: leave it alone rather than invent a
+    closing quote and hand back half a credential."""
+    assert parse_env_file('K="unclosed\n') == {"K": '"unclosed'}
+
+
+def test_quoting_still_preserves_deliberate_surrounding_whitespace():
+    """The escape hatch has to be worth using. A quoted value keeps its edges —
+    unchanged from before inline comments existed."""
+    assert parse_env_file('K=" padded "\n') == {"K": " padded "}
+
+
+def test_the_repos_own_env_example_parses_with_no_comment_inside_a_value():
+    """THE REGRESSION TEST, and the one that would have caught this.
+
+    Measured before the fix: 11 of `.env.example`'s 18 keys came back with the
+    trailing comment inside the value. The two asserted individually are the
+    ones with teeth — `docs/deploy/nas.md` §6 tells the operator to copy this
+    file's descendant to the box, where a commented-but-unfilled line yields a
+    NON-EMPTY string, `__main__`'s `if not sub or not creds` guard does not
+    fire, and the gateway boots looking alive on an unauthenticated `/healthz`
+    with no way to reach Google.
+
+    The path is derived from `__file__` so this test travels with the repo
+    rather than with one checkout.
+    """
+    example = Path(__file__).resolve().parent.parent / ".env.example"
+    parsed = parse_env_file(example.read_text(encoding="utf-8"))
+    assert parsed, "the example file should parse to something"
+    leaked = {k: v for k, v in parsed.items() if "#" in v}
+    assert leaked == {}, f"comment text leaked into {len(leaked)} value(s)"
+    # ...and specifically: the fail-closed guard in `__main__` sees empty.
+    assert parsed["GOOGLE_APPLICATION_CREDENTIALS"] == ""
+    assert parsed["CHAT_GATEWAY_PUBSUB_SUBSCRIPTION"] == ""
+
+
+def test_a_utf8_bom_does_not_rename_the_first_key(tmp_path):
+    """A BOM is not whitespace to Python, so `.strip()` leaves it attached and
+    the first key becomes `﻿KEY` — a credential dropped in silence, on a
+    Windows dev box whose editors write one by default."""
+    f = tmp_path / "env"
+    f.write_bytes(b"\xef\xbb\xbfFIRST_KEY=first\nSECOND_KEY=second\n")
+    environ = {}
+    assert load_env_file(f, environ) == 2
+    assert environ["FIRST_KEY"] == "first"
+    assert not any(k.startswith("﻿") for k in environ)
 
 
 def test_the_environment_wins_over_the_file(tmp_path):
