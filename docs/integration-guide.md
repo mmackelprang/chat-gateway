@@ -71,6 +71,27 @@ curl -s $GW/v1/heartbeat/aitrader -H "$AUTH"            # your checks + states
 curl -s -X DELETE $GW/v1/heartbeat/aitrader/daily-trading-run -H "$AUTH"
 ```
 
+**422s on this endpoint.** A bad `schedule`/`grace`/`tz` returns the parser's
+own message. Since CG-76 there is a second one: **registering a `check_id` you
+do not already have, while your app has no `alert` (or `default`) route, is
+refused** — a dead-man check whose alert could never be routed is a check that
+goes missed and tells nobody.
+
+⚠ **It applies to registration only.** Because register and refresh are the same
+call, a **refresh of an existing check is your liveness ping and is always
+accepted**, even after the route disappears — refusing it would freeze
+`last_seen`, drive the check into the missed state, and manufacture a
+"heartbeat missed" alert for a source that never died. A route removed *after*
+registration is covered at runtime instead: `heartbeats.alerts_undeliverable`
+and `heartbeats.checks_undeliverable` degrade `/healthz`, and the check is left
+unmarked so it delivers the moment the route is restored.
+
+⚠ **The same registry fault is 503 on `/v1/notify` and 422 here, on purpose.**
+503 says *the gateway cannot serve this right now*; 422 says *this request is
+wrong and the caller can fix it*. Registering a dead-man check with no alert
+route really is wrong at the moment it is made, so this endpoint chose the
+status that points at the party holding the registry (CG-76 spec §4.2).
+
 ## Delivery log — `GET /v1/deliveries?limit=50`
 
 Per-source accounting: `enqueued → retrying* → delivered | failed` (plus
@@ -496,8 +517,8 @@ answer, and the last of the three degrades **cumulatively**: see its row.
 | `heartbeats.scan_failures` | scans that **raised**, over the life of the process — and unlike its `delivery.*` counterpart this one **degrades**. ⚠ **Its original justification expired with CG-76**: before that row a raising scan had already marked the check and dropped the alert; now the mark happens only after the alert is accepted, so a raise risks a **delayed or duplicated** alert rather than a lost one. It stays degrading on the weaker reason — a monitor that keeps raising is not evaluating checks — and `heartbeats.alerts_undeliverable` is the counter for an alert actually lost. **Cumulative and does not reset** | **yes** |
 | `heartbeats.consecutive_scan_failures` | scans that have raised **since the last good one**, returning to `0` on recovery. The live signal: the monitor is evaluating **no** registered check while this is climbing | **yes** — at 3 |
 | `heartbeats.last_scan_error` | the exception **type** from the last failed scan. Companion to the row above; cleared on recovery | no — reported with the row above |
-| `heartbeats.alerts_undeliverable` | dead-man alerts that came due and could **not be accepted for delivery**, over the life of the process. This is the dropped-alert counter — `scan_failures` is not, and said so until CG-76. An alert is dropped here without anything raising: the source has no `alert`/`default` route, or its routed identity is gone. **Cumulative and does not reset.** A bare integer by design — `GET /v1/deliveries` (authenticated) names which check | **yes** |
-| `heartbeats.checks_undeliverable` | how many checks were in that state on the **last** scan. Returns to `0` when the registry is fixed, so this is the live signal beside the cumulative row above | **yes** |
+| `heartbeats.alerts_undeliverable` | dead-man alert **attempts** that came due and could **not be accepted for delivery**, over the life of the process. This is the dropped-alert counter — `scan_failures` is not, and said so until CG-76. An alert is dropped here without anything raising: the source has no `alert`/`default` route, or its routed identity is gone. ⚠ **Attempts, not distinct alerts, and the difference is large.** A check whose route stays broken is deliberately re-attempted on **every scan** so that it self-heals the moment the route returns — measured at **one increment (and one `GET /v1/deliveries` line) per scan, ≈1440/day at the 60s default interval, for a single misconfigured check.** Read `checks_undeliverable` for how big the fault is; read this for whether one ever happened. **Cumulative and does not reset.** A bare integer by design — `GET /v1/deliveries` (authenticated) names which check | **yes** |
+| `heartbeats.checks_undeliverable` | how many **distinct checks** were in that state on the **last** scan — the number to size the fault by, where the row above sizes the retry cadence. Returns to `0` when the registry is fixed, so this is the live signal beside the cumulative row above | **yes** |
 | `heartbeats.checks_orphaned` | registered checks whose `source` is **not a registered app** — renamed, removed, or a registry block that failed to load. ⚠ **`checks` and `missed` above EXCLUDE these**, so without this row those two under-report the deployment's dead-man coverage while the checks are still scanned and their alerts still fail. A bare count, never the ids | **yes** |
 
 Four things the field names do not tell you:

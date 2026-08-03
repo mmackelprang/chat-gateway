@@ -75,6 +75,25 @@ route for severity 'warning' (add routes: {severity: identity} to the registry)`
 Bad `schedule`/`grace`/`tz` → **422** with the parser's own message. Registering
 and refreshing are the **same call** — see §7.
 
+**A second 422, new in CG-76:** registering a check id you do **not** already
+have, while your app has no `alert` (or `default`) route, is refused —
+`cannot register a dead-man check: this app has no route for alert-severity
+notifications, so a missed check could never be delivered (...)`. It applies to
+a **new** check only. A **refresh** of a check that already exists is your
+liveness ping and is always accepted, even if the route disappears afterwards;
+refusing those would freeze `last_seen` and manufacture a missed-check alert for
+a source that never died. A route removed after registration shows up on
+`/healthz` as `heartbeats.alerts_undeliverable` instead — see §7.
+
+⚠ **Same registry fault, two different statuses, deliberately.** No route for
+your severity is **503** on `POST /v1/notify` and **422** on
+`POST /v1/heartbeat`. 503 says *the gateway cannot serve this right now*; 422
+says *this request is wrong and you are the one who can fix it* — and on the
+heartbeat route the request really is wrong at the moment it is made, because a
+check registered without an alert route is a check that will go missed and tell
+nobody. The heartbeat endpoint chose the status that points at the fixer
+(CG-76 spec §4.2).
+
 ### `GET /v1/heartbeat/{source}` → **200**
 
 ```jsonc
@@ -281,14 +300,13 @@ deadline is `next_due + grace`.
 
 **Repeat** is daily (`DEFAULT_REPEAT_S = 86400`) until you refresh or delete.
 ⚠ **This used to add "and the repeats collapse through the same deduper
-(`dedupe_key: "hb:<check_id>"`)". CG-76 removed that key, and the sentence was
-describing a false positive rather than a control.** The repeat window is 86400s
-and the deduper's is 3600s, so the deduper could never suppress an actual
-duplicate on this path — the monitor does not emit one — while it *could* and
-did suppress a **second, genuinely new outage** inside the hour: a source that
-died, recovered, refreshed and died again produced two outages and one alert.
-The dead-man path no longer passes a `dedupe_key` at all; `alert_due()` is its
-dedupe. The alert is `severity: alert`, so it takes your **alert** route:
+(`dedupe_key: "hb:<check_id>"`)". CG-76 removed that key.** What it buys you:
+**two outages now produce two alerts.** If you die, recover, refresh, and die
+again inside the hour, the second outage is reported — under the old key it was
+collapsed into the first one's alert. Nothing else changes for you; `alert_due()`
+is this path's dedupe and still caps you at one alert per check per 24h. The
+measurement and the reasoning have one home, CG-76's spec §2.4. The alert is
+`severity: alert`, so it takes your **alert** route:
 
 ```
 title: heartbeat missed: daily-trading-run
@@ -302,11 +320,21 @@ check** each call. So a refresh clears `status` back to `ok` and resets
 there is no separate update call. Validation runs before any mutation, so a bad
 refresh leaves the existing check untouched.
 
-**Registration now fails fast if we could never alert you.** `POST /v1/heartbeat`
-resolves your `alert` route before storing the check and returns **422** if
-there isn't one. A dead-man check whose alert could never be routed is a check
-that goes missed and tells nobody, which is the one failure this feature exists
-to prevent (CG-76).
+**Registration now fails fast if we could never alert you — registration, not
+refresh.** The **first** `POST /v1/heartbeat` for a given `check_id` resolves
+your `alert` route before storing the check and returns **422** if there isn't
+one. A dead-man check whose alert could never be routed is a check that goes
+missed and tells nobody, which is the one failure this feature exists to prevent
+(CG-76).
+
+⚠ **Your periodic pings are never refused by that check.** Because registering
+and refreshing are the same call, applying the refusal to every call would mean
+a route removed from your registry block turns your healthy on-schedule pings
+into 422s — `last_seen` stops advancing, the check goes missed, and you get a
+missed-check alert for a run that never failed. So an existing check's refresh
+is always accepted. If your alert route is removed after registration, the
+gateway degrades `/healthz` (`heartbeats.alerts_undeliverable` +
+`checks_undeliverable`) and keeps re-attempting, rather than refusing your ping.
 
 **Alerts are at-least-once, not at-most-once.** A check is marked alerted only
 after its notification is accepted into the durable queue. If the gateway dies
