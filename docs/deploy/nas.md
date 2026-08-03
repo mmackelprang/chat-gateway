@@ -345,13 +345,41 @@ transcript.
 An earlier draft said *"copy `.env`"* as though it were. *Environment wins* makes
 the compose authoritative for the three path vars it sets, so the copied dev
 values for `CHAT_GATEWAY_REGISTRY`, `CHAT_GATEWAY_STATE_DIR` and
-`CHAT_GATEWAY_INBOX_DIR` are harmlessly overridden. **Two keys are not in the
-compose, so the file's dev-box values win — and both are wrong on the box:**
+`CHAT_GATEWAY_INBOX_DIR` are harmlessly overridden. **Three keys' dev-box values
+are WRONG on the box and are NOT overridden:**
 
 | Key | Dev-box value | Must be, on the box | If not corrected |
 |---|---|---|---|
 | `GOOGLE_APPLICATION_CREDENTIALS` | a dev-relative path | `/secrets/<sa-key>.json` | ⚠ **boots clean, fails at every tier-2 call** |
 | `GATEWAY_ENABLE_PUBSUB` | `0` in `.env.example` | `1` | inbound silently off — now caught by §5's compose flag |
+| `CHAT_GATEWAY_INTERACTION_ROUTING_TARGET` | empty in `.env.example` | any constant (classic — ADR-0001 D3) | ⚠ **`/healthz` DEGRADES**: with tier 2 on, card interactions are impossible, not merely unconfigured (CG-7) |
+
+⚠ **The sentence above used to read *"Two keys are not in the compose"*, and
+that was a miscount — measured 2026-08-03, **thirteen** of `.env.example`'s
+eighteen keys are absent from §5's `environment:` block** (it sets five of them,
+plus `TZ`). Every API key and every webhook URL is in that thirteen, and being
+absent is the *point* — that is the whole reason `CHAT_GATEWAY_ENV_FILE` exists.
+So "not in the compose" was never the property worth listing. The claim is now
+scoped to the one that is: **not overridden, and wrong here**. The old sentence
+was wrong twice over — the count it stated is thirteen, and the narrower count
+it *meant* is three, because recounting is what turned up the third row.
+
+That row is verified against the code, not inferred from the comment in
+`.env.example`: `service.py`'s `/healthz` appends a `reasons` entry — and
+therefore returns `status: degraded` — whenever `subscriber.enabled` is true and
+`CHAT_GATEWAY_INTERACTION_ROUTING_TARGET` is unset, and `/v1/identities` reports
+`interaction.enabled: false` to every producer in the same state. §5's compose
+sets `GATEWAY_ENABLE_PUBSUB: "1"`, so **that condition is true on this box by
+construction** — leave the key empty and the first `/healthz` after boot is
+`degraded`.
+
+⚠ **Not fixed here, and worth knowing before you follow the machine's advice:**
+that `/healthz` reason text tells the operator to set the variable to the
+Pub/Sub **topic path**. That is the **add-ons-era** answer; production has been
+classic since 2026-07-29, where the correct value is any constant (ADR-0001 D3,
+and the dated table in `.env.example`). A topic path is harmless-but-costly on
+classic — it consumes the native action-identity slot, which is what forces
+identity into `__cg_action__`. Set the constant, not the topic path.
 
 **The first one is the dangerous one, and it is silent by construction.**
 `GoogleServiceAccountTokens.__init__` only *stores* the path — the key file is
