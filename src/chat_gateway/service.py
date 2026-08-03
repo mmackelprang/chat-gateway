@@ -600,10 +600,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                            "stale_after_seconds": _scan_stale_after(monitor),
                            "scan_interval_seconds": monitor.interval_seconds,
                            # CG-74. The dispatcher's twin, with one asymmetry:
-                           # `scan_failures` DEGRADES cumulatively, because a
-                           # scan that raised has already dropped the alert it
-                           # was going to send and no later scan re-sends it.
-                           # `HeartbeatMonitor.__init__` carries the measurement.
+                           # `scan_failures` DEGRADES cumulatively where
+                           # `pass_failures` is inert. ⚠ The REASON it does
+                           # expired with CG-76 and the surviving one is
+                           # weaker; it has ONE home and this is not it —
+                           # `HeartbeatMonitor.__init__`. Do not restate it
+                           # here, which is what the copy this replaced did.
                            "scan_failures": getattr(monitor, "scan_failures", 0),
                            "consecutive_scan_failures": getattr(
                                monitor, "consecutive_scan_failures", 0),
@@ -1070,11 +1072,13 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         if hb["scan_failures"]:
             reasons.append(
                 f"heartbeats: {hb['scan_failures']} scan(s) have raised since "
-                "start — a scan that raises after marking a check MISSED drops "
-                "that alert for the repeat window (24h) and no later scan "
-                "re-sends it, so at least one dead-man alert may already have "
-                "been lost. CUMULATIVE and will not clear while this process "
-                "runs; `consecutive_scan_failures` is the live signal"
+                "start — since CG-76 a raising scan does NOT drop the alert "
+                "(the check is no longer marked before the notify is accepted), "
+                "so the risk is a DELAYED or DUPLICATED alert rather than a "
+                "lost one. CUMULATIVE and will not clear while this process "
+                "runs; `consecutive_scan_failures` is the live signal, and "
+                "`alerts_undeliverable` is the counter for an alert actually "
+                "lost"
             )
         # OUTSIDE the liveness elif-chain, beside `scan_failures` and for the
         # same reason: the chain answers "is this loop running", this answers

@@ -231,38 +231,33 @@ class HeartbeatMonitor:
         self._started = False
         self.last_scan_at: dt.datetime | None = None
         #: Scans that RAISED, and scans that have raised since the last good
-        #: one. `Dispatcher`'s twin — with ONE deliberate asymmetry, stated here
-        #: rather than left for a reviewer to "fix":
-        #:
+        #: one. `Dispatcher`'s twin — with ONE deliberate asymmetry:
         #: `scan_failures` is CUMULATIVE **and degrading**, where
-        #: `Dispatcher.pass_failures` is cumulative and inert. A failed dispatch
-        #: pass is recoverable — the due job is still in `_jobs` and the next
-        #: pass retries it. A failed SCAN is not. `HeartbeatStore.due_alerts`
-        #: marks the check (`status = "missed"`, `last_alerted = now`) under its
-        #: lock BEFORE persisting, and `scan_once` only notifies what
-        #: `due_alerts` returned — so a raise anywhere downstream leaves the
-        #: check marked alerted and the alert never sent, suppressed for the
-        #: whole `DEFAULT_REPEAT_S` window. Measured, both variants, including
-        #: one that persists the suppression and survives a restart. That is
-        #: `RetentionSweeper.errors`'s test — nothing for a later pass to
-        #: recover from — so it takes `RetentionSweeper.errors`'s posture.
+        #: `Dispatcher.pass_failures` is cumulative and inert.
         #:
-        #: THE COUNTER IS NOT THE FIX. **CG-76** is. But what it covers until
-        #: then is NARROWER than "a dropped dead-man alert", and the gap is
-        #: MEASURED rather than reasoned about: this is the only /healthz signal
-        #: for a scan that RAISES, and a scan can drop an alert without raising.
-        #: A notify REFUSED FOR WANT OF A ROUTE is that path — `route_for` finds
-        #: neither an `alert` nor a `default` route for the source, so it raises
-        #: `RegistryError`, `emit_notification` converts that to
-        #: `HTTPException(503)`, and `service.py`'s `_monitor_notify` CATCHES it
-        #: and writes a `"failed" / "no route: ..."` delivery-log line. Nothing
-        #: propagates, `scan_once` completes, `last_scan_at` stamps. Run against
-        #: a real uvicorn server over real HTTP, with an app carrying no
-        #: `routes:` block and a real check gone missed: the check on disk read
-        #: `status: missed` with `last_alerted` set — suppressed for the whole
-        #: repeat window — zero notifications were sent, `scan_failures` stayed
-        #: 0, `last_scan_error` stayed None, and /healthz answered `ok`. Pinned
-        #: by `test_a_routeless_alert_is_dropped_without_raising_or_counting`.
+        #: ⚠ THE ORIGINAL REASON FOR THAT ASYMMETRY EXPIRED WITH CG-76. It read:
+        #: "a failed SCAN is not [recoverable] — `due_alerts` marks the check
+        #: before persisting, and `scan_once` only notifies what `due_alerts`
+        #: returned, so a raise leaves the check marked alerted and the alert
+        #: never sent." That was true and measured when CG-74 shipped it. CG-76
+        #: reordered exactly that: the mark now happens in `mark_alerted`, AFTER
+        #: the notify is accepted, so a scan that raises has NOT marked the
+        #: check and the next scan re-fires it. A failed scan is now
+        #: RECOVERABLE — which is precisely the property that makes
+        #: `pass_failures` inert.
+        #:
+        #: IT STAYS DEGRADING ANYWAY, AND THE REASON IS NOW THE WEAKER ONE —
+        #: say so rather than keep quoting the strong one (the discipline
+        #: CLAUDE.md applies to `__cg_action__`). A loop that keeps raising is
+        #: still a dead-man monitor that is not completing scans, on aitrader's
+        #: contract surface, and the conservative posture there is to degrade.
+        #: What a raise now risks is a DELAYED or DUPLICATED alert, not a lost
+        #: one. Flipping this to inert is defensible after CG-76 and is
+        #: deliberately NOT done here — it is a separate user decision with its
+        #: own measurement, not a fold-in (spec §7.2).
+        #:
+        #: THIS IS NOT THE DROPPED-ALERT COUNTER. `alerts_undeliverable` is.
+        #: An alert can be dropped with nothing raising at all.
         self.scan_failures = 0
         self.consecutive_scan_failures = 0
         #: See `Dispatcher.last_pass_error` — same helper, same reasoning.
@@ -391,8 +386,11 @@ class HeartbeatMonitor:
             try:
                 self.scan_once()
                 # Only the CONSECUTIVE counter clears. `scan_failures` is
-                # cumulative and degrading on purpose — see `__init__`: the
-                # alert that scan would have sent is already gone.
+                # cumulative and degrading on purpose — see `__init__`, which
+                # is the one home of WHY. ⚠ This comment used to restate that
+                # reason ("the alert that scan would have sent is already
+                # gone") and CG-76 falsified it: the check is no longer marked
+                # before the notify, so a raising scan re-fires next pass.
                 self.last_scan_error = None
                 self.consecutive_scan_failures = 0
             except Exception as exc:  # noqa: BLE001 — the loop must survive
