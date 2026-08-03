@@ -4,13 +4,20 @@ weekend false alarms, and full delivery-log accounting."""
 
 import datetime as dt
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
 
+from chat_gateway import delivery as delivery_module
 from chat_gateway.delivery import DeliveryLog, Dispatcher
 from chat_gateway.envelope import TEXT_MAX, DeliveryResult
-from chat_gateway.heartbeat import HeartbeatError, HeartbeatStore, parse_schedule
+from chat_gateway.heartbeat import (
+    HeartbeatError,
+    HeartbeatMonitor,
+    HeartbeatStore,
+    parse_schedule,
+)
 from chat_gateway.inbox import Inbox
 from chat_gateway.notifications import (
     INFO_BODY_SEPARATOR,
@@ -556,3 +563,114 @@ def test_heartbeat_source_scoping(registry, tmp_path):
     client, _, _ = make_client(registry, clock, tmp_path)
     assert client.get("/v1/heartbeat/other-app", headers=AUTH).status_code == 403
     assert client.delete("/v1/heartbeat/other-app/x", headers=AUTH).status_code == 403
+
+
+# --- CG-74: the failure counters the two loop threads never had --------------
+#
+# These three drive a REAL loop thread, which nothing in `test_service.py` does
+# for the counters: that file stubs liveness so it can pin an exact `/healthz`
+# body, and a live `_run` would clear `consecutive_*` under the assertion. The
+# increment-and-clear mechanism therefore has to be proven here, against the
+# actual `while` loop, or it is only ever proven by assignment.
+
+def _wait_until(predicate, timeout=5.0, what="condition"):
+    """Poll `predicate` until true, or fail after `timeout` seconds.
+
+    Module-local rather than in `conftest.py`: this cluster is the only place in
+    the suite that watches a loop thread make progress, and a shared fixture
+    with one caller is a dependency nobody pays for.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"timed out after {timeout}s waiting for {what}")
+
+
+def test_a_raising_pass_is_counted_and_cleared_on_recovery(monkeypatch):
+    """Two raises then recovery: history keeps 2, the live signal returns to 0."""
+    # `PASS_INTERVAL_S` is a module constant read by `_run` on every iteration,
+    # not a per-instance setting, so this is the only way to run four passes
+    # without spending four seconds of suite time on a timing assertion that
+    # does not depend on the interval.
+    monkeypatch.setattr(delivery_module, "PASS_INTERVAL_S", 0.01)
+    d = Dispatcher({}, DeliveryLog())
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise OSError(28, "No space left on device")
+        return 0
+
+    d.process_due = flaky
+    d.start()
+    try:
+        _wait_until(lambda: calls["n"] >= 4, what="four dispatch passes")
+    finally:
+        d.stop()
+    assert d.pass_failures == 2
+    assert d.consecutive_pass_failures == 0, "recovery must clear the consecutive counter"
+    assert d.last_pass_error is None, "recovery must clear the error string"
+
+
+def test_the_pass_error_is_a_type_name_never_a_path(tmp_path, monkeypatch):
+    """Hard rule #2: `str(OSError)` embeds the absolute path; this must not.
+
+    `OSError` is deliberately NOT marked in `errors.py`, so `describe_exception`
+    renders it by type alone. That is lossy on purpose — the operator loses
+    `ENOSPC` vs `EACCES` — and the thing it buys is this: `/healthz` is
+    unauthenticated, and a state-dir path is not something it may publish.
+    """
+    monkeypatch.setattr(delivery_module, "PASS_INTERVAL_S", 0.01)
+    d = Dispatcher({}, DeliveryLog())
+    secret = tmp_path / "very-secret-dir" / "x.jsonl"
+    # ENOSPC deliberately, and not `OSError(2, ...)`: Python refines an errno-2
+    # `OSError` into `FileNotFoundError` at construction, so that spelling would
+    # have tested a different class than the one the spec names. 28 has no
+    # subclass. The third argument is what puts the path into `str()` —
+    # asserted below, so this cannot pass because the path was never there.
+    leaky = OSError(28, "No space left on device", str(secret))
+    assert "very-secret-dir" in str(leaky)
+
+    def boom():
+        raise leaky
+
+    d.process_due = boom
+    d.start()
+    try:
+        _wait_until(lambda: d.pass_failures >= 1, what="one failed pass")
+    finally:
+        d.stop()
+    assert d.last_pass_error == "OSError"
+    assert "very-secret-dir" not in (d.last_pass_error or "")
+
+
+def test_a_raising_scan_is_counted_but_the_cumulative_one_never_clears():
+    """The asymmetry, pinned. `scan_failures` must survive recovery.
+
+    `Dispatcher.pass_failures` clears nothing either — but it drives nothing, so
+    nobody would notice if it did. This one degrades `/healthz`, and the reason
+    it may is that the alert a raising scan would have sent is already gone:
+    `due_alerts` marked the check before persisting, so no later scan re-sends
+    it. See `HeartbeatMonitor.__init__` for the measurement.
+    """
+    mon = HeartbeatMonitor(HeartbeatStore(), lambda *a: None, interval_seconds=0.01)
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise OSError(28, "No space left on device")
+        return 0
+
+    mon.scan_once = flaky
+    mon.start()
+    try:
+        _wait_until(lambda: calls["n"] >= 4, what="four scans")
+    finally:
+        mon.stop()
+    assert mon.scan_failures == 2, "cumulative must NOT clear on recovery"
+    assert mon.consecutive_scan_failures == 0
+    assert mon.last_scan_error is None
