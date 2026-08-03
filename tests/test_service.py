@@ -1015,7 +1015,14 @@ def test_an_empty_pass_still_stamps_last_pass_at():
 
 
 def test_a_wedged_dispatcher_is_stale_but_not_reported_dead(env):
-    """Alive + no completed pass past the budget == wedged, one reason only."""
+    """Alive + no completed pass past the budget == wedged, one reason only.
+
+    The substring moved in CG-74 and the move is the row landing. It read
+    `"either WEDGED or RAISING"` while nothing counted a failed pass, so the
+    endpoint could not tell the two apart and said so. A counter branch now sits
+    above this one in the chain, so by the time this `elif` is reached "not
+    raising" has been MEASURED — and the string says WEDGED without the hedge.
+    """
     from chat_gateway.service import DISPATCH_STALE_AFTER_SECONDS
 
     client, _inbox, _adapter = env
@@ -1035,7 +1042,7 @@ def test_a_wedged_dispatcher_is_stale_but_not_reported_dead(env):
         body = client.get("/healthz").json()
         assert body["status"] == "degraded"
         hits = [r for r in body["reasons"] if r.startswith("delivery: ")]
-        assert len(hits) == 1 and "either WEDGED or RAISING" in hits[0]
+        assert len(hits) == 1 and "WEDGED rather than erroring" in hits[0]
     finally:
         dispatch.stop()
 
@@ -1047,6 +1054,10 @@ def test_a_wedged_heartbeat_monitor_is_stale_but_not_reported_dead(env):
     dead-man switch's OWN liveness, and while it is wedged every consumer's
     checks stop being evaluated with `missed` and `last_scan_at` both holding
     real values — the failure `heartbeats.thread_alive` was added to catch.
+
+    Substring updated by CG-74 for the reason its dispatcher twin above records:
+    `consecutive_scan_failures` now answers "raising?" one branch earlier, so
+    this string no longer has to hedge between the two.
     """
     client, _inbox, _adapter = env
     monitor = client.app.state.monitor
@@ -1064,7 +1075,7 @@ def test_a_wedged_heartbeat_monitor_is_stale_but_not_reported_dead(env):
         assert body["status"] == "degraded"
         assert body["heartbeats"]["seconds_since_last_scan"] > budget
         hits = [r for r in body["reasons"] if r.startswith("heartbeats: ")]
-        assert len(hits) == 1 and "either WEDGED or RAISING" in hits[0]
+        assert len(hits) == 1 and "WEDGED rather than erroring" in hits[0]
     finally:
         monitor.stop()
 
@@ -1210,8 +1221,20 @@ def test_the_delivery_staleness_reason_no_longer_blames_a_full_disk(env):
 
     Same shape as `test_a_wedged_dispatcher_is_stale_but_not_reported_dead` —
     including the stub-before-`start()` note there, which applies unchanged.
+
+    CG-74 REWROTE THE STRING THIS PINS, and the test keeps its subject rather
+    than its assertions. The `not in` below is the whole point of the case: it
+    guards a framing that was MEASURED FALSE, and a falsified sentence can be
+    reintroduced by any later edit to this reason. That guard is why the row is
+    here. What had to change is the positive half: the CG-75 string pointed a
+    reader at `audit_write_errors`, and CG-74's does not mention it — the
+    counter branch one `elif` up now answers "is it raising?" outright, so the
+    staleness reason stops speculating about raise sites and states a wedge.
+    The positive assertions therefore move to that clause, which is the thing
+    that makes the `not in` meaningful; a `not in` alone would pass against an
+    empty string.
     """
-    from chat_gateway.service import DISPATCH_STALE_AFTER_SECONDS
+    from chat_gateway.service import DISPATCH_FAILURE_THRESHOLD, DISPATCH_STALE_AFTER_SECONDS
 
     client, _inbox, _adapter = env
     dispatch = client.app.state.dispatcher
@@ -1223,33 +1246,41 @@ def test_the_delivery_staleness_reason_no_longer_blames_a_full_disk(env):
         hits = [r for r in client.get("/healthz").json()["reasons"]
                 if r.startswith("delivery: ")]
         assert len(hits) == 1
-        assert "either WEDGED or RAISING" in hits[0]
-        assert "audit_write_errors" in hits[0]
+        assert "WEDGED rather than erroring" in hits[0]
+        assert (f"fewer than {DISPATCH_FAILURE_THRESHOLD} consecutive passes "
+                "have raised") in hits[0]
         assert "a full disk, which makes the delivery log's own write raise" not in hits[0]
     finally:
         dispatch.stop()
 
 
-def test_the_heartbeat_staleness_reason_names_the_right_file(env):
+def test_the_heartbeat_staleness_reason_does_not_blame_the_delivery_log(env):
     """The delivery twin above, for the string CG-75 reworded on the OTHER loop.
 
-    This row edited both staleness reasons and pinned only one, and rule #5 does
-    not permit a corrected `/healthz` string to go unpinned — an operator reads
-    it during an outage and cannot check it against the source.
+    RENAMED BY CG-74, from `..._names_the_right_file`, because that name became
+    false: the string names no file at all now. What survives, and what this
+    case is still for, is the `not in` at the bottom — CG-75 measured that the
+    pre-CG-75 sentence pointed an operator at `DeliveryLog.record` for a raise
+    that comes from `enqueue`'s journal `open`, and a falsified sentence on an
+    unauthenticated endpoint can be reintroduced by any later edit to this
+    reason. The guard is the row.
 
-    The heartbeat correction is narrower than its twin's: the full-disk claim
-    stayed TRUE, it was pointing at the wrong file. A scan that fires a check
-    still raises on a full disk, but through `enqueue`'s journal `open`, which
-    is unguarded on purpose (refusing work we cannot persist is the durability
-    mechanism's job), not through `DeliveryLog.record`, which CG-75 guarded. So
-    this asserts the new mechanism is NAMED and the falsified framing is GONE —
-    a `not in` alone would pass against an empty string.
+    The two positive assertions it used to carry (`` `enqueue`'s journal write ``
+    and "NOT through the delivery log") are gone from the string, not weakened
+    here: CG-74's counter branch sits one `elif` above this one, so by the time
+    this branch is reached the monitor has been measured NOT to be raising, and
+    a clause about where a raise would come from no longer belongs in it. The
+    positives move to the clause that replaced them — which is what keeps the
+    `not in` meaningful, since a `not in` alone would pass against an empty
+    string.
 
     Modelled on `test_a_wedged_heartbeat_monitor_is_stale_but_not_reported_dead`,
     including reading the budget off `/healthz` rather than hardcoding a copy of
     `monitor_interval`, and stubbing `scan_once` BEFORE `start()` for the reason
     that test's comment gives.
     """
+    from chat_gateway.service import SCAN_FAILURE_THRESHOLD
+
     client, _inbox, _adapter = env
     monitor = client.app.state.monitor
     budget = client.get("/healthz").json()["heartbeats"]["stale_after_seconds"]
@@ -1261,9 +1292,10 @@ def test_the_heartbeat_staleness_reason_names_the_right_file(env):
         hits = [r for r in client.get("/healthz").json()["reasons"]
                 if r.startswith("heartbeats: ")]
         assert len(hits) == 1
-        assert "either WEDGED or RAISING" in hits[0]     # must survive this PR
-        assert "`enqueue`'s journal write" in hits[0]
-        assert "NOT through the delivery log" in hits[0]
+        assert "WEDGED rather than erroring" in hits[0]
+        assert (f"fewer than {SCAN_FAILURE_THRESHOLD} consecutive scans "
+                "have raised") in hits[0]
+        assert "No registered check is being evaluated while this holds" in hits[0]
         assert ("A scan that fires a check enqueues through the delivery log, "
                 "so a full disk raises there") not in hits[0]
     finally:
