@@ -116,9 +116,27 @@ the Chat app's Configuration page (no API/Terraform surface for it).
 
 ## Deploy
 
-`Dockerfile` + `docker-compose.yml`; intended home is `/srv/chat-gateway/` on
-an always-on Docker host with `.env` off-repo (mode 600) — LAN/tailnet only,
-no reverse-proxy exposure needed (Pub/Sub is outbound pull).
+⚠ **This paragraph named the wrong host, corrected 2026-08-03 (CG-53) — the
+fourth and last copy of the same error.** It read *"intended home is
+`/srv/chat-gateway/` on an always-on Docker host … — LAN/tailnet only"*. That was
+the v0 intent and was never revisited; the production-readiness arc targets the
+**NAS**, as a TrueNAS **custom app**, and the same sentence has now been
+corrected in `CLAUDE.md`, `docker-compose.yml` and `.env.example`. Two things the
+old wording implied are actively false there: a custom app's compose is submitted
+over an API, so **`docker-compose.yml` cannot deploy as written** (no build
+context, no relative mounts), and *"LAN/tailnet"* over-promises — the deploy
+binds the **LAN address** deliberately, so the port is not tailnet-reachable
+(queue CG-55).
+
+`Dockerfile` + `docker-compose.yml` are the **dev-box / local** path, which is
+what `build:` is for. The deployment artifact, the on-box layout and the runbook
+have **one home** — [`docs/deploy/nas.md`](docs/deploy/nas.md) — and are not
+restated here. `.env` stays off-repo (mode 600); no reverse-proxy exposure is
+needed or wanted on either host, because Pub/Sub is an outbound pull.
+
+⚠ **Nothing is deployed yet.** That runbook's §10 *Executed* is empty by design
+and is filled by CG-55; until it has entries, "deploy target" is an intention,
+not a fact.
 
 ## Status — honest seams
 
