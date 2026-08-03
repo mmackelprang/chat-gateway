@@ -1,7 +1,52 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-03 (Builder — **CG-75 shipped (#58): the unguarded
-delivery-log write no longer storms Google**). Suite **324 → 333**, both ends
+**Last updated:** 2026-08-03 (Builder — **CG-74 shipped ([#60](https://github.com/mmackelprang/chat-gateway/pull/60)):
+`/healthz` can tell a WEDGED loop from a RAISING one, and a dropped dead-man
+alert no longer reads green**). Suite **333 → 345**, both ends re-measured with
+`python3 -m pytest -q`, neither copied from a row.
+
+**Demonstrated on a real server against a real kernel `PermissionError`, not a
+monkeypatch, and the control ran the same harness on `main`.** `chmod a-w` on
+the state dir while a registered dead-man check went missed: on `main`
+`/healthz` answered **`ok`** while the check on disk read `status: missed` with
+`last_alerted` stamped and **zero notifications sent** — the alert suppressed
+for 24h with nothing anywhere saying so. On the branch, **`degraded`**, with a
+reason naming the loss.
+
+⚠ **The asymmetry was VALIDATED by that run, not merely implemented.**
+`consecutive_scan_failures` read **0** at the moment of the drop, correctly —
+one scan raised, the next found nothing due and cleared it. **The cumulative
+counter was the only thing still holding `degraded`.** The rejected
+body-only-until-CG-76 alternative would have gone green on that exact run. The
+user's D3 decision is the reason there is a signal at all.
+
+**Both CG-76 variants move the counter**, checked separately: variant D
+(`_save()` raises inside `due_alerts`) and the durable variant E (`_save()`
+lands, then the notify's `enqueue` hits the journal `open`) — the second leaving
+the suppression **on disk**. Nothing swallows the raise between `HeartbeatStore`
+and `_run`'s handler.
+
+⚠ **One thing DOES, and it was measured before review found it by reading — so
+the counter's own docstring is now narrower than the spec's.** A notify
+**refused for want of a route** (`route_for` finds neither `alert` nor
+`default`) becomes an `HTTPException(503)` that `_monitor_notify` **catches**.
+The alert is dropped, `scan_once` completes, **no counter moves and `/healthz`
+answers `ok`.** So `scan_failures` is the only signal for a scan that **RAISES**,
+not for "a dropped dead-man alert" — `HeartbeatMonitor.__init__` now says that
+and `test_a_routeless_alert_is_dropped_without_raising_or_counting` pins it.
+**Spec §5 line 421 still carries the absolute wording**; it is a Planner artifact
+and this PR did not edit it. **Planner: reconcile, and consider whether CG-76's
+scope covers this door.**
+
+⚠ **CG-73's confidence statement is now split.** Its row calls its sites *"drift
+in a hard-rule-#2 control, **not a proven leak**"*. For the **two sites CG-74
+closes** that is settled the other way: on `main`, the same fault put an
+**absolute filesystem path** on the console (`[Errno 13] Permission denied:
+'…/state/heartbeats.tmp'`) where the branch prints `PermissionError`. The
+residue of three is untouched by this and keeps the original confidence.
+
+**Previously (Builder, same day): CG-75 shipped (#58) — the unguarded
+delivery-log write no longer storms Google.** Suite **324 → 333**, both ends
 re-measured with `python3 -m pytest -q`, neither copied from a row.
 
 **The storm was reproduced against a real kernel `PermissionError`, not a
@@ -969,10 +1014,10 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued · **decided** | Filed by CG-65's Builder (LOW). ✅ **Planner call made 2026-08-02: option (a), and the row's own argument against it was measurably wrong.** `strace` shows every append already issues the stat and the kernel already returns the mode in it — (a) costs **zero** extra syscalls in the steady state. (b) goes to CG-53 for the files (a) provably cannot reach; (c) rejected. Severity unchanged; the reason changed from *"defer, it is low"* to *"do it, it is free"*. Spec §6 |
 | **CG-72** · `/healthz` cannot see two of the four threads (rule #5) | ✅ done (#56) | `dispatcher` and `monitor` now publish `thread_alive`/`thread_started` + staleness and **degrade**. Proven by killing both threads in a **real** server through the documented hole — an exception raised inside `_run`'s own handler, not `.stop()`: on `main` `/healthz` answered `status: ok`, `reasons: []`; on the branch, `degraded` with one reason each. Suite **314 → 324**. Review found **0 HIGH, 3 MEDIUM, 6 LOW** — the sharpest, **M1**, was a reason string asserting *"neither completing nor raising"* on two blocks that **count no failures**, copied from siblings where a counter branch made it true; reworded, and the counters filed as **CG-74**. **M2**: `last_pass_at` stamped the pass **start** while three places defined it as completion — the plan's own "do not call `self._now()` twice" had silently changed the field's meaning. [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §2.6/§4 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part A |
 | **CG-75** · a raising `_finish` re-sends the same job every second, unbounded | ✅ done (#58) | **Pre-existing; surfaced by CG-72's review, not caused by it.** `_finish` calls `self._log.record(...)` **before** the job leaves `_jobs`, and the delivered path never advances `next_attempt_at`. `DeliveryLog.record` does raw `mkdir`/`open`/`write` with **no guard** — so an `OSError` there propagates out of `process_due` with the job still due, and the next pass **sends it again**, once a second, forever. **Measured 2026-08-03, not reasoned about: one message, one successful send, then 60 passes → 60 SENDS TO GOOGLE in 60 seconds.** Exactly the failure `_journal_write`'s docstring exists to prevent for the journal, on the one write path that never got it. Severity **HIGH on impact**; the *"low likelihood"* half is now recorded as **an artifact of never having been deployed** — hence the CG-55 dependency (user decision 2026-08-02). [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §3 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part A** |
-| **CG-74** · `Dispatcher` and `HeartbeatMonitor` count no failures — CG-68's F3, counter half | 🚀 in-flight | **Filed by CG-72's Builder from its own pre-merge review (M1).** The liveness half shipped; the counter half did not. `retention.py` and `pubsub.py` both carry `*_failures` / `consecutive_*_failures` and a reason branch **above** their staleness branch — which is the only reason their *"wedged rather than erroring"* wording is true. ⚠ **Two `/healthz` strings now point at this row's absence in words**; building it means correcting them. ⚠ **The row's own claim is NARROWED by measurement (2026-08-03):** *"the staleness branch never fires at all"* holds for the **whole 72.5-minute backoff ladder** (measured worst staleness **1.0s** against a 600s budget over 400 passes) and then **stops holding** — at t=4350s the ladder exhausts, `_finish(job, "failed")` raises, and the retry path degenerates into CG-75's 1/second storm, which *does* trip staleness. The blindness is bounded and long, and what ends it is the failure getting worse. ⚠ Ships **after CG-75**, never concurrently — same two functions, same two strings. [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §5 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part B** |
+| **CG-74** · `Dispatcher` and `HeartbeatMonitor` count no failures — CG-68's F3, counter half | ✅ done ([#60](https://github.com/mmackelprang/chat-gateway/pull/60)) | **Filed by CG-72's Builder from its own pre-merge review (M1).** The liveness half shipped; the counter half did not. `retention.py` and `pubsub.py` both carry `*_failures` / `consecutive_*_failures` and a reason branch **above** their staleness branch — which is the only reason their *"wedged rather than erroring"* wording is true. ⚠ **Two `/healthz` strings now point at this row's absence in words**; building it means correcting them. ⚠ **The row's own claim is NARROWED by measurement (2026-08-03):** *"the staleness branch never fires at all"* holds for the **whole 72.5-minute backoff ladder** (measured worst staleness **1.0s** against a 600s budget over 400 passes) and then **stops holding** — at t=4350s the ladder exhausts, `_finish(job, "failed")` raises, and the retry path degenerates into CG-75's 1/second storm, which *does* trip staleness. The blindness is bounded and long, and what ends it is the failure getting worse. ⚠ Ships **after CG-75**, never concurrently — same two functions, same two strings. [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §5 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part B** |
 | **CG-76** · a failed heartbeat scan silently drops the dead-man alert | 📋 queued | **Filed by CG-74/CG-75's Planner, 2026-08-03, from the sibling sweep — and it is worse in kind than either.** `HeartbeatStore.due_alerts` marks the check (`status="missed"`, `last_alerted=now`) **under its lock, before** `_save()`, and `scan_once` only notifies what `due_alerts` returned. A raise anywhere downstream leaves the check marked alerted and the alert **never sent** — suppressed for the 24h repeat window, after which the next idle scan re-stamps `last_scan_at` and `/healthz` goes **green**. Measured, both variants; in the second `_save()` lands first, so the suppression is **on disk and survives a restart**. ⚠ **CG-75's fix does NOT rescue it** — measured separately: post-CG-75 the raise arrives from `enqueue`'s journal `open`, which is unguarded **by design**. Fixing it means reordering `due_alerts`/`scan_once` so persist and notify cannot succeed independently — a different design question, on a different class, with its own compensating-action decision. **The dead-man switch is aitrader's contract surface.** No plan yet. [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §2.4 |
 | **CG-71** · four `.start()`, zero `.stop()` — the runtime has no shutdown path | 📋 queued | CG-68's deferred L4, **measured and found broader**: not the retention row's missing cleanup but four threads with no shutdown path at all. ⚠ **`uvicorn.run()` does not return on SIGTERM** — a `try/finally` is a measured no-op. Depends on **CG-72** (same two classes; must not run concurrently). [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §5 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part B |
-| **CG-73** · ~~five~~ **three** print/persist sites bypass CG-29's allowlist | 📋 queued · ⚠ **narrowed 2026-08-03** | Filed by CG-71's Planner, **not folded in**. `retention.py` uses `describe_exception`; `delivery.py` and `heartbeat.py` interpolate a raw `{exc}`. **Drift in a hard-rule-#2 control, not a proven leak** — stated at that confidence. `test_error_surfaces.py` cannot see it: it reads construction sites of *marked* classes; these are print sites of unmarked ones. ⚠ **CG-74 closes TWO of the five as a side effect** — it rewrites both `_run` handlers to render `last_pass_error` / `last_scan_error` through `describe_exception`, and those handlers' prints are two of this row's sites. **The residue is three, all in `delivery.py`:** `_journal_write`'s print, and the **two that persist into the delivery log** (`process_due`'s `"attempt {n}: {exc}"` and `_finish`'s `"gave up after {n} attempts: {exc}"`) — which are the sharper two anyway, because they reach disk rather than a console. Counted down here rather than left at five: a count with two homes is this repo's own recorded failure mode. No plan yet. CG-71 spec §7 |
+| **CG-73** · ~~five~~ **three** print/persist sites bypass CG-29's allowlist | 📋 queued · ⚠ **narrowed 2026-08-03** | Filed by CG-71's Planner, **not folded in**. `retention.py` uses `describe_exception`; `delivery.py` and `heartbeat.py` interpolate a raw `{exc}`. **Drift in a hard-rule-#2 control, not a proven leak** — stated at that confidence. `test_error_surfaces.py` cannot see it: it reads construction sites of *marked* classes; these are print sites of unmarked ones. ⚠ **CG-74 closes TWO of the five as a side effect** — it rewrites both `_run` handlers to render `last_pass_error` / `last_scan_error` through `describe_exception`, and those handlers' prints are two of this row's sites. **The residue is three, all in `delivery.py`:** `_journal_write`'s print, and the **two that persist into the delivery log** (`process_due`'s `"attempt {n}: {exc}"` and `_finish`'s `"gave up after {n} attempts: {exc}"`) — which are the sharper two anyway, because they reach disk rather than a console. Counted down here rather than left at five: a count with two homes is this repo's own recorded failure mode. ⚠ **The *"not a proven leak"* above is now scoped to these three.** For the **two CG-74 closed** it was settled the other way on 2026-08-03 — measured, `main` vs branch, one home for the measurement and it is CG-74's row. No plan yet. CG-71 spec §7 |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
 | **CG-67** · `.gitignore` — stop `state/` from ever being committed | ✅ done (#48) | **Split out of CG-66 and promoted by the user**, because it is a live path to committing message bodies and CG-53/CG-55 are the rows that first run the gateway from the repo root. Config-only |
 
@@ -2443,7 +2488,7 @@ the mid-flight comment at `:297–301`.**
 
 ---
 
-### CG-74 · `Dispatcher` and `HeartbeatMonitor` count no failures  🚀 in-flight
+### CG-74 · `Dispatcher` and `HeartbeatMonitor` count no failures  ✅ done ([#60](https://github.com/mmackelprang/chat-gateway/pull/60))
 
 | | |
 |---|---|
@@ -2498,6 +2543,81 @@ sets.
 
 ⚠ **Closes two of CG-73's five sites** as a side effect (both `_run` prints).
 CG-73's row is counted down to three, not left at five.
+
+---
+
+**SHIPPED as [#60](https://github.com/mmackelprang/chat-gateway/pull/60),
+2026-08-03. Suite 333 → 345**, both ends measured, neither copied. Six fields,
+three of which degrade, each with its verdict in the guide's Degrades? column
+and a matching guard (or deliberate absence of one) in `service.py`'s chain.
+
+**The row's headline claim, demonstrated rather than argued.** Real uvicorn
+server, real loop threads, real HTTP, and a real kernel `PermissionError` from
+`chmod a-w` on the state dir — same harness on `main` as a control. A registered
+dead-man check went missed while the store could not persist:
+
+| | `main` (`74b457b`) | branch |
+|---|---|---|
+| `/healthz` `status` | **`ok`** | **`degraded`** |
+| `heartbeats.scan_failures` | *(no such field)* | `1` |
+| heartbeat `reasons` | *none* | names the loss |
+| `check.status` / `last_alerted` on disk | `missed` / stamped | `missed` / stamped |
+| notifications actually sent | **0** | **0** |
+
+Both sides drop the alert — that is **CG-76**, untouched here. What changed is
+that `main` called it healthy.
+
+**The dispatcher half, same method:** a real `OSError` out of the real `_run`
+loop drove `pass_failures` / `consecutive_pass_failures` to 6 with
+`last_pass_error: 'OSError'`, and at ≥3 the RAISED reason **replaced** the
+staleness reason — the ordering, observed live rather than only in a test.
+⚠ Note what this also confirms: post-CG-75 **no environmental fault reaches this
+counter**, because every filesystem write inside `process_due`/`_finish` is
+guarded. The dispatcher branch is defence-in-depth for *everything else that can
+raise*, and the demonstration had to raise deliberately to reach it. Said here
+rather than left for a reader to assume the disk door still exists.
+
+**Review: 0 HIGH, 2 MEDIUM, 3 LOW. Both MEDIUMs fixed** — neither a correctness
+bug, both rule-#5 honesty defects, which is the one class this row could not
+ship with.
+- **M2 — an absolute claim that was false, and it had already been measured.**
+  `scan_failures` was documented as *"the only thing standing between a
+  silently-dropped dead-man alert and a green /healthz"*. It is not: a notify
+  **refused for want of a route** raises `HTTPException(503)`, which
+  `_monitor_notify` **catches** — alert dropped, `scan_once` completes, no
+  counter moves, `/healthz` `ok`. Narrowed in `heartbeat.py` (wording only) and
+  pinned by `test_a_routeless_alert_is_dropped_without_raising_or_counting`,
+  whose docstring records that it is a hole rather than a contract and that
+  **CG-76 should turn it red**. ⚠ **Spec §5 still carries the absolute
+  sentence** — Planner's artifact, deliberately not edited here.
+- **M1 — two tests asserted a one-reason count from a state `_run` cannot
+  produce.** `_run` moves both scan counters in one `except`, so the real state
+  emits **two** `heartbeats:` reasons — the deliberate design, published in the
+  integration guide, and previously **untested**. A "fold `scan_failures` into
+  the elif chain" refactor would have stayed green while deleting the lost-alert
+  warning. Now pinned.
+- **L3 taken** (dead-thread must outrank the counter branch — reachable, and
+  nothing ranked it). **L1 deferred** (the reason's `pending_jobs` clause is
+  inherited verbatim from the sibling dead-thread string; tightening one alone
+  creates the inconsistency it would fix). **L2 deferred deliberately** — the
+  clear-order window that can render `(last: None)` is **byte-identical to
+  `RetentionSweeper._run`**; matching the established idiom is the point, and it
+  is recorded so the copy is a decision.
+
+**The reviewer also settled the ordering STRUCTURALLY, not just by test:**
+`_dispatch_stale_after` is 600 pass intervals and `_scan_stale_after` is ≥6 scan
+intervals for any settable `monitor_interval`, against a threshold of **3** on
+both. Every iteration either stamps or increments, so a raising loop trips the
+counter branch strictly before staleness is reachable. Reaching the staleness
+branch under threshold therefore *requires* a loop that is neither completing
+nor raising — which is exactly what the string now asserts.
+
+**No ⚠ verification-ledger flag cleared, added or reworded.**
+`git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"` → **0**;
+the full baseline `8 / 4 / 6 / 2 / 3` prints identically either side.
+`adapters/`, `docs/architecture/` and `errors.py`'s allowlist untouched —
+`OSError` stays unmarked, so both new error fields read exactly `"OSError"`,
+which is the lossy-on-purpose half of spec §5.
 
 ---
 
