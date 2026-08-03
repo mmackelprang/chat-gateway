@@ -16,6 +16,23 @@ throughout), and caught only because the reviewer read the endpoint's OTHER
 caller rather than the diff. The guard now applies only to a check that does not
 already exist; a refresh is never refused.
 
+**Also 2026-08-03 (Planner — CG-53's plan refreshed; the row is now
+DISPATCHABLE).** **CG-53's premise was re-run rather than re-quoted** — it is the
+one load-bearing fact in that row and it lives in a repo this one does not
+control, which is precisely CG-69's "external world" category. It **holds**, and
+one sentence of it was wrong in a way that matters: renaming our env vars would
+fix the API-key family and do **nothing** for the webhook family. **Ten drifts
+corrected in plan Part A across the NINE PRs that merged since it was written —
+two of them would have failed at runtime, not at review**, because
+`build_runtime()` grew a sixth return value and the deploy compose mounted the
+registry where its own env var did not point. ⚠ **The merge gate is NOT
+released** — it is the user's — but the row now states exactly what releasing it
+approves.
+⚠ *That paragraph said "eight PRs" and "still **345**" when it was written hours
+ago. **CG-76 landed as #63 mid-refresh** and falsified both — nine now, and the
+suite is **359**. Corrected on rebase rather than left standing, which is the
+same failure this queue keeps catching: a count copied into a second home.*
+
 ⚠ **The count moved four times, and that is the finding worth more than the
 number.** Door 1 was found by accident sweeping unguarded *writes* for CG-75.
 Door 2 by accident during CG-74's UAT, then independently by its reviewer.
@@ -1057,7 +1074,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 |---|---|---|
 | **CG-60** · repo-wide correction of the one-space premise | ✅ done (#44) | Plan Part H. Merge gate **released by the user 2026-07-31**; merged the same day. Consumer contracts. **Sequenced FIRST.** Filed **CG-62** |
 | **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | ✅ merged (#50) · ⏸ **operator action outstanding** | Gate released by the user; merged 2026-07-31 as `dced002`. ⚠ **Merging is not finishing** — the PR changed only `registry.example.yaml`; the **live gitignored registry edit is a separate operator action**, and **CG-55 depends on the live file**. ⚠ **Still outstanding — measured, not assumed:** `load_registry("config/registry.yaml")` at **2026-08-03 19:15:56Z** returned `aiteam-harness allow_inbound=True`, and the `allow_inbound` key is **absent** from that app's block (file mtime `2026-07-30T15:49:24Z`), so the `True` is the loader default — exactly D1's reasoning. Re-measure rather than trusting this line; it dates from before the edit, not after it. Suite 246 → 247. Plan Part I |
-| **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
+| **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued · ✅ **plan refreshed 2026-08-03** | ⏸ **merge gate** — secret-handling path; **held, the user's to release**, and the row now states exactly what releasing it approves (four things, **none of them a deploy**). ✅ **The premise was RE-MEASURED, not re-quoted** — it is the one load-bearing fact here and it lives in a repo this one does not control: through the homelab redactor's **real** `is_secret_key`, all seven credential vars still miss, and end to end through the **real** scan gate a payload keeping a live-shaped API key and webhook URL **exited 0**. ⚠ One correction: *"the `__<SUFFIX>` convention defeats it"* is only half right — bare `GOOGLE_CHAT_WEBHOOK_URL` is missed **anyway** (no `URL` suffix), so **renaming would not fix the webhook family**, the one secret with no rotate-in-place. ⚠ **Ten drifts found and corrected in Part A** across eight merged PRs — **two would have failed at runtime**: A2's `build_runtime()` unpack is now a **6**-tuple (CG-68's `sweeper`), and §5's compose mounted the registry where its own env var did not point. Also folded in: **CG-70's owed runbook line** (that row stays **open**), the real state tree (**four** directories hold tenant bodies; `quarantine/` is never swept), **D2's deferral** replacing an *"ACL lands BEFORE deploy"* claim, and `202`→**345**. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
 | **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | ✅ done (#46) | Filed by CG-54's Builder. Shipped 2026-07-31 after CG-60 (#44) cleared the way. Item 4's "four fields degrade" was **five** — measured, and the row records both |
 | **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, **CG-75**, **CG-76** (⚠ **the CG-76 dependency was NOT recorded on this row until 2026-08-03** — the user's 2026-08-02 pre-deploy-blocker decision existed, and `grep` found it named nowhere under either CG-55 entry. A first deploy whose dead-man switch has six ways to drop an alert with `/healthz` green is a first deploy that should not happen, and aitrader's contract surface is exactly that switch), **CG-75** (⚠ **added 2026-08-03, user decision** — this gateway has never run on a box with a real disk that can fill, so CG-75's *"low likelihood"* is an artifact of never having been deployed, and **CG-55 is the event that changes it**; a first deploy that can turn a full disk into an unbounded send storm against Google is a first deploy that should not happen), and ~~⚠ an **external homelab-repo prerequisite (D2)**~~ — ⏸ **D2's tailnet ACL is DEFERRED by the user, 2026-08-03. It no longer gates this row; the dependency is recorded, not deleted.** ⚠ **Paired with a second decision the same day that this row must BUILD: bind the published port to the LAN interface, not `0.0.0.0`** (both, with reasoning and residual, in the row). Part C |
@@ -1689,7 +1706,7 @@ and the second is why this row is **not** closed:
 
 ---
 
-### CG-53 · Deployment artifacts and the secret-safety proof (**no deploy**)  📋 queued
+### CG-53 · Deployment artifacts and the secret-safety proof (**no deploy**)  📋 queued · ✅ **plan refreshed 2026-08-03 — DISPATCHABLE**
 
 | | |
 |---|---|
@@ -1720,6 +1737,38 @@ credential, and has **no rotate-in-place** — recovery is delete-and-recreate b
 hand (`docs/google-cloud-setup.md` §8a), and this project already burned every
 webhook it owns once, on 2026-07-29, for a smaller mistake.
 
+✅ **RE-MEASURED 2026-08-03 — the premise HOLDS.** This is the single load-bearing
+fact in the row and **it lives in a file this project does not control**
+(`/mnt/d/prj/homelab`, read-only) — the "external world" category CG-69 classifies
+as watchable by no guard here — so it is re-run, not re-quoted. Through that
+repo's **real** `is_secret_key`: all seven credential vars miss;
+`GOOGLE_APPLICATION_CREDENTIALS` is the only catch and it is a path. End to end
+through the **real** redactor and the **real** scan gate, a payload carrying a
+live-shaped API key and webhook URL came back **with both values intact and the
+gate exited 0** — while a `POSTGRES_PASSWORD` control in the same payload was
+redacted, which is what makes that green console line persuasive rather than
+merely wrong. ⚠ The file **was edited on 2026-08-03**, but `SECRET_KEY_SUFFIXES`
+itself was untouched (18 entries, unchanged since before 2026-07-31); the commit
+added *reference* exemptions. **The direction of travel is toward more exemptions,
+not more catches.**
+
+⚠ **One correction to the sentence above, and it kills the cheap fix.** *"Exactly
+the two families"* is right that both leak, but **the two leak for different
+reasons and only one is the convention's doing**: bare `CHAT_GATEWAY_API_KEY`
+**is** caught, so `__<APP>` is what defeats it there — but bare
+`GOOGLE_CHAT_WEBHOOK_URL` is **missed anyway**, because the list has no `URL`
+entry (only `DATABASE_URL`). So *"rename the vars so the rule catches them"*
+would fix the API keys and do **nothing** for the webhook URLs — the
+higher-value secret, the one with no rotate-in-place. No value-based rule saves
+it either: the URL-credential regex wants `scheme://user:pass@host`, and a
+webhook carries `key`/`token` as **query parameters**. Structural containment is
+not the convenient answer; it is the only one.
+
+⚠ **And the capture is not opt-in.** That script derives its app set live from
+`app.query` filtered on `custom_app`, so `nas/compose/chat-gateway.config.json`
+appears **automatically** on the first capture after the app exists. Nobody
+chooses to capture the gateway; the leak would be a default.
+
 So the house-style deploy (inline `environment:`, then `capture.sh`) ends with
 **every API key and every webhook URL committed in plaintext to a sibling repo,
 under a script that printed `clean. safe to commit.`** That is the CG-23 / CG-34
@@ -1737,10 +1786,34 @@ someone else's compose renderer.**
 
 Four properties the loader must have, each with a reason: **the environment wins**
 over the file (an operator's override is never silently replaced, and it makes
-this a no-op in all 202 existing tests); **no new dependency** (~20 lines);
+this a no-op in all **345** existing tests — `202` until 2026-08-03, and the
+count belongs to the suite, not to this row); **no new dependency** (~20 lines);
 **a missing file is fatal** — a gateway that boots with no credentials answers
 `degraded` on an *unauthenticated* endpoint and otherwise looks alive, which is
 the shape rule #5 exists for; and **values are never logged**, only a count.
+
+✅ **All four re-tested 2026-08-03 against the codebase they did not grow up in**
+(CG-72/74/75/76 built the `/healthz` degrade machinery after they were written).
+**All four survive.** The *"missing file is fatal"* justification comes back
+**stronger and for a different reason**: the channel built to notice silence is
+the dead-man switch, and it reports by *sending a Chat message* — exactly what a
+credential-less gateway cannot do. Booting degraded would be invisible in the one
+place designed to catch invisibility, which is CG-76's finding applied to
+startup. Second-order effect now recorded rather than left to be discovered: under
+`restart: unless-stopped` a fatal config error is a **crash loop** — cheap (the
+process dies before the dispatcher exists, so **no** Google traffic) but it makes
+`docker logs` the first diagnostic, not `/healthz`.
+
+⚠ **"Environment wins" turned out to be load-bearing on the box, not just in
+tests — and it does NOT cover everything.** The `.env` transferred to the NAS is
+the dev box's, so the compose's three container paths correctly override its
+stale relative ones. **Two keys are not in the compose and so are not saved by
+it:** `GATEWAY_ENABLE_PUBSUB` (dev default `0` → inbound silently **off**) and
+`GOOGLE_APPLICATION_CREDENTIALS` (dev path → **boots clean, fails every tier-2
+call**, because `GoogleServiceAccountTokens.__init__` only stores the path and
+nothing stats the credential file, so `/healthz` cannot see it). The plan now
+declares the flag in the compose so the first fails **closed**, and carries an
+explicit in-container check for the second.
 
 **Also settled here, and each one is a correction to the brief:**
 
@@ -1786,6 +1859,14 @@ the shape rule #5 exists for; and **values are never logged**, only a count.
   in Gotchas:** that reachability is a property of *another app's* config — flip
   it to userspace mode and `tailscale0` vanishes from the host, taking every
   service's tailnet reachability with it, with nothing in our config to show why.
+  ⚠ **The measurement stands; its CONSEQUENCE inverted on 2026-08-03.** Being
+  reachable on every interface is now the thing to avoid, not the free win:
+  **CG-55 binds the LAN address**, so this port is deliberately **not**
+  tailnet-reachable, and the D2 ACL that would have fenced it is **deferred**.
+  One home for both halves — `docs/BUILDER_QUEUE.md` § CG-55, *"Two user
+  decisions, 2026-08-03"*. **CG-53 does not implement either**; it must only stop
+  asserting the old posture, which is what the Part A refresh did to the runbook's
+  Gotchas and the dev compose header.
   `tailscale` is **not** on the host PATH, so inspecting it means `docker exec`
   into another stack — which the plan's standing rules make a 🛑.
 
@@ -1806,6 +1887,56 @@ path resolves under the read-only `/config` mount.
 
 **Terraform is not in scope** and cannot be validated here — not installed, never
 applied. Same scope call CG-51 made.
+
+#### ✅ Plan Part A refreshed 2026-08-03 — the drift, found before a Builder hit it
+
+Part A was written 2026-07-31; **eight PRs merged before it was dispatched.**
+Nothing was built (`env_file.py` and `docs/deploy/` still do not exist), so every
+correction below is to the plan, not to code. **Two of these would have failed at
+runtime, not at review.**
+
+| # | Drift | Severity |
+|---|---|---|
+| 1 | **A2's `build_runtime()` unpack is a 5-tuple; it is now SIX** (CG-68 added `sweeper`). Retyping the plan's line drops it and `serve` dies at `sweeper.sweep()`. A2 now edits the `except` clause **only** | ⚠ would break |
+| 2 | **§5's compose could not have booted.** `CHAT_GATEWAY_REGISTRY=/config/registry.yaml` with the `config` dir mounted at `/config/config` → file at `/config/config/registry.yaml` → `RegistryError`, exit 2. Filed as *"verify it resolves"* when it was a thing to **fix**. `.env` now has its own mount point; nothing nests | ⚠ would break |
+| 3 | **The dev `.env` is not usable verbatim** — see the two-key table above. Part A said "scp `.env`" as though it were | ⚠ silent |
+| 4 | **§7 said "Run `capture.sh`" — that contradicts this plan's own standing rules**, where it is a 🛑 (it rewrites all ten stacks' files). Part C already had it right. Now: request the run, read the output | process |
+| 5 | **§8 carried D2 as decided-and-gating** (*"the ACL lands BEFORE this is deployed"*). **Deferred by the user 2026-08-03.** Corrected, with the LAN bind named as the replacing half | expired |
+| 6 | **§3's state tree was missing `quarantine/` and the retention sweep** (CG-65, CG-68). Now names **four** locations holding tenant bodies, which are swept and which never are | stale |
+| 7 | **CG-70's runbook line was absent** — that row's 2026-08-02 decision routes option (b) here explicitly. Folded into §3, with the disjoint-sets reasoning and ⚠ **it does not close CG-70** | owed |
+| 8 | **The split's justification was FALSE.** *"Matches both repos' conventions"* — measured, it matches neither: no `nas/services/*.md` links out of that repo, and `docs/consumers/*-handoff.md` names one file here. Decision unchanged, honesty restored | false claim |
+| 9 | **`202` → 345**, and A7 now says take it from the suite | stale |
+| 10 | **§8 said durability arrives "once Part B lands."** Part B landed as CG-54 (#45) | stale |
+
+**Also recorded, not fixed here:** Part C's C0 says *"the custom-app JSON
+**below**"* — that JSON is **above**, in Part A. Left for CG-55's Builder rather
+than edited, since that note is CG-55's. And `CLAUDE.md`'s final bullet still
+names `/srv/chat-gateway/` **on the appserver** as the deploy target, which the
+whole arc contradicts — untouched here because a Builder holds that file.
+
+**Deliberately NOT changed:** `"ports": ["8085:8085"]` in §5 stays the `0.0.0.0`
+form. It is **CG-55's** to change and is already recorded in that row.
+
+#### ⏸ What releasing the merge gate approves — so the decision is a real one
+
+**None of it is a deploy.** This row creates nothing on the NAS, touches no live
+registry, and clears/adds/rewords **no ⚠ verification flag**. Four things:
+
+1. **A new code path that reads a file into the process environment at startup** —
+   the first mechanism here whose *purpose* is to move credentials. Bounded by the
+   four properties, each with a test.
+2. **The judgement that this guarantee belongs in our code, not compose's
+   `env_file:`** — i.e. that a hard-rule-#2 guarantee must not rest on an
+   unverified property of a third-party renderer, at the price of ~20 lines this
+   repo maintains forever.
+3. **Publishing an on-box layout in a public repo** — paths, modes, and which four
+   directories hold tenant message bodies. **Env-var NAMES and paths only**; no
+   values, no hostnames, no key filenames.
+4. **The accepted residual:** `/healthz` stays unauthenticated and, after CG-55's
+   LAN bind, is reachable by anyone on the home LAN. The tailnet ACL is deferred.
+
+**Not approved by releasing it:** the deploy (CG-55, separately gated), the
+live-registry edit (CG-61), or the homelab-repo artifacts.
 
 ---
 
@@ -2414,6 +2545,12 @@ for a set of files that is **empty today**.
 - **(b) becomes one line in CG-53's runbook**, for the historical files (a)
   cannot reach — it belongs there because CG-53 already owns
   `install -d -m 0750`, not because it is better than (a).
+  ✅ **Written 2026-08-03** into plan **Part A §3**, with the disjoint-sets
+  reasoning and a verify pass that must print nothing. ⚠ **That does not close
+  this row and must not be read as closing it** — (b) covers only the historical
+  files, **(a) is still unbuilt**, and this row stays open for the four `src/`
+  sites. Part A says so in as many words, so a Builder reading either row alone
+  cannot conclude the other half is done.
 - **(c) rejected.**
 - **The row stays open and is NOT folded into CG-53.** Closing it was considered
   and is a legitimate outcome — it is LOW, no such file exists anywhere today,
