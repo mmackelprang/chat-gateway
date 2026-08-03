@@ -279,9 +279,16 @@ guarantee: the due date is computed, converted into `tz`, and then
 forward to Monday, in **your** timezone, default **`America/New_York`**. The
 deadline is `next_due + grace`.
 
-**Repeat** is daily (`DEFAULT_REPEAT_S = 86400`) until you refresh or delete, and
-the repeats collapse through the same deduper (`dedupe_key: "hb:<check_id>"`).
-The alert is `severity: alert`, so it takes your **alert** route:
+**Repeat** is daily (`DEFAULT_REPEAT_S = 86400`) until you refresh or delete.
+⚠ **This used to add "and the repeats collapse through the same deduper
+(`dedupe_key: "hb:<check_id>"`)". CG-76 removed that key, and the sentence was
+describing a false positive rather than a control.** The repeat window is 86400s
+and the deduper's is 3600s, so the deduper could never suppress an actual
+duplicate on this path — the monitor does not emit one — while it *could* and
+did suppress a **second, genuinely new outage** inside the hour: a source that
+died, recovered, refreshed and died again produced two outages and one alert.
+The dead-man path no longer passes a `dedupe_key` at all; `alert_due()` is its
+dedupe. The alert is `severity: alert`, so it takes your **alert** route:
 
 ```
 title: heartbeat missed: daily-trading-run
@@ -294,6 +301,19 @@ check** each call. So a refresh clears `status` back to `ok` and resets
 `last_alerted`, **and** lets you change `schedule`, `grace` or `tz` in place —
 there is no separate update call. Validation runs before any mutation, so a bad
 refresh leaves the existing check untouched.
+
+**Registration now fails fast if we could never alert you.** `POST /v1/heartbeat`
+resolves your `alert` route before storing the check and returns **422** if
+there isn't one. A dead-man check whose alert could never be routed is a check
+that goes missed and tells nobody, which is the one failure this feature exists
+to prevent (CG-76).
+
+**Alerts are at-least-once, not at-most-once.** A check is marked alerted only
+after its notification is accepted into the durable queue. If the gateway dies
+between sending and recording, you get the alert **twice** rather than not at
+all — the same trade the delivery queue's replay already makes, and for the same
+reason: a duplicate "heartbeat missed" costs you one redundant notification, a
+dropped one costs you the feature.
 
 **Persistence:** `<CHAT_GATEWAY_STATE_DIR>/heartbeats.json`, written atomically
 (temp file + replace). Checks survive a gateway restart.
