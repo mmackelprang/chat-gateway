@@ -674,3 +674,75 @@ def test_a_raising_scan_is_counted_but_the_cumulative_one_never_clears():
     assert mon.scan_failures == 2, "cumulative must NOT clear on recovery"
     assert mon.consecutive_scan_failures == 0
     assert mon.last_scan_error is None
+
+
+# --- CG-74: where the scan counter does NOT reach -----------------------------
+
+ROUTELESS_REGISTRY_YAML = REGISTRY_YAML.replace(
+    "    routes: {alert: aitrader-alerts, warning: aitrader-reports, "
+    "info: aitrader-reports}\n", "")
+assert "routes:" not in ROUTELESS_REGISTRY_YAML  # the replace really landed
+
+
+def test_a_routeless_alert_is_dropped_without_raising_or_counting(registry, tmp_path):
+    """This pins the LIMIT of CG-74's signal, NOT a behaviour worth keeping.
+
+    `HeartbeatMonitor.__init__` claimed `scan_failures` was "the only thing
+    standing between a silently-dropped dead-man alert and a green /healthz".
+    It is not, and the counter-example is here: an app with no `routes:` block
+    at all. `due_alerts` marks the check `missed` and stamps `last_alerted`
+    under its lock, then `_monitor_notify` gets an `HTTPException(503)` out of
+    `route_for` — no `alert` route, no `default` — CATCHES it, and writes a
+    delivery-log line. The alert is gone for the whole 24h repeat window and
+    `scan_once` returns normally, so no counter in this file moves and
+    `/healthz` stays `ok`.
+
+    **CG-76 is expected to change what this asserts.** When a dropped alert
+    becomes visible on `/healthz`, this test is the one that should go red —
+    the `scan_failures == 0` and `status == "ok"` assertions below are a record
+    of a hole, not a contract. Do not "fix" it by loosening them.
+    """
+    from pathlib import Path
+
+    import chat_gateway.registry as regmod
+
+    # Friday 2026-07-24 16:30 ET, the same clock the weekday dead-man case uses.
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    p = Path(str(tmp_path)) / "routeless.yaml"
+    p.write_text(ROUTELESS_REGISTRY_YAML, encoding="utf-8")
+    client, app, adapter = make_client(regmod.load_registry(p), clock, tmp_path)
+
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "weekdays", "grace": "2h"})
+    assert r.status_code == 200
+
+    # Monday past the grace deadline: the check really does come due.
+    clock.now = dt.datetime(2026, 7, 27, 23, 0, tzinfo=UTC)
+    assert app.state.monitor.scan_once() == 1
+
+    # ...and nothing was sent. Not queued-and-unsent either — `emit_notification`
+    # raised before `enqueue`, so draining the dispatcher changes nothing.
+    app.state.dispatcher.process_due()
+    assert adapter.sent == []
+    assert app.state.dispatcher.pending() == 0
+
+    # The check is nonetheless marked alerted, and the suppression is real: the
+    # next scan finds nothing due, so this alert is not coming back today.
+    state = client.get("/v1/heartbeat/aitrader", headers=AUTH).json()["checks"][0]
+    assert state["status"] == "missed" and state["last_alerted"]
+    assert app.state.monitor.scan_once() == 0
+
+    # The one trace it left is a delivery-log line — which is NOT a send.
+    log = app.state.delivery_log.query("aitrader")
+    assert [(e["kind"], e["status"]) for e in log] == [("heartbeat", "failed")]
+    assert "no route" in log[0]["detail"]
+
+    # And the part that makes this a defect rather than a curiosity: /healthz.
+    assert app.state.monitor.scan_failures == 0
+    assert app.state.monitor.consecutive_scan_failures == 0
+    assert app.state.monitor.last_scan_error is None
+    body = client.get("/healthz").json()
+    assert body["heartbeats"]["scan_failures"] == 0
+    assert body["heartbeats"]["last_scan_error"] is None
+    assert body["status"] == "ok"
+    assert not [r for r in body["reasons"] if r.startswith("heartbeats: ")]

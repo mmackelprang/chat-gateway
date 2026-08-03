@@ -199,9 +199,22 @@ class HeartbeatMonitor:
         #: `RetentionSweeper.errors`'s test — nothing for a later pass to
         #: recover from — so it takes `RetentionSweeper.errors`'s posture.
         #:
-        #: THE COUNTER IS NOT THE FIX. **CG-76** is. Until it lands this is the
-        #: only thing standing between a silently-dropped dead-man alert and a
-        #: green /healthz on an unauthenticated endpoint.
+        #: THE COUNTER IS NOT THE FIX. **CG-76** is. But what it covers until
+        #: then is NARROWER than "a dropped dead-man alert", and the gap is
+        #: MEASURED rather than reasoned about: this is the only /healthz signal
+        #: for a scan that RAISES, and a scan can drop an alert without raising.
+        #: A notify REFUSED FOR WANT OF A ROUTE is that path — `route_for` finds
+        #: neither an `alert` nor a `default` route for the source, so it raises
+        #: `RegistryError`, `emit_notification` converts that to
+        #: `HTTPException(503)`, and `service.py`'s `_monitor_notify` CATCHES it
+        #: and writes a `"failed" / "no route: ..."` delivery-log line. Nothing
+        #: propagates, `scan_once` completes, `last_scan_at` stamps. Run against
+        #: a real uvicorn server over real HTTP, with an app carrying no
+        #: `routes:` block and a real check gone missed: the check on disk read
+        #: `status: missed` with `last_alerted` set — suppressed for the whole
+        #: repeat window — zero notifications were sent, `scan_failures` stayed
+        #: 0, `last_scan_error` stayed None, and /healthz answered `ok`. Pinned
+        #: by `test_a_routeless_alert_is_dropped_without_raising_or_counting`.
         self.scan_failures = 0
         self.consecutive_scan_failures = 0
         #: See `Dispatcher.last_pass_error` — same helper, same reasoning.
