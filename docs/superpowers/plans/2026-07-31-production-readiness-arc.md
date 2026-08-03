@@ -1406,6 +1406,21 @@ shapes, so the assurance is worth exactly nothing here. Read the file. (Running
 
 ### C0 · Two prerequisites — check BOTH before anything else
 
+> ⚠ **AMENDED 2026-08-03 — (a) IS NO LONGER A STOP.** The user **deferred** the
+> tailnet ACL: still wanted, no longer gating this deploy. The paragraph below is
+> kept as the record of D2 as decided on 2026-07-31; **this note is the currency
+> pointer.** Do **not** stop on (a). Instead **observe and record** whether the
+> ACL is applied, and write the answer into the runbook's *Executed* section, so
+> the deploy's exposure posture is a stated fact rather than an assumption. The
+> decision, the user's reasoning, and what the deferral accepts live in **one**
+> place: `docs/BUILDER_QUEUE.md` § CG-55, *"Two user decisions, 2026-08-03"*. Do
+> not restate them here.
+> ⚠ **Read that section before building Part C regardless** — it carries a second
+> decision of the same day that this Part must BUILD: **the published port binds
+> the LAN interface, not `0.0.0.0`.** The custom-app JSON below still says
+> `"ports": ["8085:8085"]`; that is the `0.0.0.0` form and it is what changes.
+> **(b) is untouched and still a STOP.**
+
 **(a) The homelab tailnet ACL must already be applied (D2).** The endpoint is
 fenced from the start, never afterwards. ⚠ **This is homelab-repo work a
 chat-gateway Builder cannot do** — if it is not done, **STOP and report**; do not

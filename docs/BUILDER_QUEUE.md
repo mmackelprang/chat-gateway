@@ -16,6 +16,17 @@ hide a full disk, and it does not.
 ⚠ **CG-55's CG-75 dependency is now satisfied.** CG-61's live-registry operator
 action and the D2 tailnet ACL still gate it.
 
+⚠ **Amended 2026-08-03 (Planner, user decision): the D2 tailnet ACL is DEFERRED
+and no longer gates CG-55.** The line above is left standing as the record of
+where the arc stood when CG-75 shipped; this is the currency pointer. **CG-61's
+live-registry operator action still gates CG-55** — measured against the real
+loader at **2026-08-03 19:15:56Z (15:15 EDT)** and **not yet done**. Deferred is
+not cancelled and not deleted, and it does not stand alone: the same day the user
+also decided **CG-55 binds its published port to the LAN interface rather than
+`0.0.0.0`**, which is what makes the deferral sound rather than merely
+approximately sound. Both decisions, their reasoning, and what they do and do not
+buy are recorded together in **CG-55's row**.
+
 **Previously (Planner, same day): CG-74 + CG-75 specced and planned; CG-76 filed;
 CG-55 gained a dependency.**
 
@@ -942,11 +953,11 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | Item | State | Note |
 |---|---|---|
 | **CG-60** · repo-wide correction of the one-space premise | ✅ done (#44) | Plan Part H. Merge gate **released by the user 2026-07-31**; merged the same day. Consumer contracts. **Sequenced FIRST.** Filed **CG-62** |
-| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | ✅ merged (#50) · ⏸ **operator action outstanding** | Gate released by the user; merged 2026-07-31 as `dced002`. ⚠ **Merging is not finishing** — the PR changed only `registry.example.yaml`; the **live gitignored registry edit is a separate operator action**, and **CG-55 depends on the live file**. Suite 246 → 247. Plan Part I |
+| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | ✅ merged (#50) · ⏸ **operator action outstanding** | Gate released by the user; merged 2026-07-31 as `dced002`. ⚠ **Merging is not finishing** — the PR changed only `registry.example.yaml`; the **live gitignored registry edit is a separate operator action**, and **CG-55 depends on the live file**. ⚠ **Still outstanding — measured, not assumed:** `load_registry("config/registry.yaml")` at **2026-08-03 19:15:56Z** returned `aiteam-harness allow_inbound=True`, and the `allow_inbound` key is **absent** from that app's block (file mtime `2026-07-30T15:49:24Z`), so the `True` is the loader default — exactly D1's reasoning. Re-measure rather than trusting this line; it dates from before the edit, not after it. Suite 246 → 247. Plan Part I |
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
 | **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | ✅ done (#46) | Filed by CG-54's Builder. Shipped 2026-07-31 after CG-60 (#44) cleared the way. Item 4's "four fields degrade" was **five** — measured, and the row records both |
-| **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, **CG-75** (⚠ **added 2026-08-03, user decision** — this gateway has never run on a box with a real disk that can fill, so CG-75's *"low likelihood"* is an artifact of never having been deployed, and **CG-55 is the event that changes it**; a first deploy that can turn a full disk into an unbounded send storm against Google is a first deploy that should not happen), and ⚠ an **external homelab-repo prerequisite (D2)**. Part C |
+| **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, **CG-75** (⚠ **added 2026-08-03, user decision** — this gateway has never run on a box with a real disk that can fill, so CG-75's *"low likelihood"* is an artifact of never having been deployed, and **CG-55 is the event that changes it**; a first deploy that can turn a full disk into an unbounded send storm against Google is a first deploy that should not happen), and ~~⚠ an **external homelab-repo prerequisite (D2)**~~ — ⏸ **D2's tailnet ACL is DEFERRED by the user, 2026-08-03. It no longer gates this row; the dependency is recorded, not deleted.** ⚠ **Paired with a second decision the same day that this row must BUILD: bind the published port to the LAN interface, not `0.0.0.0`** (both, with reasoning and residual, in the row). Part C |
 | **CG-56** · inbox delivery semantics: at-most-once → ack | 📋 queued | ✅ **APPROVED (D3)** — opt-in per request; default path unchanged. Part D |
 | **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
@@ -975,6 +986,15 @@ recorded in spec §7 with their reasoning. Two of them change this sequence:**
 the start rather than fenced afterwards*. That is **homelab-repo work a
 chat-gateway Builder cannot perform**; CG-60, CG-61, CG-53 and CG-54 all proceed
 in parallel with it, and only CG-55 waits.
+
+⚠ **The ACL half of that paragraph was AMENDED by the user on 2026-08-03 — the
+paragraph is kept because it records what was decided on 2026-07-31, and this is
+what changed since.** The ACL is **deferred, not cancelled**: it is still wanted,
+it is simply no longer a blocker on CG-55, so **CG-55 no longer waits on
+homelab-repo work.** What still gates it is all **in this queue**: **CG-53**
+(📋 queued) and **CG-61's live-registry operator action** (measured outstanding —
+see its row). CG-54 and CG-75 are done. The reasoning and the accepted residual
+live in **CG-55's row** — one home, not three.
 
 ⚠ **A second exception to "the table order", added 2026-08-03: CG-75 must
 precede CG-55**, exactly as CG-61 does, and for a structurally identical reason —
@@ -2825,10 +2845,134 @@ as unnoticed:
 
 | | |
 |---|---|
-| **Depends on** | **CG-53** (artifacts), **CG-54** (durability), **CG-61** (in the LIVE registry — D1), and ⚠ an **external prerequisite in the homelab repo: the drafted tailnet ACL, applied (D2)** |
+| **Depends on** | **CG-53** (artifacts), **CG-54** (durability), **CG-75** (the storming write path), **CG-61** (in the LIVE registry — D1), and ~~⚠ an **external prerequisite in the homelab repo: the drafted tailnet ACL, applied (D2)**~~ — ⏸ **DEFERRED by the user 2026-08-03, paired with a bind-to-LAN design decision this row must honour: see *"Two user decisions, 2026-08-03"* below.** No external prerequisite remains |
 | **Touches** | `docs/deploy/nas.md` § *Executed* only. The homelab-side artifacts land in **that** repo |
 | **Merge gate** | ⏸ **YES — deploy + secret-handling path** |
 | **Spec / plan** | [spec §4.3 + §4.3.1](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part C + standing rules](superpowers/plans/2026-07-31-production-readiness-arc.md) |
+
+#### ✅ Two user decisions, 2026-08-03 — read BOTH before building this row
+
+**They are one decision in two halves, not two decisions.** D2's tailnet ACL is
+**deferred**; CG-55 **binds to the LAN interface** instead of `0.0.0.0`. The bind
+is what makes the deferral sound rather than merely approximately sound, so
+neither half reads correctly on its own.
+
+##### 1 · ✅ Bind the published port to the LAN interface, not `0.0.0.0`
+
+**A design decision this row must honour when it is built.** `0.0.0.0` publishes
+on *every* interface the host has, and that box has a real `tailscale0`
+(spec §0.2.3). Binding the LAN address makes **"LAN-only" true in fact rather
+than by convention** — a tailnet peer cannot reach `/healthz` whatever the ACL
+says. That is what converts the ACL from a security gate this project carries
+debt on into a **remote-access enabler for later**.
+
+⚠ **Nothing is leaking today, and this must not be read as though something is.**
+The gateway **has never been deployed** (ADR-0002 §8); **this row is the first
+deploy and it is still queued.** This decides what CG-55 *does*, not what some
+running instance stops doing.
+
+⚠ **The bind does not replace the ACL — any more than CG-61's registry edit
+does.** It removes tailnet reach **to this port**. It says nothing about the rest
+of that box or the rest of the tailnet, and `network/tailnet.md`'s own line —
+*"the ACL is the only boundary between tailnet peers and other NAS services"* —
+stays true and is **not this row's business**.
+
+⚠ **And the fencing is CONTINGENT, which is the part a later reader would
+otherwise get wrong.** A LAN bind fences the tailnet **only while no tailnet
+subnet route to `192.168.86.0/24` exists.** Measured in the homelab repo
+2026-08-03: **~2 tailnet devices** (the NAS and Mark's admin device), and
+**appserver is `(planned — Task 2)`** — the node whose entire job is to advertise
+exactly that `/24` and act as exit node. **The day that route is live, a tailnet
+peer reaches the LAN address *through* it and the bind stops being a boundary;
+the ACL becomes one again.** The drafted ACL already anticipates this — its
+`tests` block explicitly **denies** teammates `192.168.86.47:443` and siblings
+*"via the LAN subnet route"*. So D2's re-trigger is **the subnet router**, and
+that is the very same event the user's own trigger names: the remote-access work
+*is* the subnet router.
+
+**What this row must change when built** — recorded so it is not rediscovered on
+the box:
+
+| Artifact | Today | Must become |
+|---|---|---|
+| arc plan **Part C**, the TrueNAS custom-app JSON | `"ports": ["8085:8085"]` — Docker binds `0.0.0.0` | the LAN-address form, `"<LAN-IP>:8085:8085"` |
+| arc spec **§7 D2**'s vantage-point table | *"`curl 127.0.0.1:8085/healthz` **on the NAS, over SSH**"* | ⚠ **loopback is NOT bound under a LAN-address publish** — the smoke curl must use the LAN address |
+
+**Already consistent — no change:** plan Part C's smoke item 1 already says
+*"`/healthz` on the **LAN address**"*, and the Homepage tile's `siteMonitor` was
+always on the LAN IP by homelab convention. That convention is now
+**load-bearing** rather than incidental.
+
+**Resolve the address on the box; do not hardcode it out of a document.** The
+homelab records `192.168.86.47` as static and *"load-bearing — everything
+references `.47`"*, and `reservations.md` also carries an **unconfirmed**
+router-side reading that contradicts it. Fail closed on the real interface, the
+same way this row already fails closed on the app name.
+
+**Not built here.** If honouring this needs anything beyond the app JSON's port
+form, that is **CG-55's** work to build — a bookkeeping row records decisions, it
+does not write config.
+
+##### 2 · ⏸ D2's tailnet ACL is DEFERRED — still wanted, no longer gating
+
+**Recorded with its reasoning rather than compressed to a status word.** The ACL
+was D2's mitigation and it is **still wanted**; what changed is that it no longer
+blocks this deploy.
+
+> **"The first several weeks/months of usage will all be on the local network
+> before a remote team member will need access. We don't want to lose tailscale
+> accessibility, but should deprioritize it for now."**
+
+**Deferred is not cancelled, and the dependency is struck through rather than
+deleted.** A deleted dependency is indistinguishable from one nobody thought
+about. Same shape as CG-60's *"merge gate released by the user"* and CG-68's
+*"sequencing only"*: the gate is named, the release is dated and attributed, and
+the thing gated stays on the map.
+
+**Why the deferral is sound — because of decision 1, not despite the residual.**
+The stated reasoning bounds where **we** connect from, not who can reach a
+`0.0.0.0`-bound port; a review of the live tailnet state surfaced that gap, and
+the user closed it **by changing the bind** rather than by accepting it. With the
+LAN bind, *"the first several weeks/months are local"* stops being a description
+of intended usage and becomes a property of the socket.
+
+**The exposure that remains has ONE home, and it is not this row.** `/healthz` is
+unauthenticated by design, and the reasoning for why `suppressed_opt_out` is a
+de-facto activity meter for `aitrader` **by inference** lives in `CLAUDE.md`'s
+**CG-12 bullet** (*"Suppressed inbound is COUNTED, never RECORDED"*). **Read it
+there — it is deliberately not restated here.** A moving fact with two homes is
+this repo's own recorded failure mode (the test count, the space membership).
+
+**What the deferral still accepts, stated rather than glossed:** LAN-local
+unauthenticated reach to the counters — which **the ACL never governed anyway**
+(spec §7 D2 states that residual in terms), so the ACL was never the control for
+it; plus tailnet reach again the moment a subnet route to the LAN exists, per
+decision 1's contingency. Measured state of the ACL itself, 2026-08-03: the live
+policy is still the **default allow-all** captured 2026-07-28 (a single
+`{src:["*"], dst:["*"], ip:["*"]}` grant); the tightening exists only as
+`network/tailscale-acl.hujson` on the **unmerged, local-only** branch
+`feat/remote-access`; its applier script is **untracked** on `main`; and the draft
+**cannot be pasted as-is** — a deliberate `PLACEHOLDER-teammate@example.com`
+fails console validation on purpose.
+
+**CG-61's live-registry edit does NOT replace the ACL either, and this row must
+not be read as though it does.** Once `aiteam-harness` is also opted out,
+`suppressed_opt_out` pools more than one tenant and stops decomposing to
+`aitrader` — real, and already recorded in `CLAUDE.md` and in **arc spec §7 D2**,
+which says it in terms: ***"Partial, not complete", and "it is not a reason to
+skip the ACL."*** Nothing here weakens that. The registry edit narrows
+attributability; it does not authenticate the endpoint.
+
+**Re-priced by an event, not a date — and the two candidate events are the same
+event.** The user's trigger is *"before a remote team member will need access"*;
+decision 1's trigger is the subnet router. Remote access **is** the subnet router.
+The draft, the applier and the `tests` block all already exist in the homelab
+repo, so landing it then is paste-and-validate, not design.
+
+⚠ **The plan's `C0 · Two prerequisites` still tells a Builder to STOP if the ACL
+is not applied.** That instruction predates this decision; it is amended in place
+by a dated note at plan **Part C, C0(a)**. Prerequisite **(b) — CG-61 in the live
+registry — is unchanged and still fail-closed. Run it.**
 
 **Builder-executed over SSH.** ⚠ **This supersedes the "USER-EXECUTED, CG-15/CG-16
 pattern" this row carried until 2026-07-31.** `ssh claude@nas` works with
