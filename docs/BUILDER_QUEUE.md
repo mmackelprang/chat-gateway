@@ -2877,19 +2877,6 @@ of that box or the rest of the tailnet, and `network/tailnet.md`'s own line —
 *"the ACL is the only boundary between tailnet peers and other NAS services"* —
 stays true and is **not this row's business**.
 
-⚠ **And the fencing is CONTINGENT, which is the part a later reader would
-otherwise get wrong.** A LAN bind fences the tailnet **only while no tailnet
-subnet route to `192.168.86.0/24` exists.** Measured in the homelab repo
-2026-08-03: **~2 tailnet devices** (the NAS and Mark's admin device), and
-**appserver is `(planned — Task 2)`** — the node whose entire job is to advertise
-exactly that `/24` and act as exit node. **The day that route is live, a tailnet
-peer reaches the LAN address *through* it and the bind stops being a boundary;
-the ACL becomes one again.** The drafted ACL already anticipates this — its
-`tests` block explicitly **denies** teammates `192.168.86.47:443` and siblings
-*"via the LAN subnet route"*. So D2's re-trigger is **the subnet router**, and
-that is the very same event the user's own trigger names: the remote-access work
-*is* the subnet router.
-
 **What this row must change when built** — recorded so it is not rediscovered on
 the box:
 
@@ -2912,6 +2899,19 @@ same way this row already fails closed on the app name.
 **Not built here.** If honouring this needs anything beyond the app JSON's port
 form, that is **CG-55's** work to build — a bookkeeping row records decisions, it
 does not write config.
+
+> **Note — a caveat to revisit later, not a qualification of the decision above.**
+> The bind fences the tailnet **while no tailnet subnet route to
+> `192.168.86.0/24` exists** — which is the state measured in the homelab repo on
+> 2026-08-03: **~2 tailnet devices** (the NAS and Mark's admin device), with
+> **appserver still `(planned — Task 2)`**, that being the node whose job is to
+> advertise exactly that `/24`. **If that route goes live, a tailnet peer can
+> reach the LAN address through it, and the ACL — not the bind — is the boundary
+> again.** The drafted ACL already anticipates it: its `tests` block **denies**
+> teammates `192.168.86.47:443` and siblings *"via the LAN subnet route"*. **So
+> D2's re-trigger is the subnet router** — the same event the user's own trigger
+> names, since the remote-access work *is* the subnet router. **Revisit then;
+> nothing to do now.**
 
 ##### 2 · ⏸ D2's tailnet ACL is DEFERRED — still wanted, no longer gating
 
