@@ -1318,6 +1318,20 @@ def _pretend_alive(loop):
     loop.is_alive = lambda: True
 
 
+def _pretend_dead(loop):
+    """Started and NOT alive — the state both chains rank above everything else.
+
+    Reachable with the counters non-zero, and the door is documented on
+    `Dispatcher.is_alive`: `_run` survives what the work function raises, but not
+    what its own handler raises, and that handler `print`s. Three raising passes
+    followed by a `print` that dies (a closed stdout on a detached process is the
+    shape) leaves exactly this — a dead thread with `consecutive_*_failures` at
+    the threshold.
+    """
+    loop._started = True
+    loop.is_alive = lambda: False
+
+
 def test_consecutive_pass_failures_degrade_at_the_threshold(env):
     from chat_gateway.service import DISPATCH_FAILURE_THRESHOLD
 
@@ -1414,6 +1428,17 @@ def test_a_raising_and_a_wedged_monitor_produce_different_reasons(env):
 
     Same ordering guarantee as the dispatcher row above, and the same reason it
     matters — a raising monitor is also a stale one.
+
+    THE COUNTERS ARE SET THE WAY `_run` SETS THEM, and that is a correction:
+    this case used to assign `consecutive_scan_failures` alone and then assert
+    `len(...) == 1`. `_run` increments BOTH in one `except`, so
+    `consecutive_scan_failures > 0` implies `scan_failures >= consecutive`, and
+    the old state was unreachable — the count it pinned was an artefact of the
+    setup, not a property of the endpoint. In production a raising monitor
+    prints TWO `heartbeats:` reasons, which is the deliberate design and is
+    pinned by the row below. What this case is actually for survives unchanged:
+    a raising monitor and a wedged one must not produce the SAME reason, so the
+    assertions move from counting to content.
     """
     from chat_gateway.service import SCAN_FAILURE_THRESHOLD
 
@@ -1424,19 +1449,127 @@ def test_a_raising_and_a_wedged_monitor_produce_different_reasons(env):
     mon.last_scan_at = (dt.datetime.now(dt.timezone.utc)
                         - dt.timedelta(seconds=budget + 60))
 
-    # Stale and RAISING.
+    # Stale and RAISING — both counters, as one trip through `_run`'s `except`
+    # would leave them.
+    mon.scan_failures = SCAN_FAILURE_THRESHOLD
     mon.consecutive_scan_failures = SCAN_FAILURE_THRESHOLD
     mon.last_scan_error = "OSError"
     raising = [r for r in client.get("/healthz").json()["reasons"]
                if r.startswith("heartbeats: ")]
-    assert len(raising) == 1
-    assert "consecutive scans have RAISED" in raising[0] and "(last: OSError)" in raising[0]
+    from_chain = [r for r in raising if "consecutive scans have RAISED" in r]
+    assert len(from_chain) == 1, "the elif chain must produce exactly one reason"
+    assert "(last: OSError)" in from_chain[0]
+    assert not [r for r in raising if "WEDGED rather than erroring" in r]
 
-    # Stale and NOT raising — same staleness, different answer.
+    # Stale and NOT raising — same staleness, different answer. Both counters at
+    # zero is the reachable spelling of "this loop has never raised": one is
+    # cleared by recovery, the other never had to move.
+    mon.scan_failures = 0
     mon.consecutive_scan_failures = 0
     mon.last_scan_error = None
     wedged = [r for r in client.get("/healthz").json()["reasons"]
               if r.startswith("heartbeats: ")]
     assert len(wedged) == 1
     assert "WEDGED rather than erroring" in wedged[0]
-    assert wedged[0] != raising[0]
+    assert wedged[0] != from_chain[0]
+
+
+def test_a_raising_monitor_prints_two_heartbeat_reasons_not_one(env):
+    """The two-reason shape `docs/integration-guide.md` publishes, pinned.
+
+    That guide tells consumers the `heartbeats.*` liveness triple emits **at
+    most one** `reasons` entry, and that `heartbeats.scan_failures` can print a
+    **second** one beside it because "has an alert already been lost" is a
+    different question from "is this loop running". Until now nothing tested it,
+    and the case above asserted a one-reason count from a state `_run` cannot
+    produce, which is the opposite claim.
+
+    This is also the state an operator actually meets — `_run` moves both
+    counters together — and it is what would keep a "fold `scan_failures` into
+    the elif chain" refactor honest: that change compiles, keeps the wedged case
+    green, and silently deletes the lost-alert warning.
+    """
+    from chat_gateway.service import SCAN_FAILURE_THRESHOLD
+
+    client, _inbox, _adapter = env
+    mon = client.app.state.monitor
+    _pretend_alive(mon)
+    mon.last_scan_at = dt.datetime.now(dt.timezone.utc)   # fresh: staleness is not the subject
+    mon.scan_failures = SCAN_FAILURE_THRESHOLD
+    mon.consecutive_scan_failures = SCAN_FAILURE_THRESHOLD
+    mon.last_scan_error = "OSError"
+
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    hits = [r for r in body["reasons"] if r.startswith("heartbeats: ")]
+    assert len(hits) == 2, hits
+    live = [r for r in hits if "consecutive scans have RAISED" in r]
+    lost = [r for r in hits if "may already have been lost" in r]
+    assert len(live) == 1 and len(lost) == 1
+    assert "(last: OSError)" in live[0]
+    assert f"{SCAN_FAILURE_THRESHOLD} scan(s) have raised since start" in lost[0]
+
+
+def test_a_dead_dispatch_thread_outranks_the_raising_counter(env):
+    """ORDERING again, one rung up: dead-thread must beat the counter branch.
+
+    The suite pinned counter-over-staleness on both chains and nothing pinned
+    this, so moving the counter branch above the dead-thread one — the obvious
+    "match `retention.*`'s order" refactor — went green. It must not: a dead
+    thread will never increment another counter, so "3 consecutive passes have
+    RAISED" would be a stale reading offered as a live one, and it ends in
+    "`pending_jobs` will climb" where the actionable answer is *restart*.
+    """
+    from chat_gateway.service import (DISPATCH_FAILURE_THRESHOLD,
+                                      DISPATCH_STALE_AFTER_SECONDS)
+
+    client, _inbox, _adapter = env
+    dispatch = client.app.state.dispatcher
+    _pretend_dead(dispatch)
+    # Stale as well, because a dead loop stops stamping: all three lower
+    # branches are live and exactly one reason may come back.
+    dispatch.last_pass_at = (dt.datetime.now(dt.timezone.utc)
+                             - dt.timedelta(seconds=DISPATCH_STALE_AFTER_SECONDS + 60))
+    dispatch.pass_failures = DISPATCH_FAILURE_THRESHOLD
+    dispatch.consecutive_pass_failures = DISPATCH_FAILURE_THRESHOLD
+    dispatch.last_pass_error = "OSError"
+
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    hits = [r for r in body["reasons"] if r.startswith("delivery: ")]
+    assert len(hits) == 1
+    assert "NOT RUNNING" in hits[0] and "restart the service" in hits[0]
+    assert "RAISED" not in hits[0]
+    assert "WEDGED rather than erroring" not in hits[0]
+
+
+def test_a_dead_scan_thread_outranks_the_raising_counter(env):
+    """The heartbeat twin of the row above, and it counts to TWO on purpose.
+
+    The chain still emits exactly one entry and it is still the dead-thread one.
+    The second `heartbeats:` line is `scan_failures`, which lives OUTSIDE the
+    chain by design — so the assertion is scoped to the chain's three strings
+    rather than to the block's total, which would have made this row fail for a
+    reason that has nothing to do with ordering.
+    """
+    from chat_gateway.service import SCAN_FAILURE_THRESHOLD
+
+    client, _inbox, _adapter = env
+    mon = client.app.state.monitor
+    _pretend_dead(mon)
+    budget = client.get("/healthz").json()["heartbeats"]["stale_after_seconds"]
+    mon.last_scan_at = (dt.datetime.now(dt.timezone.utc)
+                        - dt.timedelta(seconds=budget + 60))
+    mon.scan_failures = SCAN_FAILURE_THRESHOLD
+    mon.consecutive_scan_failures = SCAN_FAILURE_THRESHOLD
+    mon.last_scan_error = "OSError"
+
+    body = client.get("/healthz").json()
+    assert body["status"] == "degraded"
+    hits = [r for r in body["reasons"] if r.startswith("heartbeats: ")]
+    assert len(hits) == 2, hits
+    from_chain = [r for r in hits if "may already have been lost" not in r]
+    assert len(from_chain) == 1
+    assert "NOT RUNNING" in from_chain[0] and "restart the service" in from_chain[0]
+    assert "consecutive scans have RAISED" not in from_chain[0]
+    assert "WEDGED rather than erroring" not in from_chain[0]
