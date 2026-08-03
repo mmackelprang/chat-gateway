@@ -872,6 +872,13 @@ def test_a_job_journalled_during_a_finish_survives_the_drain_compaction(tmp_path
 # refusal. `ENOSPC` and `EACCES` reach `record` identically — both are an
 # `OSError` out of `mkdir`/`open` — so an unwritable parent is a faithful
 # stand-in for the full disk that cannot be staged in a unit test.
+#
+# TWO injection helpers, and picking the wrong one is how these tests stopped
+# reproducing the defect once already. `_unwritable_audit_dir` breaks the path
+# BEFORE any `DeliveryLog` exists — the right shape for `record` in isolation
+# and for the enqueue-refuses case. `_break_audit_dir` breaks an audit dir that
+# is already populated, which is the only way to reach the storm, because the
+# disk has to fill AFTER the enqueue that the storm re-sends.
 # --------------------------------------------------------------------------
 
 @contextlib.contextmanager
@@ -895,6 +902,48 @@ def _unwritable_audit_dir(tmp_path):
         yield parent / "deliveries"
     finally:
         os.chmod(parent, stat.S_IRWXU)
+
+
+@contextlib.contextmanager
+def _break_audit_dir(audit_dir: Path):
+    """Make an ALREADY-POPULATED audit dir refuse every further write.
+
+    The sibling above cannot serve the storm tests. It breaks the path before
+    the `DeliveryLog` is even constructed, and `Dispatcher.enqueue`'s very first
+    statement is `self._log.record(...)` — so on PRE-FIX code those tests raised
+    out of `enqueue` and never reached a single `process_due`. Red, but for the
+    wrong reason. The CG-75 sequence needs the enqueue to succeed first: one
+    accepted job, one successful send, and only THEN a disk that will not take
+    the record.
+
+    Why the day FILE is chmodded and not only the directory — measured, not
+    assumed: `Path.mkdir(parents=True, exist_ok=True)` on an EXISTING directory
+    does not raise even inside an unwritable parent, because CPython returns
+    early when `exist_ok and self.is_dir()` and swallows the EACCES. That is the
+    same measurement that made the sibling leave its directory uncreated, and
+    here the directory necessarily exists — the enqueue made it. So the refusal
+    has to come from `record`'s `path.open("a")` on a read-only day file. The
+    directory's own `r-x` is the second half: it stops a NEW day file from being
+    created, so a UTC date roll mid-test cannot quietly restore writability
+    (`record` names its file after `_utcnow()`, not after the injected clock).
+
+    Both modes are restored in a `finally` so pytest can clean `tmp_path` up.
+    """
+    if sys.platform == "win32":  # pragma: no cover - POSIX mode bits
+        pytest.skip("POSIX mode bits; a Windows ACL is a different mechanism")
+    if os.getuid() == 0:  # pragma: no cover - root ignores the mode bits
+        pytest.skip("running as root — an unwritable directory does not bite")
+    day_files = sorted(audit_dir.iterdir())
+    assert day_files, "nothing to break: the enqueue wrote no day file"
+    for day_file in day_files:
+        os.chmod(day_file, stat.S_IRUSR)              # 0400: open("a") raises
+    os.chmod(audit_dir, stat.S_IRUSR | stat.S_IXUSR)  # r-x: no new day file either
+    try:
+        yield audit_dir
+    finally:
+        os.chmod(audit_dir, stat.S_IRWXU)
+        for day_file in day_files:
+            os.chmod(day_file, stat.S_IRUSR | stat.S_IWUSR)
 
 
 class CountingBoomAdapter(BoomAdapter):
@@ -953,14 +1002,30 @@ def test_a_failing_audit_write_does_not_resend_the_job(tmp_path):
 
     One enqueued notification, one successful send, and an audit trail that
     cannot be written. Every subsequent pass must send NOTHING.
+
+    THE ORDERING IS THE TEST, and it is not incidental: the `enqueue` happens
+    while the audit dir is still writable, and only then does the disk fill.
+    An audit dir broken from the start raised out of `enqueue`'s own opening
+    `record(...)` on pre-fix code, so the job was never accepted, `process_due`
+    was never reached, and the storm this row exists to stop was never
+    exercised. That version of this test went red — for the wrong reason.
+
+    What the pre-fix red looks like HERE is the raise escaping `_finish` on the
+    FIRST pass, not sixty sends: the sixty are what a caller that catches
+    per-pass sees, and `Dispatcher._run` is exactly such a caller (it prints
+    `dispatcher: pass error (will retry)` and goes round again a second later).
+    Calling `process_due` directly surfaces the escape itself, which is the same
+    defect one frame earlier.
     """
     reg = _registry()
     ok = OkAdapter()
     clock = _Clock(dt.datetime(2026, 8, 3, tzinfo=dt.timezone.utc))
-    with _unwritable_audit_dir(tmp_path) as audit_dir:
-        log = DeliveryLog(audit_dir=audit_dir)
-        d = Dispatcher({"webhook": ok}, log, now_fn=clock)
-        d.enqueue("app-a", "notify", reg.identities["ident-a"], _message(), "t")
+    audit_dir = tmp_path / "deliveries"
+    log = DeliveryLog(audit_dir=audit_dir)
+    d = Dispatcher({"webhook": ok}, log, now_fn=clock)
+    d.enqueue("app-a", "notify", reg.identities["ident-a"], _message(), "t")
+    assert log.audit_write_errors == 0, "the enqueue's own audit write must succeed"
+    with _break_audit_dir(audit_dir):
         for _ in range(60):
             d.process_due()               # must not raise
             clock.advance(1)
@@ -977,14 +1042,20 @@ def test_a_failing_audit_write_on_the_retry_path_keeps_the_backoff(tmp_path):
     Pre-fix this path did not storm for the whole 72.5 minutes of `BACKOFF_S`
     and then degenerated into the delivered path's one-per-second storm. Now
     the send count over the whole ladder is exactly the ladder.
+
+    Same ordering as its delivered-path twin above, for the same reason: the
+    enqueue must be ACCEPTED before the disk fills, or nothing ever reaches the
+    retry branch whose `record("retrying", ...)` is the write under test.
     """
     reg = _registry()
     adapter = CountingBoomAdapter()
     clock = _Clock(dt.datetime(2026, 8, 3, tzinfo=dt.timezone.utc))
-    with _unwritable_audit_dir(tmp_path) as audit_dir:
-        log = DeliveryLog(audit_dir=audit_dir)
-        d = Dispatcher({"webhook": adapter}, log, now_fn=clock)
-        d.enqueue("app-a", "notify", reg.identities["ident-a"], _message(), "t")
+    audit_dir = tmp_path / "deliveries"
+    log = DeliveryLog(audit_dir=audit_dir)
+    d = Dispatcher({"webhook": adapter}, log, now_fn=clock)
+    d.enqueue("app-a", "notify", reg.identities["ident-a"], _message(), "t")
+    assert log.audit_write_errors == 0, "the enqueue's own audit write must succeed"
+    with _break_audit_dir(audit_dir):
         for _ in range(6000):
             d.process_due()
             clock.advance(1)

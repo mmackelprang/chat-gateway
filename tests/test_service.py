@@ -1228,3 +1228,43 @@ def test_the_delivery_staleness_reason_no_longer_blames_a_full_disk(env):
         assert "a full disk, which makes the delivery log's own write raise" not in hits[0]
     finally:
         dispatch.stop()
+
+
+def test_the_heartbeat_staleness_reason_names_the_right_file(env):
+    """The delivery twin above, for the string CG-75 reworded on the OTHER loop.
+
+    This row edited both staleness reasons and pinned only one, and rule #5 does
+    not permit a corrected `/healthz` string to go unpinned — an operator reads
+    it during an outage and cannot check it against the source.
+
+    The heartbeat correction is narrower than its twin's: the full-disk claim
+    stayed TRUE, it was pointing at the wrong file. A scan that fires a check
+    still raises on a full disk, but through `enqueue`'s journal `open`, which
+    is unguarded on purpose (refusing work we cannot persist is the durability
+    mechanism's job), not through `DeliveryLog.record`, which CG-75 guarded. So
+    this asserts the new mechanism is NAMED and the falsified framing is GONE —
+    a `not in` alone would pass against an empty string.
+
+    Modelled on `test_a_wedged_heartbeat_monitor_is_stale_but_not_reported_dead`,
+    including reading the budget off `/healthz` rather than hardcoding a copy of
+    `monitor_interval`, and stubbing `scan_once` BEFORE `start()` for the reason
+    that test's comment gives.
+    """
+    client, _inbox, _adapter = env
+    monitor = client.app.state.monitor
+    budget = client.get("/healthz").json()["heartbeats"]["stale_after_seconds"]
+    monitor.scan_once = lambda: 0                 # see the wedged-monitor test
+    monitor.start()
+    try:
+        monitor.last_scan_at = (dt.datetime.now(dt.timezone.utc)
+                                - dt.timedelta(seconds=budget + 60))
+        hits = [r for r in client.get("/healthz").json()["reasons"]
+                if r.startswith("heartbeats: ")]
+        assert len(hits) == 1
+        assert "either WEDGED or RAISING" in hits[0]     # must survive this PR
+        assert "`enqueue`'s journal write" in hits[0]
+        assert "NOT through the delivery log" in hits[0]
+        assert ("A scan that fires a check enqueues through the delivery log, "
+                "so a full disk raises there") not in hits[0]
+    finally:
+        monitor.stop()
