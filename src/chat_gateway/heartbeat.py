@@ -151,6 +151,16 @@ class HeartbeatStore:
         with self._lock:
             return [c for (s, _), c in sorted(self._checks.items()) if s == source]
 
+    def list_all(self) -> list[Check]:
+        """Every check, regardless of source. For /healthz's census only.
+
+        Deliberately NOT exposed through any HTTP route: `GET /v1/heartbeat/
+        {source}` is per-source and authorization-checked, and this would be a
+        cross-tenant read. `/healthz` uses it to COUNT, never to name.
+        """
+        with self._lock:
+            return list(self._checks.values())
+
     def due_alerts(self, repeat_s: int = DEFAULT_REPEAT_S) -> list[Check]:
         """Checks whose missed-alert should fire now. **Mutates NOTHING.**
 

@@ -156,6 +156,20 @@ def _scan_stale_after(monitor) -> float:
                SCAN_STALE_INTERVAL_MULTIPLE * monitor.interval_seconds)
 
 
+def _checks_orphaned(registry, checks) -> int:
+    """Registered dead-man checks whose source is no longer a registered app.
+
+    A bare count, never the ids (CG-12: /healthz is unauthenticated, and an
+    orphaned check's `source` is a FORMER TENANT's app id). The authenticated
+    `GET /v1/deliveries` carries the failing alerts under that id.
+
+    `HeartbeatStore` has no "all sources" accessor by design — `list_for` is
+    per-source, which is what keeps the endpoint's own authorization honest —
+    so this reads the private map under the store's lock via `list_all`.
+    """
+    return sum(1 for c in checks.list_all() if c.source not in registry.apps)
+
+
 def _journal_skipped(dispatch, inbox) -> int:
     """Unparseable journal lines across both queues; 0 when unjournalled.
 
@@ -520,6 +534,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                          "replayed_at_boot": getattr(dispatch, "replayed", 0),
                          "expired_at_boot": getattr(dispatch, "expired", 0),
                          "unroutable_at_boot": getattr(dispatch, "unroutable", 0),
+                         # CG-76 door 3. The in-process sibling of the two
+                         # `*_at_boot` counters above: a job accepted with a
+                         # 202 whose retry ladder then ran out. Same family,
+                         # same reason, and it was the one member with no
+                         # counter.
+                         "delivery_failures": getattr(dispatch, "delivery_failures", 0),
                          # Journal lines that did not parse, and journal
                          # writes that failed. A torn trailing line is
                          # the expected shape after a power loss and is
@@ -587,7 +607,32 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                            "scan_failures": getattr(monitor, "scan_failures", 0),
                            "consecutive_scan_failures": getattr(
                                monitor, "consecutive_scan_failures", 0),
-                           "last_scan_error": getattr(monitor, "last_scan_error", None)},
+                           "last_scan_error": getattr(monitor, "last_scan_error", None),
+                           # CG-76. What `scan_failures` could not say: an alert
+                           # can be dropped without any scan raising. Three
+                           # paths did it — a route refusal, a dedupe, and a
+                           # ladder exhaustion — and all three returned
+                           # normally. Bare integers: /healthz is
+                           # unauthenticated (CG-12), and the identifying detail
+                           # is on the authenticated GET /v1/deliveries.
+                           "alerts_undeliverable": getattr(
+                               monitor, "alerts_undeliverable", 0),
+                           "checks_undeliverable": getattr(
+                               monitor, "checks_undeliverable", 0),
+                           # CG-76 door 5. `hb_all` above filters the census
+                           # through `registry.apps`, so a check whose source
+                           # was renamed or removed drops out of BOTH `checks`
+                           # and `missed` — measured: `checks: 1 -> 0` on a
+                           # rename, while the store still held it, still
+                           # scanned it, and its alert still died through the
+                           # `unknown app` branch of `route_for`. Under-
+                           # reporting coverage is worse than reporting none:
+                           # `checks: 0` reads as "nothing to worry about".
+                           #
+                           # A SECOND NUMBER, not an unfiltered `hb_all` —
+                           # widening that would silently change what `checks`
+                           # and `missed` mean, and three docs describe them.
+                           "checks_orphaned": _checks_orphaned(registry, checks)},
             "subscriber": (
                 {"enabled": True,
                  "last_poll_at": subscriber.last_poll_at.isoformat() if subscriber.last_poll_at else None,
@@ -871,6 +916,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "— boot compaction already removed the records, so the next "
                 "restart clears it"
             )
+        if queue["delivery_failures"]:
+            reasons.append(
+                f"delivery: {queue['delivery_failures']} accepted job(s) "
+                "exhausted the retry ladder and were DROPPED — the gateway "
+                "returned 202 for them and did not deliver them. Roughly 73 "
+                "minutes of a Chat endpoint being unreachable is the shape. "
+                "CUMULATIVE; `GET /v1/deliveries` names which"
+            )
         # CG-72. Outbound delivery's liveness, in the subscriber block's shape
         # and for the subscriber block's reason. Not gated on `enabled` — there
         # is no such thing as a deployment without outbound delivery; it is
@@ -1022,6 +1075,41 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "re-sends it, so at least one dead-man alert may already have "
                 "been lost. CUMULATIVE and will not clear while this process "
                 "runs; `consecutive_scan_failures` is the live signal"
+            )
+        # OUTSIDE the liveness elif-chain, beside `scan_failures` and for the
+        # same reason: the chain answers "is this loop running", this answers
+        # "has an alert already been lost", and both can be true at once.
+        #
+        # TWO NUMBERS, and they say different things. The gauge is the live
+        # signal — a registry the operator can fix right now. The cumulative one
+        # is the report of loss and does not clear.
+        if hb["checks_undeliverable"]:
+            reasons.append(
+                f"heartbeats: {hb['checks_undeliverable']} registered check(s) "
+                "came due and their alert could NOT be routed — the source has "
+                "no `alert` route, no `default` route, or its routed identity "
+                "is gone from the registry. Those sources are silently "
+                "unmonitored: the check will keep re-firing and will deliver "
+                "as soon as the registry is fixed. `GET /v1/deliveries` names "
+                "which"
+            )
+        if hb["alerts_undeliverable"]:
+            reasons.append(
+                f"heartbeats: {hb['alerts_undeliverable']} dead-man alert(s) "
+                "could not be accepted for delivery since start — a source that "
+                "went silent was not reported on. CUMULATIVE and will not clear "
+                "while this process runs; `checks_undeliverable` is the live "
+                "signal. `GET /v1/deliveries` names which"
+            )
+        if hb["checks_orphaned"]:
+            reasons.append(
+                f"heartbeats: {hb['checks_orphaned']} registered check(s) "
+                "belong to a source that is NOT a registered app — renamed, "
+                "removed, or a registry block that failed to load. They are "
+                "still scanned and their alerts still fail, but they are "
+                "excluded from `checks` and `missed` above, so those two "
+                "numbers UNDER-REPORT this deployment's dead-man coverage. "
+                "`GET /v1/deliveries` names which"
             )
         # `ret` is bound above the inbox lines, which need the same flag.
         if ret["enabled"]:
