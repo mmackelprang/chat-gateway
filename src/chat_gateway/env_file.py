@@ -38,12 +38,69 @@ from pathlib import Path
 
 
 class EnvFileError(RuntimeError):
-    """The named env file could not be used. Names the PATH, never a value."""
+    """The named env file could not be used. Names the PATH, never a value.
+
+    ⚠ Deliberately NOT a `GatewayAuthoredError`, for exactly the reasons
+    `retention.py`'s `RetentionConfigError` docstring already sets out at length
+    — it is raised at boot and printed by `main`'s `config error:` path rather
+    than through `describe_exception`, and CG-29's marker set is a deliberately
+    short allowlist. That precedent is the one home for the argument; if review
+    wants these classes marked, it is a change to the allowlist and its own
+    decision, not a thing to fold into a loader row.
+    """
+
+
+def _clean_value(raw: str) -> str:
+    """The post-`=` text of one line → the value. See `parse_env_file`."""
+    s = raw.strip()
+    if s and s[0] in ("'", '"'):
+        close = s.find(s[0], 1)
+        if close != -1:
+            # Quoted: the content is the value and ANYTHING after the closing
+            # quote is discarded. Not `.strip()`ed — a deliberate leading or
+            # trailing space is the whole reason an operator quoted it, and this
+            # is byte-for-byte what this parser did before inline comments
+            # existed. An UNTERMINATED quote falls through to the rule below
+            # rather than being guessed at.
+            return s[1:close]
+    for i, ch in enumerate(raw):
+        if ch == "#" and (i == 0 or raw[i - 1] in " \t"):
+            return raw[:i].strip()
+    return s
 
 
 def parse_env_file(text: str) -> dict[str, str]:
-    """`KEY=VALUE` lines. Honours `#` comments, blanks, `export `, and ONE layer
-    of matching surrounding quotes.
+    """`KEY=VALUE` lines. Honours blanks, `export `, ONE layer of matching
+    surrounding quotes, and `#` comments — **whole-line AND INLINE**.
+
+    THE INLINE RULE, AND WHY IT IS COMPOSE'S RULE. A `#` ends the value when it
+    is preceded by a space or a tab, or when it is the first non-whitespace
+    character after the `=`. A `#` with a non-space to its left is part of the
+    value (`K=abc#def` → `abc#def`), because a credential may legitimately
+    contain one. **Quoting is how a value keeps a literal ` #`**:
+    `K="a # b"  # note` → `a # b`, with everything after the closing quote
+    discarded.
+
+    This matches `docker-compose`'s documented rule ON PURPOSE, and the reason
+    is not tidiness: the SAME FILE is read by both. Compose parses it via
+    `env_file: .env` on the dev box, and this loader parses it on the NAS
+    (`docs/deploy/nas.md` §5/§6, which tells the operator to copy that very
+    file to the box). A parser that disagreed with Compose would make a working
+    file CHANGE MEANING at the destination — silently, since the difference is
+    a trailing comment nobody looks at twice.
+
+    Swallowing inline comments was not hypothetical: measured over this repo's
+    own `.env.example`, **11 of 18 keys** came back with the trailing comment
+    inside the value. Two of them are why this is not cosmetic —
+    `GOOGLE_APPLICATION_CREDENTIALS` and `CHAT_GATEWAY_PUBSUB_SUBSCRIPTION`
+    parsed to a NON-EMPTY string, so `__main__`'s fail-closed
+    `if not sub or not creds` guard did not fire and `registry.health()`, which
+    tests `bool(os.environ.get(...))`, reported the credential resolvable. The
+    gateway boots, looks alive on an unauthenticated `/healthz`, and cannot
+    talk to Google — the outcome this module's "a missing file is FATAL" rule
+    exists to prevent, reached by a path that never raises (hard rule #5).
+    `test_the_repos_own_env_example_parses_with_no_comment_inside_a_value` is
+    what stops it coming back.
 
     A line with no `=` is ignored rather than guessed at: this file is written by
     an operator under time pressure during a deploy, and inventing a meaning for
@@ -62,10 +119,7 @@ def parse_env_file(text: str) -> dict[str, str]:
         key = key.strip()
         if not key:
             continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-            value = value[1:-1]
-        out[key] = value
+        out[key] = _clean_value(value)
     return out
 
 
@@ -88,7 +142,11 @@ def load_env_file(path: str | Path, environ: dict | None = None) -> int:
     environ = os.environ if environ is None else environ
     p = Path(path)
     try:
-        text = p.read_text(encoding="utf-8")
+        # `utf-8-sig`, not `utf-8`: a UTF-8 BOM is not whitespace to Python, so
+        # `.strip()` leaves it attached and the FIRST key silently becomes
+        # `﻿KEY` — a credential dropped without a word. Windows editors
+        # write one by default, and the dev box is a Windows box.
+        text = p.read_text(encoding="utf-8-sig")
     except OSError as exc:
         raise EnvFileError(
             f"CHAT_GATEWAY_ENV_FILE={p} could not be read: {type(exc).__name__}"
