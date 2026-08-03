@@ -4,13 +4,20 @@ weekend false alarms, and full delivery-log accounting."""
 
 import datetime as dt
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
 
+from chat_gateway import delivery as delivery_module
 from chat_gateway.delivery import DeliveryLog, Dispatcher
 from chat_gateway.envelope import TEXT_MAX, DeliveryResult
-from chat_gateway.heartbeat import HeartbeatError, HeartbeatStore, parse_schedule
+from chat_gateway.heartbeat import (
+    HeartbeatError,
+    HeartbeatMonitor,
+    HeartbeatStore,
+    parse_schedule,
+)
 from chat_gateway.inbox import Inbox
 from chat_gateway.notifications import (
     INFO_BODY_SEPARATOR,
@@ -556,3 +563,186 @@ def test_heartbeat_source_scoping(registry, tmp_path):
     client, _, _ = make_client(registry, clock, tmp_path)
     assert client.get("/v1/heartbeat/other-app", headers=AUTH).status_code == 403
     assert client.delete("/v1/heartbeat/other-app/x", headers=AUTH).status_code == 403
+
+
+# --- CG-74: the failure counters the two loop threads never had --------------
+#
+# These three drive a REAL loop thread, which nothing in `test_service.py` does
+# for the counters: that file stubs liveness so it can pin an exact `/healthz`
+# body, and a live `_run` would clear `consecutive_*` under the assertion. The
+# increment-and-clear mechanism therefore has to be proven here, against the
+# actual `while` loop, or it is only ever proven by assignment.
+
+def _wait_until(predicate, timeout=5.0, what="condition"):
+    """Poll `predicate` until true, or fail after `timeout` seconds.
+
+    Module-local rather than in `conftest.py`: this cluster is the only place in
+    the suite that watches a loop thread make progress, and a shared fixture
+    with one caller is a dependency nobody pays for.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"timed out after {timeout}s waiting for {what}")
+
+
+def test_a_raising_pass_is_counted_and_cleared_on_recovery(monkeypatch):
+    """Two raises then recovery: history keeps 2, the live signal returns to 0."""
+    # `PASS_INTERVAL_S` is a module constant read by `_run` on every iteration,
+    # not a per-instance setting, so this is the only way to run four passes
+    # without spending four seconds of suite time on a timing assertion that
+    # does not depend on the interval.
+    monkeypatch.setattr(delivery_module, "PASS_INTERVAL_S", 0.01)
+    d = Dispatcher({}, DeliveryLog())
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise OSError(28, "No space left on device")
+        return 0
+
+    d.process_due = flaky
+    d.start()
+    try:
+        _wait_until(lambda: calls["n"] >= 4, what="four dispatch passes")
+    finally:
+        d.stop()
+    assert d.pass_failures == 2
+    assert d.consecutive_pass_failures == 0, "recovery must clear the consecutive counter"
+    assert d.last_pass_error is None, "recovery must clear the error string"
+
+
+def test_the_pass_error_is_a_type_name_never_a_path(tmp_path, monkeypatch):
+    """Hard rule #2: `str(OSError)` embeds the absolute path; this must not.
+
+    `OSError` is deliberately NOT marked in `errors.py`, so `describe_exception`
+    renders it by type alone. That is lossy on purpose — the operator loses
+    `ENOSPC` vs `EACCES` — and the thing it buys is this: `/healthz` is
+    unauthenticated, and a state-dir path is not something it may publish.
+    """
+    monkeypatch.setattr(delivery_module, "PASS_INTERVAL_S", 0.01)
+    d = Dispatcher({}, DeliveryLog())
+    secret = tmp_path / "very-secret-dir" / "x.jsonl"
+    # ENOSPC deliberately, and not `OSError(2, ...)`: Python refines an errno-2
+    # `OSError` into `FileNotFoundError` at construction, so that spelling would
+    # have tested a different class than the one the spec names. 28 has no
+    # subclass. The third argument is what puts the path into `str()` —
+    # asserted below, so this cannot pass because the path was never there.
+    leaky = OSError(28, "No space left on device", str(secret))
+    assert "very-secret-dir" in str(leaky)
+
+    def boom():
+        raise leaky
+
+    d.process_due = boom
+    d.start()
+    try:
+        _wait_until(lambda: d.pass_failures >= 1, what="one failed pass")
+    finally:
+        d.stop()
+    assert d.last_pass_error == "OSError"
+    assert "very-secret-dir" not in (d.last_pass_error or "")
+
+
+def test_a_raising_scan_is_counted_but_the_cumulative_one_never_clears():
+    """The asymmetry, pinned. `scan_failures` must survive recovery.
+
+    `Dispatcher.pass_failures` clears nothing either — but it drives nothing, so
+    nobody would notice if it did. This one degrades `/healthz`, and the reason
+    it may is that the alert a raising scan would have sent is already gone:
+    `due_alerts` marked the check before persisting, so no later scan re-sends
+    it. See `HeartbeatMonitor.__init__` for the measurement.
+    """
+    mon = HeartbeatMonitor(HeartbeatStore(), lambda *a: None, interval_seconds=0.01)
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise OSError(28, "No space left on device")
+        return 0
+
+    mon.scan_once = flaky
+    mon.start()
+    try:
+        _wait_until(lambda: calls["n"] >= 4, what="four scans")
+    finally:
+        mon.stop()
+    assert mon.scan_failures == 2, "cumulative must NOT clear on recovery"
+    assert mon.consecutive_scan_failures == 0
+    assert mon.last_scan_error is None
+
+
+# --- CG-74: where the scan counter does NOT reach -----------------------------
+
+ROUTELESS_REGISTRY_YAML = REGISTRY_YAML.replace(
+    "    routes: {alert: aitrader-alerts, warning: aitrader-reports, "
+    "info: aitrader-reports}\n", "")
+assert "routes:" not in ROUTELESS_REGISTRY_YAML  # the replace really landed
+
+
+def test_a_routeless_alert_is_dropped_without_raising_or_counting(registry, tmp_path):
+    """This pins the LIMIT of CG-74's signal, NOT a behaviour worth keeping.
+
+    `HeartbeatMonitor.__init__` claimed `scan_failures` was "the only thing
+    standing between a silently-dropped dead-man alert and a green /healthz".
+    It is not, and the counter-example is here: an app with no `routes:` block
+    at all. `due_alerts` marks the check `missed` and stamps `last_alerted`
+    under its lock, then `_monitor_notify` gets an `HTTPException(503)` out of
+    `route_for` — no `alert` route, no `default` — CATCHES it, and writes a
+    delivery-log line. The alert is gone for the whole 24h repeat window and
+    `scan_once` returns normally, so no counter in this file moves and
+    `/healthz` stays `ok`.
+
+    **CG-76 is expected to change what this asserts.** When a dropped alert
+    becomes visible on `/healthz`, this test is the one that should go red —
+    the `scan_failures == 0` and `status == "ok"` assertions below are a record
+    of a hole, not a contract. Do not "fix" it by loosening them.
+    """
+    from pathlib import Path
+
+    import chat_gateway.registry as regmod
+
+    # Friday 2026-07-24 16:30 ET, the same clock the weekday dead-man case uses.
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    p = Path(str(tmp_path)) / "routeless.yaml"
+    p.write_text(ROUTELESS_REGISTRY_YAML, encoding="utf-8")
+    client, app, adapter = make_client(regmod.load_registry(p), clock, tmp_path)
+
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "weekdays", "grace": "2h"})
+    assert r.status_code == 200
+
+    # Monday past the grace deadline: the check really does come due.
+    clock.now = dt.datetime(2026, 7, 27, 23, 0, tzinfo=UTC)
+    assert app.state.monitor.scan_once() == 1
+
+    # ...and nothing was sent. Not queued-and-unsent either — `emit_notification`
+    # raised before `enqueue`, so draining the dispatcher changes nothing.
+    app.state.dispatcher.process_due()
+    assert adapter.sent == []
+    assert app.state.dispatcher.pending() == 0
+
+    # The check is nonetheless marked alerted, and the suppression is real: the
+    # next scan finds nothing due, so this alert is not coming back today.
+    state = client.get("/v1/heartbeat/aitrader", headers=AUTH).json()["checks"][0]
+    assert state["status"] == "missed" and state["last_alerted"]
+    assert app.state.monitor.scan_once() == 0
+
+    # The one trace it left is a delivery-log line — which is NOT a send.
+    log = app.state.delivery_log.query("aitrader")
+    assert [(e["kind"], e["status"]) for e in log] == [("heartbeat", "failed")]
+    assert "no route" in log[0]["detail"]
+
+    # And the part that makes this a defect rather than a curiosity: /healthz.
+    assert app.state.monitor.scan_failures == 0
+    assert app.state.monitor.consecutive_scan_failures == 0
+    assert app.state.monitor.last_scan_error is None
+    body = client.get("/healthz").json()
+    assert body["heartbeats"]["scan_failures"] == 0
+    assert body["heartbeats"]["last_scan_error"] is None
+    assert body["status"] == "ok"
+    assert not [r for r in body["reasons"] if r.startswith("heartbeats: ")]

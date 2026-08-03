@@ -53,6 +53,22 @@ ROUTING_TARGET_ENV = "CHAT_GATEWAY_INTERACTION_ROUTING_TARGET"
 #: that a real outage is visible within one dashboard refresh.
 POLL_FAILURE_THRESHOLD = 3
 
+#: Consecutive raising passes before /healthz calls outbound delivery DOWN.
+#:
+#: Three, matching `POLL_FAILURE_THRESHOLD` and NOT the sweeper's implicit one,
+#: and the difference is the loop interval rather than taste. The sweeper runs
+#: every six hours, so one failed pass is already a real signal. This loop runs
+#: every `PASS_INTERVAL_S` — one second — where a single transient blip should
+#: not flip an alarm on an endpoint consumers page on. Three passes is three
+#: seconds: the threshold costs nothing in detection time and buys the whole of
+#: the anti-flap.
+DISPATCH_FAILURE_THRESHOLD = 3
+
+#: The same number for the scan loop, and it is NOT a copy for symmetry's sake:
+#: `monitor_interval` is settable per deployment (`create_app`), so this is a
+#: count of scans, not of seconds, exactly as the two above are.
+SCAN_FAILURE_THRESHOLD = 3
+
 #: Silence — as opposed to failure — before /healthz calls inbound dead.
 #:
 #: This exists because failure counters cannot detect a loop that has stopped
@@ -462,6 +478,17 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                          # unbounded re-send storm. It no longer raises, so this
                          # counter is the only thing that says so.
                          "audit_write_errors": _audit_write_errors(dispatch, log),
+                         # CG-74. What `thread_alive` and `last_pass_at`
+                         # together still could not say: whether a loop that has
+                         # stopped completing passes is WEDGED or RAISING.
+                         # Cumulative is history and drives nothing; consecutive
+                         # returns to zero on the next good pass and is the one
+                         # that degrades — `RetentionSweeper`'s split, for
+                         # `RetentionSweeper`'s measured reason.
+                         "pass_failures": getattr(dispatch, "pass_failures", 0),
+                         "consecutive_pass_failures": getattr(
+                             dispatch, "consecutive_pass_failures", 0),
+                         "last_pass_error": getattr(dispatch, "last_pass_error", None),
                          # CG-72. The third way of judging outbound, and the one
                          # nothing else can substitute for. `pending_jobs` cannot
                          # do it: a dead dispatcher and a busy one both show a
@@ -494,7 +521,16 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                                round((now - monitor.last_scan_at).total_seconds(), 1)
                                if monitor.last_scan_at else None),
                            "stale_after_seconds": _scan_stale_after(monitor),
-                           "scan_interval_seconds": monitor.interval_seconds},
+                           "scan_interval_seconds": monitor.interval_seconds,
+                           # CG-74. The dispatcher's twin, with one asymmetry:
+                           # `scan_failures` DEGRADES cumulatively, because a
+                           # scan that raised has already dropped the alert it
+                           # was going to send and no later scan re-sends it.
+                           # `HeartbeatMonitor.__init__` carries the measurement.
+                           "scan_failures": getattr(monitor, "scan_failures", 0),
+                           "consecutive_scan_failures": getattr(
+                               monitor, "consecutive_scan_failures", 0),
+                           "last_scan_error": getattr(monitor, "last_scan_error", None)},
             "subscriber": (
                 {"enabled": True,
                  "last_poll_at": subscriber.last_poll_at.isoformat() if subscriber.last_poll_at else None,
@@ -788,18 +824,31 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # An `elif` chain: a dead thread also looks stale, and two reasons for
         # one fault is noise.
         #
-        # WHERE THE WORDING DEPARTS FROM THE TWO CHAINS IT OTHERWISE MIRRORS,
-        # AND WHY IT MUST NOT BE "UNIFIED" BACK ONTO THEM. The subscriber's and
-        # the sweeper's staleness lines end *"neither completing nor raising, so
-        # it is wedged rather than erroring"*. They may say that because a
-        # failure-counter branch sits ABOVE them in the same chain
-        # (`consecutive_poll_failures`, `consecutive_sweep_failures`), so by the
-        # time their `elif` is reached "not raising" has already been measured.
-        # `Dispatcher` and `HeartbeatMonitor` count nothing, so the same
-        # sentence here — it was copied in verbatim, without the branch that
-        # earned it — would be an assertion this endpoint cannot support, on the
-        # endpoint whose whole job is not claiming what it has not measured
-        # (hard rule #5).
+        # WHAT THE COUNTER BRANCH BUYS THE STALENESS STRING BELOW, AND WHY THE
+        # TWO MUST NOT BE REORDERED. The subscriber's and the sweeper's
+        # staleness lines end *"neither completing nor raising, so it is wedged
+        # rather than erroring"*. They may say that because a failure-counter
+        # branch sits ABOVE them in the same chain (`consecutive_poll_failures`,
+        # `consecutive_sweep_failures`), so by the time their `elif` is reached
+        # "not raising" has already been measured. Until CG-74 `Dispatcher` and
+        # `HeartbeatMonitor` counted nothing, so both strings here hedged in
+        # words: they said the loop was "either WEDGED or RAISING" and that this
+        # block could not tell you which. CG-74 added
+        # `consecutive_pass_failures` / `consecutive_scan_failures` and the two
+        # branches that read them, so the hedge is gone and the WEDGED wording
+        # below is EARNED BY THE BRANCH ABOVE IT rather than asserted. Move the
+        # counter branch under the staleness branch and both strings become
+        # claims this endpoint cannot support again (hard rule #5).
+        #
+        # WHERE THE ORDERING DEPARTS FROM THE CHAIN IT OTHERWISE MIRRORS, AND
+        # WHY IT MUST NOT BE "UNIFIED" ONTO IT. This chain — and the heartbeat
+        # one below, which matches it — runs dead-thread → counter →
+        # never-completed → stale. The subscriber's runs never-polled → counter
+        # → dead-thread → stale. Deliberate: a dead thread increments no counter
+        # and is the most actionable of the four (restart), while a raising loop
+        # EXPLAINS "no pass has ever completed" when it is the cause, so the
+        # counter has to be asked before that branch swallows the event. Each
+        # order is recorded where it lives; neither is a copy of the other.
         #
         # REACHABLE, and it WAS reachable through this exact door until CG-75.
         # `DeliveryLog.record` did a raw `mkdir`/`open`/`write` with no guard, so
@@ -813,21 +862,23 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # pass stamped, and this branch did not fire for the whole 72.5-minute
         # backoff ladder.
         #
+        # THAT BLINDNESS WAS BOUNDED, NOT PERMANENT — measured, and said plainly
+        # so nobody reads CG-74 as the only thing that would ever have surfaced
+        # it. Run past the ladder and `job.attempts` reaches its length, the
+        # give-up branch calls `_finish`, and the retry path degenerates into the
+        # delivered path's one-send-per-second storm; staleness then fires. The
+        # window in which /healthz was blind was long (72.5 minutes) and finite,
+        # and the thing that ended it was the failure getting WORSE. That is a
+        # narrowing of CG-74's filed claim, not a refutation of it.
+        #
         # CG-75 closed that door: the audit write is guarded inside
         # `DeliveryLog.record` and counted at `delivery.audit_write_errors`,
         # which degrades. A full disk now shows up there and at
-        # `journal_write_errors`, not as a storm and not as silence.
-        #
-        # WHAT IS STILL UNRESOLVED is why these two strings are hedged, and it
-        # is narrower than it was: `Dispatcher` and `HeartbeatMonitor` count no
-        # failed passes at all, so if something ELSE raises out of the loop this
-        # endpoint still cannot tell a wedged loop from a raising one. Adding
-        # those counters is CG-74, filed by this row's Builder off this row's own
-        # review: it is a new degrade input on an endpoint consumers alarm on,
-        # which is a decision, not a wording fix. Until it lands, honest
-        # ambiguity beats a confident wrong answer — and when it lands, BOTH
-        # strings below must lose their "counts no failures" clause, which is why
-        # that clause names the gap rather than merely hedging.
+        # `journal_write_errors`, not as a storm and not as silence. The counter
+        # branch below is for everything ELSE that can raise out of this loop —
+        # which is what made it a decision (a new degrade input on an endpoint
+        # consumers alarm on) rather than a wording fix, and why it shipped as
+        # its own row.
         if queue["thread_started"] and not queue["thread_alive"]:
             reasons.append(
                 "delivery: the dispatch thread was started and is NOT RUNNING — "
@@ -835,6 +886,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "will move again. `pending_jobs` will climb and every other "
                 "field is frozen at a real value, which is why this looks "
                 "healthy; restart the service"
+            )
+        elif queue["thread_started"] and (
+                queue["consecutive_pass_failures"] >= DISPATCH_FAILURE_THRESHOLD):
+            reasons.append(
+                f"delivery: {queue['consecutive_pass_failures']} consecutive "
+                f"dispatch passes have RAISED (last: {queue['last_pass_error']}) "
+                "— outbound is failing loudly rather than silently. Queued jobs "
+                "are not being sent and `pending_jobs` will climb"
             )
         elif queue["thread_started"] and queue["seconds_since_last_pass"] is None:
             reasons.append(
@@ -849,15 +908,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             reasons.append(
                 f"delivery: the thread is alive but the last completed pass was "
                 f"{queue['seconds_since_last_pass']}s ago, over the "
-                f"{queue['stale_after_seconds']}s budget — so the loop is "
-                "either WEDGED or RAISING on every pass, and nothing in this "
-                "block can tell you which, because it counts no failures. The "
-                "gateway's console can: a wedged pass is silent, a raising one "
-                "prints `dispatcher: pass error (will retry)` once a second. A "
-                "send blocked past its client timeout is the wedged shape. A "
-                "full disk is NOT the other one any more — since CG-75 it "
-                "raises nowhere in this loop and reports at "
-                "`audit_write_errors` and `journal_write_errors` instead"
+                f"{queue['stale_after_seconds']}s budget, and fewer than "
+                f"{DISPATCH_FAILURE_THRESHOLD} consecutive passes have raised — "
+                "so passes are neither completing nor raising, and the loop is "
+                "WEDGED rather than erroring. A send blocked past its client "
+                "timeout is the shape: `process_due` walks due jobs "
+                "sequentially, so one hung send holds the whole loop"
             )
         # ...and the dead-man switch's own liveness. Same chain, same order.
         # A heartbeat monitor that has died stops evaluating every consumer's
@@ -870,6 +926,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 "gone silent will never be alerted on. `missed` and "
                 "`last_scan_at` are frozen at real values; restart the service"
             )
+        elif hb["thread_started"] and (
+                hb["consecutive_scan_failures"] >= SCAN_FAILURE_THRESHOLD):
+            reasons.append(
+                f"heartbeats: {hb['consecutive_scan_failures']} consecutive "
+                f"scans have RAISED (last: {hb['last_scan_error']}) — the "
+                "dead-man monitor is not evaluating any registered check, so a "
+                "source that has gone silent will never be alerted on"
+            )
         elif hb["thread_started"] and hb["seconds_since_last_scan"] is None:
             reasons.append(
                 "heartbeats: the scan thread was started but no scan has ever "
@@ -881,15 +945,26 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 f"heartbeats: the thread is alive but the last completed scan "
                 f"was {hb['seconds_since_last_scan']}s ago, over the "
                 f"{hb['stale_after_seconds']}s budget for a "
-                f"{hb['scan_interval_seconds']}s-interval loop — so the "
-                "dead-man monitor is either WEDGED or RAISING on every scan, "
-                "and nothing in this block can tell you which, because it "
-                "counts no failures. The gateway's console can: a raising scan "
-                "prints `heartbeat: scan error (will retry)` once an interval. "
-                "A full disk still raises through a scan that fires a check — "
-                "but through `enqueue`'s journal write, which is unguarded on "
-                "purpose, NOT through the delivery log, which CG-75 guarded. An "
-                "idle scan stamps either way"
+                f"{hb['scan_interval_seconds']}s-interval loop, and fewer than "
+                f"{SCAN_FAILURE_THRESHOLD} consecutive scans have raised — so "
+                "scans are neither completing nor raising, and the dead-man "
+                "monitor is WEDGED rather than erroring. No registered check is "
+                "being evaluated while this holds"
+            )
+        # OUTSIDE the elif chain above, deliberately. The chain answers "is this
+        # loop running", at most one reason. This answers a different question —
+        # "has an alert already been lost" — and both can be true at once. It is
+        # the one cumulative counter in these two blocks that degrades; the
+        # asymmetry with `delivery.pass_failures` is recorded at
+        # `HeartbeatMonitor.__init__` and is measured, not stylistic.
+        if hb["scan_failures"]:
+            reasons.append(
+                f"heartbeats: {hb['scan_failures']} scan(s) have raised since "
+                "start — a scan that raises after marking a check MISSED drops "
+                "that alert for the repeat window (24h) and no later scan "
+                "re-sends it, so at least one dead-man alert may already have "
+                "been lost. CUMULATIVE and will not clear while this process "
+                "runs; `consecutive_scan_failures` is the live signal"
             )
         # `ret` is bound above the inbox lines, which need the same flag.
         if ret["enabled"]:

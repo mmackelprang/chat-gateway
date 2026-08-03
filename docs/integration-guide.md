@@ -414,21 +414,22 @@ curl -s $GW/healthz                     # honest health — no auth required
 This is where the queue journals — and, since 2026-08-02, the retention sweeper,
 the outbound dispatcher and the heartbeat monitor — report themselves **to you**.
 A boot line on the gateway's console says some of it as well, but that is the
-operator's copy and you cannot read it. The table below has **thirty-seven**
+operator's copy and you cannot read it. The table below has **forty-three**
 rows: **nine** arrived with the journals on 2026-07-31, **fifteen** with the
 sweeper, **twelve** with the two thread liveness blocks on 2026-08-02 — though
-only **eleven** of that twelve are new **keys** in the body — and **one** with
-CG-75's audit-write guard on 2026-08-03.
+only **eleven** of that twelve are new **keys** in the body — **one** with
+CG-75's audit-write guard on 2026-08-03, and **six** with CG-74's failure
+counters the same day.
 `heartbeats.last_scan_at` was already published and is documented for the first
 time here, because it is the row that made a dead monitor look healthy. If you
 diff the JSON across that date you will see eleven additions, not twelve; the
 distinction is rows-in-this-table versus fields-in-the-response.
 
-Of the thirty-seven rows, **fifteen carry `**yes**` in the Degrades? column**.
-Counted as *fields* the number is **eighteen**, and both are right: each of the
+Of the forty-three rows, **eighteen carry `**yes**` in the Degrades? column**.
+Counted as *fields* the number is **twenty-one**, and both are right: each of the
 three liveness triples (`delivery.*`, `retention.*`, `heartbeats.*`) is read in
 **combination**, so its `thread_started` row — marked *"no on its own"* — is part
-of the judgement that degrades. Fifteen is what the column says; eighteen is
+of the judgement that degrades. Eighteen is what the column says; twenty-one is
 what participates. A consumer that alarms on `status` should know what they mean
 before one fires at 03:00. `status` is computed **from** `reasons`: anything that
 can degrade this endpoint says so in words, because a number nobody reads is not
@@ -441,6 +442,13 @@ climbing, `last_scan_at` frozen at a real timestamp, and nothing saying so. Both
 now degrade. If you alarm on `status`, expect these two reasons to be possible
 where previously the endpoint was silent; that silence was the bug, not a
 contract.
+
+⚠ **Three more arrived on 2026-08-03, for the same reason.** Neither loop
+counted a failed pass, so a dispatcher raising on every pass and one wedged
+mid-send produced the same `/healthz` — and the staleness reasons said so in
+words rather than answering. `delivery.consecutive_pass_failures`,
+`heartbeats.consecutive_scan_failures` and `heartbeats.scan_failures` are the
+answer, and the last of the three degrades **cumulatively**: see its row.
 
 | Field | What it means | Degrades? |
 |---|---|---|
@@ -460,6 +468,9 @@ contract.
 | `delivery.seconds_since_last_pass` | how stale `last_pass_at` is, as a **number**. `null` before the first pass | **yes** — past the budget below |
 | `delivery.stale_after_seconds` | the silence budget: **600s**, and deliberately looser than the poll loop's. `process_due` walks due jobs sequentially and each send is bounded by a 30s client timeout — plus, for `mode: app` sends, a token refresh that runs on google-auth's own transport and is **not** bounded by it (no number is published for that leg because none has been measured). So a backlog all timing out holds the timestamp still while the dispatcher works perfectly. Ten minutes to notice a dead delivery thread is the price of not crying wolf at every slow Google call — and it is bought against a baseline of **never noticing at all** | no |
 | `delivery.pass_interval_seconds` | the interval the budget is derived from — one second | no |
+| `delivery.pass_failures` | dispatch passes that **raised**, over the life of the process. History, not a live fault — read it beside the row below, which is the one that degrades | no — see the next row |
+| `delivery.consecutive_pass_failures` | passes that have raised **since the last good one**, so it returns to `0` on recovery. This is what tells a **raising** dispatcher from a **wedged** one; until 2026-08-03 nothing here could, and the staleness reason said so in words | **yes** — at 3 |
+| `delivery.last_pass_error` | the exception **type** from the last failed pass — a type name, never a path or a message. Companion to the row above, not an independent signal, and cleared on recovery | no — reported with the row above |
 | `retention.enabled` | whether the audit trail is being pruned at all. `false` means either no sweeper is wired or the window is `0` — the two are distinguishable: only the first carries a `note` and omits every field below | no |
 | `retention.window_days` | the tenant window actually in force on this deployment, in days. Read this rather than assuming the 30-day default — it is one env var | no |
 | `retention.unrouted_window_days` | the shorter floor applied to the gateway's own `_unrouted` bucket. Not per-tenant policy: `_unrouted` holds unattributable events that answer to nobody | no |
@@ -481,17 +492,21 @@ contract.
 | `heartbeats.seconds_since_last_scan` | how stale `last_scan_at` is, as a number. `null` before the first scan | **yes** — past the budget below |
 | `heartbeats.stale_after_seconds` | the silence budget: six scan intervals, floored at 300s. `scan_once` does no network I/O, so unlike delivery this needs no allowance for a slow remote call | no |
 | `heartbeats.scan_interval_seconds` | the configured scan interval the budget is derived from — sixty seconds by default, and settable per deployment, which is why the budget is published rather than assumed | no |
+| `heartbeats.scan_failures` | scans that **raised**, over the life of the process — and unlike its `delivery.*` counterpart this one **degrades**. A scan that raises after marking a check `missed` has already dropped that alert for the 24h repeat window, and no later scan re-sends it, so this is a report of loss rather than of history. **Cumulative and does not reset** | **yes** |
+| `heartbeats.consecutive_scan_failures` | scans that have raised **since the last good one**, returning to `0` on recovery. The live signal: the monitor is evaluating **no** registered check while this is climbing | **yes** — at 3 |
+| `heartbeats.last_scan_error` | the exception **type** from the last failed scan. Companion to the row above; cleared on recovery | no — reported with the row above |
 
 Four things the field names do not tell you:
 
 - **Two of the `delivery.*` fields count both queues.**
   `journal_skipped_lines` and `journal_write_errors` are sums across the
-  outbound *and* inbox journals — despite the prefix. The other **nine**
+  outbound *and* inbox journals — despite the prefix. The other **twelve**
   `delivery.*` fields, and **all four** `inbox.*` fields, are per-queue exactly
-  as their prefixes say — including the six added on 2026-08-02, which describe
-  the outbound dispatch thread and nothing else. (This read *"the other three"*
-  until that date, which was true of the five-row block it was written for.) Do
-  not read the prefix as a guarantee on those two.
+  as their prefixes say — including the six added on 2026-08-02 and the three
+  added on 2026-08-03, all nine of which describe the outbound dispatch thread
+  and nothing else. (This read *"the other three"* until 2026-08-02, which was
+  true of the five-row block it was written for, and *"the other nine"* until
+  2026-08-03.) Do not read the prefix as a guarantee on those two.
 - **`delivery.audit_write_errors` is summed too, but in a different sense, and
   the two must not be folded together.** It is not a sum across two *queues* —
   the inbox has no delivery log. It is a sum across two `DeliveryLog`
@@ -501,7 +516,7 @@ Four things the field names do not tell you:
   dedupes by identity, so the ordinary one-object deployment is not
   double-counted. Everything the prefix says about *which queue* still holds:
   it is outbound-only.
-- **Eighteen degrading fields — the field count from above, not the fifteen
+- **Twenty-one degrading fields — the field count from above, not the eighteen
   rows the column marks — and the map to `reasons` lines is one-to-one in
   neither direction.** `expired_at_boot` and `unroutable_at_boot` share one
   entry: both mean "queued, then not delivered", and one investigation reads
@@ -510,13 +525,27 @@ Four things the field names do not tell you:
   **combination**, and produce exactly **one** entry between them at any moment:
   a dead thread also looks stale, and one fault must not print two reasons. **The
   `delivery.*` and `heartbeats.*` liveness triples added on 2026-08-02 behave
-  identically** — same three fields, same `elif` ordering, same at-most-one-entry
-  guarantee — which is why they are three rows each rather than one, and why you
-  should alarm on `status` rather than on any single row. (It was five fields and
-  four lines until 2026-07-31; `quarantine_write_errors` added one of each,
+  identically** — same three fields, same at-most-one-entry guarantee — which is
+  why they are three rows each rather than one, and why you should alarm on
+  `status` rather than on any single row. Their `elif` **ordering** is no longer
+  `retention.*`'s, and 2026-08-03 is where the two diverged: retention asks its
+  failure counter first, these two ask `thread_alive` first, because a dead
+  thread increments no counter and a restart is the more actionable answer. The
+  at-most-one guarantee is identical; the order is not, and neither is a copy of
+  the other. **One counter sits outside a chain entirely:**
+  `heartbeats.scan_failures` can print a **second** `heartbeats:` reason beside
+  whichever the chain produced, because "has an alert already been lost" is a
+  different question from "is this loop running" and both can be true at once.
+  (It was five fields and four lines until 2026-07-31;
+  `quarantine_write_errors` added one of each,
   `retention.*` added five fields and three lines on 2026-08-02, the two
-  thread blocks added six fields and two lines the same day — 17 and 10 — and
-  CG-75's `audit_write_errors` added one of each on 2026-08-03: **18 and 11**.
+  thread blocks added six fields and two lines the same day — 17 and 10 —
+  CG-75's `audit_write_errors` added one of each on 2026-08-03: 18 and 11 —
+  and CG-74's failure counters added three fields and three lines the same day:
+  **21 and 14**. The three lines are the two consecutive counters and
+  `scan_failures`; the three cumulative-or-companion rows
+  (`delivery.pass_failures`, `delivery.last_pass_error`,
+  `heartbeats.last_scan_error`) add neither.
   Recount against `service.py`'s `reasons` chain rather than trusting this
   sentence — a
   copied count is what `CLAUDE.md`'s test-count note is about — but count the way
