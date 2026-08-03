@@ -291,13 +291,46 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         entry_id = dispatch.enqueue(app_id, "notify", identity, message, n.title)
         return {"status": "enqueued", "id": entry_id, "occurrences": occurrences}
 
-    def _monitor_notify(source: str, title: str, body: str, dedupe_key: str) -> None:
+    def _monitor_notify(source: str, title: str, body: str,
+                        dedupe_key: str | None) -> bool:
+        """Emit a dead-man alert. Returns whether it was ACCEPTED for delivery.
+
+        THE RETURN VALUE IS THE FIX (CG-76). This function used to return None
+        and swallow two different failures:
+
+        1. `except HTTPException` — the comment said "no alert route
+           configured", but the CATCH is wider than the comment. Every
+           `RegistryError` becomes an HTTPException in `emit_notification`, and
+           `route_for` raises it on FOUR conditions: the source app is not
+           registered, there is no `alert` route and no `default`, the app may
+           not send as the routed identity, or that identity no longer exists.
+           All four were logged and then forgotten.
+        2. `{"status": "deduped"}` — returned, and discarded. Spec §2.4
+           measures a genuinely NEW outage being deduped against the PREVIOUS
+           outage's alert, one hour earlier.
+
+        Still catches rather than raising: a permanent registry
+        misconfiguration must not kill the scan loop, and it must not be
+        reported as a transient fault either. `scan_once` counts the `False`
+        and declines to mark the check, so the alert re-fires next scan and
+        self-heals the moment the route is restored.
+        """
         try:
-            emit_notification(source, Notification(
+            result = emit_notification(source, Notification(
                 severity="alert", title=title, body=body, dedupe_key=dedupe_key,
             ))
-        except HTTPException as exc:  # no alert route configured — log, don't die
+        except HTTPException as exc:  # registry cannot route this alert
             log.record(source, "heartbeat", title, "failed", f"no route: {exc.detail}")
+            return False
+        if result.get("status") != "enqueued":
+            # Belt and braces. D4 removes the only cause of this by passing no
+            # dedupe_key from the dead-man path, so on today's code this branch
+            # is unreachable — kept because the failure it guards is SILENT and
+            # a future severity/route change could reintroduce it.
+            log.record(source, "heartbeat", title, "failed",
+                       f"not accepted for delivery: {result.get('status')}")
+            return False
+        return True
 
     monitor = HeartbeatMonitor(checks, _monitor_notify, interval_seconds=monitor_interval)
 

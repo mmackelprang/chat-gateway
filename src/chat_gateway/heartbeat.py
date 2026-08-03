@@ -152,18 +152,56 @@ class HeartbeatStore:
             return [c for (s, _), c in sorted(self._checks.items()) if s == source]
 
     def due_alerts(self, repeat_s: int = DEFAULT_REPEAT_S) -> list[Check]:
-        """Checks whose missed-alert should fire now; marks them alerted."""
+        """Checks whose missed-alert should fire now. **Mutates NOTHING.**
+
+        THE MUTATION USED TO LIVE HERE, AND THAT WAS CG-76. This method set
+        `status = "missed"` and `last_alerted = now` under the lock and then
+        `_save()`d, all BEFORE returning to `HeartbeatMonitor.scan_once` — the
+        caller that actually notifies. The mark is a promise about the future
+        ("an alert will be sent") persisted as a statement about the past ("an
+        alert was sent"), and every way the future failed to arrive dropped the
+        alert for the whole `DEFAULT_REPEAT_S` window with `/healthz` green.
+        Six such ways were measured; five of them raise nothing at all, and one
+        moves no /healthz field whatsoever. See the spec's §2.
+
+        Selecting is now free of side effects, so a caller may call it, fail,
+        and call it again. `mark_alerted` is the second half.
+        """
         now = self._now()
-        fired = []
         with self._lock:
-            for check in self._checks.values():
-                if check.alert_due(now, repeat_s):
-                    check.status = "missed"
-                    check.last_alerted = now.isoformat()
-                    fired.append(check)
-            if fired:
-                self._save()
-        return fired
+            return [c for c in self._checks.values() if c.alert_due(now, repeat_s)]
+
+    def mark_alerted(self, checks: list[Check]) -> None:
+        """Record that these checks' alerts were ACCEPTED for delivery.
+
+        Called by `scan_once` with only the checks whose notify actually got as
+        far as the durable queue — never with a check whose alert was refused,
+        deduped, or raised. Empty list is a no-op and does not touch the disk.
+
+        AT-LEAST-ONCE, DELIBERATELY. If `_save()` raises here — or the process
+        dies between the notify and this call — the check is not marked and the
+        next scan alerts AGAIN. That is a duplicate, not a drop, and it is the
+        posture every neighbouring mechanism in this repo already took for the
+        reason each of them records: `_finish`'s mid-flight window
+        (delivery.py, "losing an alert is the worse failure"), `_journal_write`
+        ("at most one duplicate on the next boot"), and `Inbox._audit` (unacked,
+        so Google redelivers). A duplicate "heartbeat missed" costs one
+        redundant phone notification; a dropped one costs the whole feature,
+        silently, for 24 hours.
+
+        `_save()` stays UNGUARDED on purpose. It is now on the far side of the
+        notify, so raising is honest — the alert is already queued and the raise
+        costs at most a duplicate. Wrapping it would re-create CG-76 in a
+        quieter form.
+        """
+        if not checks:
+            return
+        now = self._now().isoformat()
+        with self._lock:
+            for check in checks:
+                check.status = "missed"
+                check.last_alerted = now
+            self._save()
 
 
 class HeartbeatMonitor:
@@ -219,19 +257,81 @@ class HeartbeatMonitor:
         self.consecutive_scan_failures = 0
         #: See `Dispatcher.last_pass_error` — same helper, same reasoning.
         self.last_scan_error: str | None = None
+        #: CG-76. Alerts that came due and could NOT be accepted for delivery,
+        #: over the life of the process. This is the counter `scan_failures`
+        #: was mistaken for: a dead-man alert can be dropped WITHOUT any scan
+        #: raising, and three separate paths do it (spec §2.2–§2.4) — a notify
+        #: refused for want of a route, and a notify deduped against an earlier
+        #: outage's alert. Both return normally, so nothing else sees them.
+        #:
+        #: CUMULATIVE and DEGRADING. Cumulative because an alert refused now is
+        #: not re-sent by a later scan once the check is eventually marked;
+        #: degrading because this names a guarantee BREAKING on aitrader's
+        #: contract surface — the exact opposite of `suppressed_opt_out`, which
+        #: names a guarantee WORKING and is correctly inert (CG-12).
+        #:
+        #: A BARE INTEGER. No app id, no check id: /healthz is unauthenticated
+        #: and CG-12 rejected metadata-only records on exactly that ground. The
+        #: operator who needs to know WHICH check reads the authenticated
+        #: `GET /v1/deliveries`, where `_monitor_notify` already writes the
+        #: identifying line.
+        self.alerts_undeliverable = 0
+        #: The same fact as a GAUGE: how many checks were undeliverable on the
+        #: LAST scan. Returns to 0 when the registry is fixed, so it is the live
+        #: signal beside the cumulative history — `RetentionSweeper`'s split,
+        #: and CG-74 measured why one number cannot do both jobs.
+        self.checks_undeliverable = 0
 
     def scan_once(self) -> int:
+        """One pass: select due checks, notify each, mark only what was accepted.
+
+        Returns how many alerts were ACCEPTED for delivery — not how many were
+        due. The two used to be the same number because marking happened before
+        notifying; they are different now, and the difference is the point.
+
+        PER CHECK, NOT PER BATCH, and the reason is cross-tenant. `fired` can
+        hold checks owned by DIFFERENT apps — the store is gateway-wide, keyed
+        (source, check_id). Before CG-76 this loop had no `try` inside it, so
+        one app's failing notify aborted the loop and left every LATER check
+        unnotified while `due_alerts` had already marked all of them alerted.
+        Measured: a routeless `job-hunter` check suppressed `aiteam-harness`'s
+        dead-man alert for 24h. That is the isolation instinct hard rules #4
+        and #6 apply to inbound, and it costs one `try`.
+        """
         fired = self._store.due_alerts(self._repeat)
+        accepted: list = []
+        undeliverable = 0
+        first_error: Exception | None = None
         for check in fired:
-            self._notify(
-                check.source,
-                f"heartbeat missed: {check.check_id}",
-                f"No refresh since {check.last_seen} (schedule {check.schedule}, "
-                f"grace {check.grace}). Repeats daily until refreshed or deleted.",
-                f"hb:{check.check_id}",
-            )
+            try:
+                if self._notify(
+                    check.source,
+                    f"heartbeat missed: {check.check_id}",
+                    f"No refresh since {check.last_seen} (schedule {check.schedule}, "
+                    f"grace {check.grace}). Repeats daily until refreshed or deleted.",
+                    f"hb:{check.check_id}",
+                ):
+                    accepted.append(check)
+                else:
+                    # The notify returned WITHOUT accepting — a route refusal
+                    # (spec §2.2) or a dedupe (§2.4). Not an exception, so it
+                    # must be counted here or it is invisible. The check is NOT
+                    # marked, so it re-fires next scan and self-heals the moment
+                    # the registry is fixed.
+                    undeliverable += 1
+            except Exception as exc:  # noqa: BLE001 — one tenant must not strand another
+                undeliverable += 1
+                if first_error is None:
+                    first_error = exc
+        # Mark BEFORE re-raising: the alerts that DID get accepted must not be
+        # re-sent because a different check failed.
+        self._store.mark_alerted(accepted)
+        self.alerts_undeliverable += undeliverable
+        self.checks_undeliverable = undeliverable
+        if first_error is not None:
+            raise first_error
         self.last_scan_at = dt.datetime.now(dt.timezone.utc)
-        return len(fired)
+        return len(accepted)
 
     @property
     def interval_seconds(self) -> float:
