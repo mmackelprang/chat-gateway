@@ -372,6 +372,30 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     # -- dead-man heartbeat checks --------------------------------------------
     @app.post("/v1/heartbeat")
     def refresh_heartbeat(h: HeartbeatIn, app_id: str = Depends(current_app_id)):
+        # CG-76 / spec §4.2. A dead-man check whose alert could never be routed
+        # is a check that will go missed and tell nobody. Refuse it HERE — at
+        # the moment the mistake is made, to the party who can fix it — rather
+        # than discovering it 24h into an outage. `registry.example.yaml` gives
+        # `aiteam-harness` and `job-hunter` no `routes:` block at all, so this
+        # is not hypothetical for two of the three registered consumers.
+        #
+        # NOT "at boot": checks arrive at runtime and persist across restarts,
+        # so registration is this object's equivalent of boot. And a snapshot
+        # cannot be the whole fix — a route can be removed AFTER a check is
+        # registered — which is why `alerts_undeliverable` exists as well.
+        #
+        # `str(exc)` is safe: `RegistryError`'s message is authored in
+        # `registry.py` and names identities, never URLs (hard rule #2).
+        try:
+            registry.route_for(app_id, "alert")
+        except RegistryError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"cannot register a dead-man check: this app has no "
+                        f"route for alert-severity notifications, so a missed "
+                        f"check could never be delivered ({exc}). Add "
+                        f"routes: {{alert: <identity>}} to the registry"),
+            ) from exc
         try:
             check = checks.refresh(app_id, h.check_id, h.schedule, h.grace, h.tz)
         except (HeartbeatError, Exception) as exc:

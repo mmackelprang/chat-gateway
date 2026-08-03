@@ -309,7 +309,20 @@ class HeartbeatMonitor:
                     f"heartbeat missed: {check.check_id}",
                     f"No refresh since {check.last_seen} (schedule {check.schedule}, "
                     f"grace {check.grace}). Repeats daily until refreshed or deleted.",
-                    f"hb:{check.check_id}",
+                    # NO DEDUPE KEY — CG-76 door 4, and the removal is total
+                    # rather than retuned. `alert_due()` IS this path's dedupe:
+                    # it already guarantees at most one alert per check per
+                    # `DEFAULT_REPEAT_S` (86400s). `Deduper`'s window is
+                    # `DEFAULT_DEDUPE_WINDOW_S` (3600s). Since 86400 > 3600 the
+                    # deduper can NEVER suppress an actual duplicate here — the
+                    # monitor does not emit one — so every suppression it
+                    # performed on this path was a FALSE POSITIVE. Measured: a
+                    # source that died, recovered, refreshed its check, and died
+                    # again inside the hour produced TWO outages and ONE alert.
+                    # This is not a control with a trade-off; it is a control
+                    # with no upside case. Pinned by
+                    # `test_repeat_window_must_exceed_the_dedupe_window`.
+                    None,
                 ):
                     accepted.append(check)
                 else:
