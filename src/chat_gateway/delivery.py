@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Callable
 
 from .envelope import OutboundMessage
+from .errors import describe_exception
 from .journal import chmod_owner_only
 from .registry import Identity
 
@@ -81,6 +82,19 @@ class DeliveryLog:
         self._lock = threading.Lock()
         self._audit_dir = Path(audit_dir) if audit_dir else None
         self._ids = itertools.count(1)
+        #: Audit-file writes that FAILED. The delivery-log twin of
+        #: `Dispatcher.journal_write_errors`, and it exists for the identical
+        #: reason: raising on this path turned a full disk into an unbounded
+        #: re-send storm against Google (CG-75). Surfaced at /healthz because a
+        #: forensic record that has silently stopped being written is worse than
+        #: none, since it is trusted (hard rule #5).
+        #:
+        #: CUMULATIVE and never reset. A line that did not reach disk is never
+        #: written by a later pass — the same test `RetentionSweeper.errors`
+        #: applies to a file the OS refused to unlink: there is nothing for a
+        #: later pass to recover from, so a counter that could return to zero
+        #: would be a lie about a permanent loss.
+        self.audit_write_errors = 0
 
     def record(self, source: str, kind: str, title: str, status: str,
                detail: str = "", entry_id: int | None = None,
@@ -92,18 +106,68 @@ class DeliveryLog:
         with self._lock:
             self._entries[source].append(entry)
         if self._audit_dir:
-            self._audit_dir.mkdir(parents=True, exist_ok=True)
-            path = self._audit_dir / f"deliveries-{source}-{now.date().isoformat()}.jsonl"
-            # CG-65 / ADR-0002 D5. Titles-only, so this is a smaller exposure
-            # than the inbox audit — but `title[:200]` and `detail[:300]` can
-            # still carry sensitive state (aitrader Feature 3 is the reason this
-            # class is titles-only in the first place), and there is no reason
-            # for it to be the one artifact under the state dir left at 0644.
-            existed = path.exists()
-            with path.open("a", encoding="utf-8") as fh:
-                if not existed:
-                    chmod_owner_only(path)
-                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            # GUARDED, and the guard is INSIDE this method around the FILE half
+            # only — not around the call sites (CG-75).
+            #
+            # The placement is what makes swallowing cheap, and it is a property
+            # of the two lines above rather than a hope: the in-memory ring
+            # buffer has ALREADY been appended to under `self._lock`, so
+            # `query()` — and therefore `GET /v1/deliveries` — still answers
+            # "did this alert reach Chat?" correctly for the life of the
+            # process. What is lost is the on-disk copy, not the answer.
+            #
+            # WHAT RAISING COST, measured rather than argued (spec §2.2): one
+            # enqueued notification, one successful send, then a full disk
+            # produced SIXTY sends to Google in sixty seconds, because the
+            # OSError escaped `_finish` before the job left `_jobs` and the
+            # delivered path never advances `next_attempt_at`. `_journal_write`'s
+            # docstring has always said raising here would do exactly that; this
+            # was the one write on the path that never got the guard, and
+            # `service._journal_write_errors` says the same thing from the other
+            # end ("raising there would turn a full disk into a re-send storm").
+            #
+            # WHAT SWALLOWING COSTS, kept here rather than only in the spec:
+            # (1) this entry's on-disk delivery record is gone for good — and
+            # `journal.py` is explicit that the per-app audit files cannot
+            # substitute, because they record what ARRIVED, never what LEFT;
+            # (2) the job now reaches `_finish`'s `close`, which on a full disk
+            # also fails and is also counted, so the journal entry stays open
+            # and REPLAYS at the next boot — possibly delivering twice. That is
+            # the identical at-least-once trade `_journal_write` already blessed
+            # ("at most one duplicate on the next boot"), and one duplicate at
+            # next boot beats one send per second indefinitely.
+            #
+            # NOT a reason to relax `enqueue`'s journal `open`, which stays
+            # unguarded: refusing work we cannot persist belongs to the
+            # DURABILITY mechanism, not to the audit trail. On a genuinely full
+            # disk `enqueue` still 500s and the consumer's fallback log still
+            # takes over. This guard does not hide a full disk — it stops work
+            # that was already accepted from storming.
+            try:
+                self._audit_dir.mkdir(parents=True, exist_ok=True)
+                path = self._audit_dir / f"deliveries-{source}-{now.date().isoformat()}.jsonl"
+                # CG-65 / ADR-0002 D5. Titles-only, so this is a smaller exposure
+                # than the inbox audit — but `title[:200]` and `detail[:300]` can
+                # still carry sensitive state (aitrader Feature 3 is the reason this
+                # class is titles-only in the first place), and there is no reason
+                # for it to be the one artifact under the state dir left at 0644.
+                existed = path.exists()
+                with path.open("a", encoding="utf-8") as fh:
+                    if not existed:
+                        chmod_owner_only(path)
+                    fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception as exc:  # noqa: BLE001 — the audit degrades, delivery does not stop
+                self.audit_write_errors += 1
+                # `describe_exception`, not an f-string on the exception (hard
+                # rule #2 via CG-29's allowlist). `str(OSError)` embeds the
+                # ABSOLUTE path — `retention.py` measured exactly that — and
+                # `OSError` is not a class `errors.py` marks, so this prints the
+                # type name alone. Deliberately lossy: `ENOSPC` and `EACCES`
+                # read identically here. Widening the allowlist would recover it
+                # and is its own decision, not this row's (spec §5).
+                print(f"delivery log: audit write FAILED ({describe_exception(exc)}); "
+                      "this delivery's on-disk record is lost. The in-memory ring "
+                      "buffer still has it until restart", flush=True)
         return entry_id
 
     def query(self, source: str, limit: int = 50) -> list[dict]:
@@ -184,6 +248,18 @@ class Dispatcher:
         """The journal, or None. Public so /healthz can read its counters
         without reaching into a private attribute across a module boundary."""
         return self._journal
+
+    @property
+    def delivery_log(self):
+        """The delivery log this dispatcher writes through.
+
+        Public for the reason `journal` above is: /healthz has to read a counter
+        off it and must not reach through a private attribute across a module
+        boundary. It is NOT necessarily the same object as `create_app`'s own
+        `log` — an injected dispatcher brings its own — which is exactly why
+        `service._audit_write_errors` sums over both.
+        """
+        return self._log
 
     def _journal_write(self, fn: Callable[[], None], op: str) -> bool:
         """Best-effort journal write on a path where raising is the worse bug.
