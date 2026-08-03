@@ -60,7 +60,7 @@ printed in full (see below); `adapters/` — webhook (tier 1), chat_api + pubsub
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 345 passing.
+`python` is 3.13.7) — offline, 359 passing.
 
 ## Current status (2026-07-31)
 
