@@ -11,15 +11,19 @@ the same state directory in this one. Asserting the file exists proves the
 journal wrote; only killing a process proves the queue survives.
 """
 
+import contextlib
 import datetime as dt
 import json
 import os
+import stat
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
 
-from chat_gateway.delivery import DeliveryLog, Dispatcher
+import pytest
+
+from chat_gateway.delivery import BACKOFF_S, DeliveryLog, Dispatcher
 from chat_gateway.envelope import InboundReply, OutboundMessage
 from chat_gateway.inbox import Inbox
 from chat_gateway.journal import Journal
@@ -851,3 +855,165 @@ def test_a_job_journalled_during_a_finish_survives_the_drain_compaction(tmp_path
     assert "ENQUEUED MID FINISH" in jpath.read_text(encoding="utf-8")
     revived = Dispatcher({"webhook": OkAdapter()}, DeliveryLog(), journal=Journal(jpath))
     assert revived.restore(reg) == (1, 0)
+
+
+# --------------------------------------------------------------------------
+# CG-75: the audit write that used to raise out of `_finish`
+#
+# `DeliveryLog.record` did a raw `mkdir`/`open`/`write` with no guard, on the
+# delivery hot path. The exception escaped `_finish` BEFORE the job left
+# `_jobs`, and the delivered path never advances `next_attempt_at` — so the
+# next pass sent the same message again, one second later, forever. Measured
+# before the fix: one enqueued notification, one successful send, SIXTY sends
+# to Google in sixty passes.
+#
+# The failure is injected with REAL mode bits rather than a monkeypatched
+# `Path.mkdir`, so what is exercised is the real method meeting a real kernel
+# refusal. `ENOSPC` and `EACCES` reach `record` identically — both are an
+# `OSError` out of `mkdir`/`open` — so an unwritable parent is a faithful
+# stand-in for the full disk that cannot be staged in a unit test.
+# --------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _unwritable_audit_dir(tmp_path):
+    """Yield an audit_dir whose every write really fails, and restore the mode.
+
+    The directory itself is deliberately NOT created: an existing directory
+    inside an unwritable parent still satisfies `mkdir(parents=True,
+    exist_ok=True)` — measured — so only the missing-dir case actually refuses.
+
+    Restored in a `finally` so pytest can clean `tmp_path` up.
+    """
+    if sys.platform == "win32":  # pragma: no cover - POSIX mode bits
+        pytest.skip("POSIX mode bits; a Windows ACL is a different mechanism")
+    if os.getuid() == 0:  # pragma: no cover - root ignores the mode bits
+        pytest.skip("running as root — an unwritable directory does not bite")
+    parent = tmp_path / "state"
+    parent.mkdir()
+    os.chmod(parent, stat.S_IRUSR | stat.S_IXUSR)
+    try:
+        yield parent / "deliveries"
+    finally:
+        os.chmod(parent, stat.S_IRWXU)
+
+
+class CountingBoomAdapter(BoomAdapter):
+    """`BoomAdapter`, but it says how many times it was asked.
+
+    The retry-ladder test needs the count of ATTEMPTS, and a failing adapter
+    has no `sent` list to measure it with.
+    """
+
+    def __init__(self):
+        self.attempts = 0
+
+    def send(self, identity, message):
+        self.attempts += 1
+        super().send(identity, message)
+
+
+class _Clock:
+    """An injected clock, so a 72.5-minute backoff ladder costs no wall time."""
+
+    def __init__(self, start: dt.datetime):
+        self.now = start
+
+    def __call__(self) -> dt.datetime:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += dt.timedelta(seconds=seconds)
+
+
+def test_a_failing_audit_write_does_not_raise_out_of_record(tmp_path):
+    with _unwritable_audit_dir(tmp_path) as audit_dir:
+        log = DeliveryLog(audit_dir=audit_dir)
+        entry_id = log.record("app-a", "notify", "SYNTHETIC TITLE", "delivered")
+    assert isinstance(entry_id, int)
+    assert log.audit_write_errors == 1
+
+
+def test_a_failing_audit_write_still_populates_the_in_memory_ring(tmp_path):
+    """The whole reason swallowing is cheap: the answer survives, the file does not.
+
+    The guard sits around the FILE half only, below the ring-buffer append, so
+    `query()` — and therefore `GET /v1/deliveries` — still answers "did this
+    alert reach Chat?" for the life of the process.
+    """
+    with _unwritable_audit_dir(tmp_path) as audit_dir:
+        log = DeliveryLog(audit_dir=audit_dir)
+        log.record("app-a", "notify", "close-of-day", "delivered")
+    entries = log.query("app-a")
+    assert len(entries) == 1 and entries[0]["status"] == "delivered"
+    assert log.audit_write_errors == 1
+
+
+def test_a_failing_audit_write_does_not_resend_the_job(tmp_path):
+    """CG-75, the whole row. Pre-fix this was 60 sends in 60 passes — measured.
+
+    One enqueued notification, one successful send, and an audit trail that
+    cannot be written. Every subsequent pass must send NOTHING.
+    """
+    reg = _registry()
+    ok = OkAdapter()
+    clock = _Clock(dt.datetime(2026, 8, 3, tzinfo=dt.timezone.utc))
+    with _unwritable_audit_dir(tmp_path) as audit_dir:
+        log = DeliveryLog(audit_dir=audit_dir)
+        d = Dispatcher({"webhook": ok}, log, now_fn=clock)
+        d.enqueue("app-a", "notify", reg.identities["ident-a"], _message(), "t")
+        for _ in range(60):
+            d.process_due()               # must not raise
+            clock.advance(1)
+
+    assert len(ok.sent) == 1, "the delivered job was re-sent"
+    assert d.pending() == 0, "the job never left _jobs"
+    assert log.audit_write_errors >= 1
+    assert d.last_pass_at is not None, "a raising pass never stamps"
+
+
+def test_a_failing_audit_write_on_the_retry_path_keeps_the_backoff(tmp_path):
+    """The other half of the measurement: the ladder must still be the ladder.
+
+    Pre-fix this path did not storm for the whole 72.5 minutes of `BACKOFF_S`
+    and then degenerated into the delivered path's one-per-second storm. Now
+    the send count over the whole ladder is exactly the ladder.
+    """
+    reg = _registry()
+    adapter = CountingBoomAdapter()
+    clock = _Clock(dt.datetime(2026, 8, 3, tzinfo=dt.timezone.utc))
+    with _unwritable_audit_dir(tmp_path) as audit_dir:
+        log = DeliveryLog(audit_dir=audit_dir)
+        d = Dispatcher({"webhook": adapter}, log, now_fn=clock)
+        d.enqueue("app-a", "notify", reg.identities["ident-a"], _message(), "t")
+        for _ in range(6000):
+            d.process_due()
+            clock.advance(1)
+
+    assert adapter.attempts == len(BACKOFF_S), (
+        f"expected exactly {len(BACKOFF_S)} attempts, got {adapter.attempts}")
+    assert d.pending() == 0
+    assert log.audit_write_errors >= 1
+
+
+def test_enqueue_still_refuses_work_it_cannot_journal(tmp_path):
+    """The guard must NOT have relaxed the refuse-the-work posture.
+
+    Distinct from `test_a_failed_enqueue_write_refuses_the_job_rather_than_
+    pretending` above, which predates CG-75: here the audit write ALSO fails,
+    which is the realistic full-disk shape and the case where a swallow could
+    plausibly mask the journal's raise. It must not. Refusing belongs to the
+    DURABILITY mechanism, not to the audit trail — the consumer's 5xx is what
+    hands the alert back to its own fallback log (the aitrader contract).
+    """
+    reg = _registry()
+
+    class BrokenJournal(Journal):
+        def open(self, entry_id, kind, payload):
+            raise OSError(28, "No space left on device")
+
+    with _unwritable_audit_dir(tmp_path) as audit_dir:
+        d = Dispatcher({"webhook": OkAdapter()}, DeliveryLog(audit_dir=audit_dir),
+                       journal=BrokenJournal(tmp_path / "delivery.jsonl"))
+        with pytest.raises(OSError):
+            d.enqueue("app-a", "notify", reg.identities["ident-a"], _message(), "t")
+    assert d.pending() == 0
