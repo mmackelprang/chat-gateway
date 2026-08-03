@@ -662,13 +662,79 @@ Four properties, each deliberate:
   unauthenticated endpoint is a worse outcome than one that refuses to start —
   and it is the exact shape of the `/healthz`-that-lies failure rule #5 exists
   for.
+  ⚠ **Re-tested 2026-08-03 against the degrade machinery that did not exist when
+  this was written** (CG-72, CG-74, CG-75, and CG-76, which landed as #63 the
+  same day this was re-tested). The obvious
+  challenge is that `/healthz` is far better at reporting trouble now, so
+  "boot degraded and complain loudly" might have become the better option.
+  **It has not, and the reason is sharper than the original one.** The channel
+  built to notice silence is the **dead-man switch**, and it reports by *sending
+  a Chat message* — which is precisely what a gateway with no credentials cannot
+  do. A credential-less boot would therefore be invisible in the one place
+  designed to catch invisibility, which is CG-76's entire finding applied to
+  startup. Refusing to start is the only failure mode that cannot be swallowed.
+  **Second-order effect, accepted and recorded rather than discovered:** under
+  `restart: unless-stopped` a fatal config error is a **crash loop**. That is
+  cheap — the process exits before the dispatcher is constructed, so it generates
+  **no** Google traffic and cannot reset any backoff ladder — but it means the
+  operator's first diagnostic is `docker logs`, not `/healthz`, and the runbook
+  must say so or a restarting container reads as a bug.
 - **Values are never logged.** The loader reports the count of keys loaded and
   the path, never a key's value. Key *names* are non-secret (they are in the
   committed `.env.example`); values are the whole point.
 
+- **Environment wins is not just a test-ergonomics property — it is load-bearing
+  on the box.** ⚠ **Added 2026-08-03.** The `.env` transferred to the NAS is the
+  dev box's, so it carries dev-relative paths. The compose sets the three
+  container paths, and "environment wins" is what makes those override the file's
+  stale values rather than the reverse. **Two keys are NOT in the compose and so
+  are not saved by it** — `GOOGLE_APPLICATION_CREDENTIALS` (whose filename is
+  deliberately never pinned in compose, per CG-19/CG-51) and
+  `GATEWAY_ENABLE_PUBSUB`. Both must be corrected on the box; the runbook owns
+  the check. This is a **direct consequence of property #1**, so it belongs
+  beside it rather than being discovered during a deploy.
+
 Result: `custom_compose_config` carries **`CHAT_GATEWAY_ENV_FILE` and a handful
 of non-secret paths, and nothing else.** `capture.sh` is then clean *by
 construction* — the redactor's suffix list stops being load-bearing for us.
+
+⚠ **The suffix-list premise RE-MEASURED 2026-08-03, and it holds.** It is the one
+load-bearing fact in this row that lives in a repo this project does not control
+(`/mnt/d/prj/homelab`, read-only), which is exactly the "external world" category
+CG-69 classifies as unwatchable by any guard here — so it is checked, not quoted.
+Running that repo's real `is_secret_key` over this project's real key names: all
+seven credential vars **miss**; `GOOGLE_APPLICATION_CREDENTIALS` is the only
+catch, and it is a path. End to end through the real redactor and the real scan
+gate, a payload carrying a live-shaped API key and webhook URL came back **with
+both values intact and the gate exited 0**, while a `POSTGRES_PASSWORD` control
+in the same payload was redacted — which is what makes the green console line
+persuasive rather than merely wrong.
+
+**One correction to how this row states the finding.** The claim has been *"the
+`__<SUFFIX>` convention defeats the suffix rule, on exactly the two families that
+are real credentials."* Both families do leak, but **for different reasons, and
+only one of them is the convention's doing**:
+
+| Var | Bare form | With `__<SUFFIX>` | So the cause is |
+|---|---|---|---|
+| `CHAT_GATEWAY_API_KEY__<APP>` | ✅ caught (`API_KEY`) | ❌ missed | **the convention** |
+| `GOOGLE_CHAT_WEBHOOK_URL__<IDENTITY>` | ❌ **missed anyway** | ❌ missed | **the list has no `URL` entry** (only `DATABASE_URL`) |
+
+**This matters because it kills the cheap fix.** *"Rename the vars so the suffix
+rule catches them"* would work for the API keys and do **nothing** for the
+webhook URLs — the higher-value secret of the two, since a webhook URL is a
+bearer credential with **no rotate-in-place**. Nor does any value-based rule
+help: the URL-credential regex looks for `scheme://user:pass@host`, and a webhook
+carries `key`/`token` as **query parameters**. Structural containment is not the
+convenient answer here; it is the only one.
+
+⚠ **The list changed on 2026-08-03 — check what changed before trusting this.**
+That repo's `lib/redact_json.py` was edited the same day this was re-measured,
+but `SECRET_KEY_SUFFIXES` itself was **not** touched (18 entries, unchanged since
+before 2026-07-31); the commit added *reference* exemptions (`{{VAR}}`, `$(…)`,
+angle-bracket placeholders). **The direction of travel is toward more exemptions,
+not more catches**, which is a reason to keep this measured on a date rather than
+assumed to be improving.
 
 #### On-box layout
 
@@ -741,18 +807,41 @@ and no identity wildcards.
 
 Neither is a blocker and neither is a reason to skip the deploy. Both are
 recorded in the runbook's Gotchas so the exposure is a decision rather than a
-discovery. The mitigation available today at zero cost is to bind the published
+discovery.
+
+✅ **RESOLVED 2026-08-03 — and this section proposed the answer that was taken.**
+It read: *"the mitigation available today at zero cost is to bind the published
 port and let the ACL work land in the homelab repo on its own schedule; if the
 user wants `/healthz` restricted, that is a separate item and is listed in §7 as
-an open question rather than decided here.
+an open question rather than decided here."* The user decided exactly that:
+**the D2 ACL is deferred, and CG-55 binds the LAN address instead of `0.0.0.0`.**
+So *"publishing `8085` is sufficient"* above is still true as a **measurement**
+about tailnet reachability, and is no longer the **plan** — the deployment
+declines that reachability deliberately. ⚠ **The two halves are one decision:**
+the bind is what makes the deferral sound rather than merely approximately sound,
+and the bind does **not** replace the ACL — it removes tailnet reach to *this
+port* and says nothing about the rest of that box. Reasoning, residual, and the
+exact artifacts CG-55 must change live in **one** home:
+`docs/BUILDER_QUEUE.md` § CG-55, *"Two user decisions, 2026-08-03"*. Not restated
+here, and **not implemented by CG-53** — this row ships no deploy.
 
 #### Deliverables
 
 - `CHAT_GATEWAY_ENV_FILE` support in `__main__`, with tests.
-- `docs/deploy/nas.md` — the runbook. Owned by this repo, in the shape of the
-  existing `docs/consumers/*-handoff.md` files: this repo owns the operational
-  detail, and homelab's four-header `nas/services/chat-gateway.md` links to it.
-  That split matches both repos' conventions and gives the fact one home.
+- `docs/deploy/nas.md` — the runbook. Owned by this repo: it can test its own
+  claims and the homelab repo cannot, and one home beats two.
+  ⚠ **The justification stated here was FALSE and is withdrawn — corrected
+  2026-08-03.** It read *"in the shape of the existing `docs/consumers/*-handoff.md`
+  files … That split matches both repos' conventions."* Measured, it matches
+  **neither**: that glob names exactly one file in this repo (its siblings are
+  `aitrader.md` and `jobhunt.md`), and **no** `nas/services/*.md` in the homelab
+  repo links out to another repo — all ten keep operational detail inline, and
+  every link there is intra-repo and relative. **The decision stands; it is a
+  deliberate deviation from that repo's house style, not a match to it**, and the
+  runbook must say so rather than claim a convention it invented. The homelab-side
+  file is still a four-header `nas/services/chat-gateway.md` (per that repo's
+  `_TEMPLATE.md`) pointing here — ⚠ **written by the user, not by this row**; a
+  chat-gateway Builder does not write that repo.
 - `.env.example` gains `CHAT_GATEWAY_ENV_FILE` with the "environment wins"
   semantics stated.
 - `docker-compose.yml`'s header gains one clause scoping it as the **dev-box /
@@ -760,7 +849,35 @@ an open question rather than decided here.
   key comment is resolved to point at `docs/google-cloud-setup.md`.
 
 **Merge gate: yes** — secret-handling path, and IaC-adjacent. Same gate CG-23,
-CG-33, CG-34 and CG-51 carried.
+CG-33, CG-34 and CG-51 carried. ⏸ **Held. Only the user releases it.**
+
+#### What releasing this gate actually approves — stated 2026-08-03 so the decision is a real one
+
+A gate nobody can describe is a rubber stamp. Precisely four things, and **none
+of them is a deploy** — this row ships no deploy, touches no live registry, and
+creates nothing on the NAS:
+
+1. **A new code path that reads a file into the process environment at startup**
+   — the first mechanism in this repo whose *purpose* is to move credentials.
+   Its blast radius is bounded by the four properties above, each with a test.
+2. **The judgement that the guarantee belongs in OUR code rather than compose's
+   `env_file:`.** Approving this is approving that a hard-rule-#2 guarantee
+   should not rest on an unverified property of a third-party renderer, at the
+   cost of ~20 lines this repo now maintains forever.
+3. **A published on-box layout and runbook** stating, in a public repo, where a
+   deployment's secrets live, what modes they carry, and which four directories
+   hold tenant message bodies. It names **paths and env-var NAMES only** — no
+   values, no hostnames, no key filenames — but it is a real description of a
+   real box's shape.
+4. **The accepted residual:** `/healthz` stays unauthenticated, and after CG-55's
+   LAN bind it is reachable by anyone on the home LAN. The tailnet ACL that would
+   have narrowed the tailnet half is **deferred** (user, 2026-08-03).
+
+**What it does NOT approve, and must not be read as approving:** the deploy
+itself (CG-55, separately gated), the live-registry operator edit (CG-61), any
+change to a ⚠ verification flag (none — this row exercises nothing against
+Google), or the homelab-repo artifacts, which land in a repo this project does
+not write.
 
 ### 4.2 CG-54 — queue and inbox durability
 

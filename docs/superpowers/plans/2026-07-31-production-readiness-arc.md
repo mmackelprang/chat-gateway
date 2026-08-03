@@ -113,6 +113,20 @@ upper-cased SUFFIX match. That match does not fire on this project's shapes —
 in `environment:` would therefore be captured in PLAINTEXT under a script that
 prints "clean. safe to commit."
 
+RE-MEASURED 2026-08-03 (the premise lives in a repo this one does not control,
+so it is checked rather than quoted): still true, and RENAMING IS NOT AN ESCAPE
+HATCH. Running that repo's real `is_secret_key` over this project's real key
+names, all seven credential vars miss; `GOOGLE_APPLICATION_CREDENTIALS` (a path,
+not a credential) is the only one caught. The two families fail for DIFFERENT
+reasons, which the one-line version of this hides: bare `CHAT_GATEWAY_API_KEY`
+IS caught, so the `__<APP>` suffix is what defeats it there — but bare
+`GOOGLE_CHAT_WEBHOOK_URL` is MISSED TOO, because that list has no `URL` entry
+(only `DATABASE_URL`). The webhook family would leak under any naming scheme.
+Nor does any value-based rule save it: a webhook URL carries `key`/`token` as
+QUERY PARAMETERS, not `user:pass@`, so the URL-credential regex does not match
+either. End to end through the real redactor and the real scan gate: the
+credentials survive verbatim and the gate exits 0.
+
 Keeping every secret in a file the compose document only NAMES makes that capture
 clean by construction, and puts a hard-rule-#2 guarantee on code this repo tests
 rather than on an unverified property of someone else's compose renderer.
@@ -226,14 +240,28 @@ with:
 ```
 
 And in `main()`, widen the startup error handler so a bad env file exits like a
-config error rather than a traceback:
+config error rather than a traceback.
+
+⚠ **REFRESHED 2026-08-03 — the tuple this Part was written against has grown.**
+When Part A was drafted `build_runtime()` returned **five** values; CG-68 added a
+sixth (`sweeper`). Measured on `main` (`4e55368`), `__main__.py:127` reads:
 
 ```python
-    try:
-        registry, inbox, adapters, subscriber, state_dir = build_runtime()
+        registry, inbox, adapters, subscriber, state_dir, sweeper = build_runtime()
+```
+
+So the edit is to the **`except` clause only** — do **not** retype the unpack
+line from an older draft of this plan, or you will silently drop the sweeper and
+`serve` will fail at `sweeper.sweep()`. Change:
+
+```python
+    except RegistryError as exc:
+```
+
+to:
+
+```python
     except (RegistryError, EnvFileError) as exc:
-        print(f"config error: {exc}", file=sys.stderr)
-        return 2
 ```
 
 with the import at module top:
@@ -242,7 +270,14 @@ with the import at module top:
 from .env_file import EnvFileError
 ```
 
-Update the module docstring's env list to include `CHAT_GATEWAY_ENV_FILE`.
+⚠ **Re-measure the unpack before editing.** This is the second time this Part's
+snapshot of that line has aged out in three days; take it from the file, not from
+here.
+
+Update the module docstring's env list to include `CHAT_GATEWAY_ENV_FILE`. That
+list currently names seven vars and is already missing `CHAT_GATEWAY_STATE_DIR`
+(read at `__main__.py:40`) — adding it is in scope for this Part, since the
+docstring is the thing this task is editing anyway.
 
 ## A3 · `tests/test_env_file.py` (new)
 
@@ -319,6 +354,15 @@ def test_load_returns_a_count_and_never_the_values(tmp_path, capsys):
 
 ## A4 · `.env.example` — add the new key
 
+⚠ **SCOPE, measured 2026-08-03: ONE key. Add it and change nothing else.**
+`.env.example` is already complete against the code — every one of the ten
+non-secret config vars the source reads has an entry, including CG-68's
+`CHAT_GATEWAY_INBOX_RETENTION_DAYS` and the two read indirectly
+(`retention_days_from_env()` and `service.ROUTING_TARGET_ENV`), plus the three
+API-key and four webhook-URL slots. `CHAT_GATEWAY_ENV_FILE` is the **only**
+addition this Part makes to that file. If a draft of this task grows into
+"refresh `.env.example`", stop — that is a different row.
+
 Insert immediately under the `# --- gateway ---` block:
 
 ```
@@ -333,6 +377,21 @@ CHAT_GATEWAY_ENV_FILE=
 
 ## A5 · `docker-compose.yml` — scope it, and resolve the dated comment
 
+⚠ **REFRESHED 2026-08-03 for the bind-to-LAN decision.** The header this Part
+originally wrote ended *"LAN/tailnet only"* — inherited verbatim from the file it
+replaces. That clause is now **wrong about the NAS in a way that matters**: the
+user's 2026-08-03 decision has CG-55 publish on the **LAN address**, which
+deliberately removes tailnet reach *to this port*. A header saying "LAN/tailnet"
+would read as a promise that the NAS artifact is tailnet-reachable, which is the
+opposite of what CG-55 builds.
+
+**This Part does NOT change the port line.** `ports: "8085:8085"` stays here —
+this is the dev box, a different host, and re-binding it is neither this row's
+decision nor its business. What changes is that the header stops **generalizing**
+a dev-box property into a claim about the deployment. The one home for the bind
+decision is `docs/BUILDER_QUEUE.md` § CG-55, *"Two user decisions, 2026-08-03"*;
+point at it, do not restate it.
+
 Replace the header and the SA-key comment block:
 
 ```yaml
@@ -342,7 +401,14 @@ Replace the header and the SA-key comment block:
 # absolute mounts only) and then captured into the homelab repo. The NAS artifact
 # and its runbook are docs/deploy/nas.md — do not adapt this file by hand.
 #
-# LAN/tailnet only — Pub/Sub is outbound pull; never publish this through a
+# The publish form below is the DEV BOX's, and does not describe the deployment:
+# "8085:8085" binds 0.0.0.0, every interface. The NAS publishes on the LAN
+# ADDRESS by decision (queue CG-55, "Two user decisions, 2026-08-03"), so that
+# port is not tailnet-reachable there. Do not copy this line to the box and do
+# not read it as the deployed posture.
+#
+# No public ingress, on either host — Pub/Sub is an outbound pull, so nothing
+# here ever needs to be reachable from the internet. Never publish this through a
 # reverse proxy.
 services:
   chat-gateway:
@@ -370,9 +436,42 @@ services:
 
 ## A6 · `docs/deploy/nas.md` (new) — the runbook
 
-Owned by this repo, in the shape of `docs/consumers/*-handoff.md`: this repo owns
-the operational detail; the homelab repo's four-header
-`nas/services/chat-gateway.md` **links** here rather than duplicating it.
+**The path `docs/deploy/nas.md` is confirmed** — checked 2026-08-03 rather than
+taken from this plan's word. It is a new directory in **this** repo, which no
+homelab convention governs, and it sits beside the existing `docs/consumers/`,
+`docs/google-cloud-setup.md` and `docs/integration-guide.md`. Nothing collides.
+
+⚠ **But this Part's stated JUSTIFICATION for the split was FALSE, and is
+withdrawn.** It read: *"in the shape of `docs/consumers/*-handoff.md`: … the
+homelab repo's four-header `nas/services/chat-gateway.md` **links** here rather
+than duplicating it,"* and §4.1 of the spec called that *"a split that matches
+both repos' conventions."* Measured in the homelab repo 2026-08-03, it matches
+**neither**:
+
+- **This repo has no `*-handoff.md` shape to be in.** That glob matches exactly
+  one file (`docs/consumers/jobhunt-handoff.md`); its siblings are
+  `aitrader.md` and `jobhunt.md`. There is no convention here to follow.
+- **No `nas/services/*.md` links out to another repo.** All ten keep operational
+  detail **inline**; every link in that directory is intra-repo and relative. A
+  homelab doc pointing at a chat-gateway-owned runbook is a **new pattern there,
+  not an existing one.** The nearest precedent is not even in `nas/` — it is
+  `appserver/services/familyworkspace.md`, which scopes itself (*"This doc covers
+  infra + deploy only — app source … live in the FamilyWorkspace repo"*) while
+  still writing every deploy command out inline.
+
+**The decision does not change; its honesty does.** Owning the runbook here is
+still right — this repo can test its own claims and the homelab repo cannot — but
+it is a **deliberate deviation** from that repo's house style, and the runbook
+must say so rather than claim a convention it invented. The homelab-side artifact
+is a **four-header** `nas/services/chat-gateway.md` (`## Overview (User)`,
+`## Deployment (Ops)`, `## Reinstall / Recovery`, `## Gotchas` — per
+`nas/services/_TEMPLATE.md`, no extra headers, no `###`), which carries the
+inline minimum its siblings do and points here for the rest.
+
+⚠ **Writing that file is NOT this row's work.** It lands in the homelab repo,
+which a chat-gateway Builder does not write (standing rules). Name it as a
+deliverable **for the user**, in this runbook's §9, so it is a handoff rather
+than an omission.
 
 Required sections and their load-bearing content:
 
@@ -403,14 +502,68 @@ Re-run the fail-closed app-name check from the standing rules before proceeding.
 **§3 On-box layout** — create with restrictive modes **first**, then copy in.
 Never copy into a world-readable directory and tighten afterwards.
 
+⚠ **REFRESHED 2026-08-03 — the state tree grew two subdirectories after this
+Part was written** (CG-65's quarantine, CG-68's retention sweep), and the old
+four-line sketch would have had an operator reasoning about the wrong disk.
+Measured against `__main__.build_runtime` on `main` (`4e55368`):
+
 ```
 /mnt/datapool/apps/chat-gateway/
-├── .env                    0600   every secret; never in git, never in compose
-├── config/registry.yaml    0640   env-var NAMES only (rule #2)
-├── secrets/<sa-key>.json   0600   mounted read-only; filename per google-cloud-setup.md
-├── state/                  0750   heartbeats.json, deliveries/, queue/    (rw)
-└── inbox-data/             0750   inbound JSONL audit                     (rw)
+├── .env                      0600  every secret; never in git, never in compose
+├── config/registry.yaml      0640  env-var NAMES only (rule #2)
+├── secrets/<sa-key>.json     0600  mounted read-only; filename per google-cloud-setup.md
+├── state/                    0750  (rw)  CHAT_GATEWAY_STATE_DIR
+│   ├── heartbeats.json             dead-man checks — no message content
+│   ├── deliveries/                 per-source delivery log
+│   ├── queue/delivery.jsonl        outbound journal   ⚠ TENANT BODIES
+│   ├── queue/inbox.jsonl           inbound journal    ⚠ TENANT BODIES
+│   └── quarantine/                 unrevivable-*      ⚠ TENANT BODIES — NEVER PRUNED
+└── inbox-data/               0750  (rw)  CHAT_GATEWAY_INBOX_DIR
+    └── <app>-<date>.jsonl          per-app audit      ⚠ TENANT BODIES — swept on a timer
 ```
+
+**What an operator must take from that tree — three facts, not a diagram:**
+
+1. **Four locations hold tenant message bodies**, not one. Anyone sizing a
+   backup, a snapshot policy or a support request needs all four.
+2. **Only `inbox-data/` is ever swept.** `quarantine/` is **never** pruned — that
+   is what makes the sweep safe to run at all — and `deliveries/` is untouched by
+   decision. Both are enforced in code: the sweeper **refuses to boot** if its
+   directory overlaps the state dir. So an operator who "tidies up" by pointing
+   `CHAT_GATEWAY_INBOX_DIR` at a state subdirectory gets a **refusal to start**,
+   not a silent deletion. Say so — that refusal looks like a bug at 2am.
+3. **The retention window is not written here.** It has one home,
+   `retention.py`'s constants, quoted to consumers at `docs/integration-guide.md`.
+   The runbook names the env var (`CHAT_GATEWAY_INBOX_RETENTION_DAYS`) and the
+   fact that `0` disables pruning; it does **not** copy the number. A duplicated
+   moving number is this repo's own most-repeated lesson.
+
+Reasoning and measurements for all of the above: **ADR-0002.** Do not restate.
+
+⚠ **The `0644` line CG-70 owes this runbook — decided 2026-08-02, add it here.**
+CG-70's Planner call chose **(a)**, an in-code stat-and-chmod at the four append
+sites, and explicitly routed its **(b)** half to this row: *"(b) becomes one line
+in CG-53's runbook … it belongs there because CG-53 already owns
+`install -d -m 0750`."* The two cover **disjoint sets** — (a) only ever reopens
+*today's* date-sharded file, so a `0644` day-file from three days ago is never
+touched by it and sits there until the sweeper deletes it, or **forever** where
+`CHAT_GATEWAY_INBOX_RETENTION_DAYS=0`. The runbook line is therefore a **sweep of
+what already exists**, run once after the directories are created and again after
+any restore from a backup that predates CG-65:
+
+```bash
+# Historical day-files only. (a) self-heals today's; nothing reopens yesterday's.
+ssh nas 'sudo find /mnt/datapool/apps/chat-gateway/state /mnt/datapool/apps/chat-gateway/inbox-data \
+  -type f ! -perm 600 -exec chmod 0600 {} +'
+ssh nas 'sudo find /mnt/datapool/apps/chat-gateway/state /mnt/datapool/apps/chat-gateway/inbox-data \
+  -type f ! -perm 600 -print'   # MUST print nothing
+```
+
+⚠ **This does not close CG-70 and must not be written as though it does.** That
+row stays open for the `src/` half and is deliberately **not** folded into this
+one — a four-file code change does not belong in a merge-gated secret-handling
+PR. State the dependency direction plainly: **no such file exists anywhere today**
+(the gateway has never been deployed), so this line is prophylactic.
 
 **§4 Build the image on the box** — ✅ **DECIDED (D4)**; §9 keeps the registry
 alternative as the upgrade path. No registry, no credentials, no external
@@ -430,14 +583,30 @@ belongs in this runbook, or the first upgrade is an improvisation.
 
 **§5 The compose document** — `custom_compose_config`, carrying **paths only**:
 
+⚠ **CORRECTED 2026-08-03 — the previous JSON could not have booted.** Two env
+values did not match the mounts beside them, and the old §5 filed the first as
+*"verify that `CHAT_GATEWAY_REGISTRY` resolves"* — a thing to check, when it was
+a thing to fix. Traced against the mount list rather than read past:
+
+| Was | Mounted at | Result |
+|---|---|---|
+| `CHAT_GATEWAY_REGISTRY: /config/registry.yaml` | `config` dir → `/config/config` | file is at `/config/config/registry.yaml` — **`RegistryError`, exit 2** |
+| `CHAT_GATEWAY_ENV_FILE: /config/.env` | `.env` file → `/config/.env` | correct, but only via a mount **nested inside** the one above |
+
+Fixed by giving `.env` its own mount point so **nothing nests and every env value
+maps to exactly one mount** — rather than by deepening the registry path to
+`/config/config/registry.yaml`, which resolves but reads like a typo and invites
+the next person to "fix" it.
+
 ```json
 {"services": {"chat-gateway": {
   "environment": {
     "TZ": "America/Denver",
-    "CHAT_GATEWAY_ENV_FILE": "/config/.env",
+    "CHAT_GATEWAY_ENV_FILE": "/env/gateway.env",
     "CHAT_GATEWAY_REGISTRY": "/config/registry.yaml",
     "CHAT_GATEWAY_STATE_DIR": "/data/state",
-    "CHAT_GATEWAY_INBOX_DIR": "/data/inbox"
+    "CHAT_GATEWAY_INBOX_DIR": "/data/inbox",
+    "GATEWAY_ENABLE_PUBSUB": "1"
   },
   "image": "chat-gateway:local",
   "mem_limit": "512m",
@@ -445,13 +614,30 @@ belongs in this runbook, or the first upgrade is an improvisation.
   "pull_policy": "missing",
   "restart": "unless-stopped",
   "volumes": [
-    "/mnt/datapool/apps/chat-gateway/.env:/config/.env:ro",
-    "/mnt/datapool/apps/chat-gateway/config:/config/config:ro",
+    "/mnt/datapool/apps/chat-gateway/.env:/env/gateway.env:ro",
+    "/mnt/datapool/apps/chat-gateway/config:/config:ro",
     "/mnt/datapool/apps/chat-gateway/secrets:/secrets:ro",
     "/mnt/datapool/apps/chat-gateway/state:/data/state",
     "/mnt/datapool/apps/chat-gateway/inbox-data:/data/inbox"
   ]}}}
 ```
+
+⚠ **`"ports": ["8085:8085"]` above is LEFT AS THE `0.0.0.0` FORM ON PURPOSE.** It
+is **CG-55's** to change to the LAN-address form, and that is already recorded in
+that row and in Part C's C0 note. Do not change it here; do not let the surviving
+`0.0.0.0` in this block be read as endorsement.
+⚠ **Part C's C0 says "the custom-app JSON *below*" — it is ABOVE it, here in Part
+A.** Recorded so CG-55's Builder does not go looking in Part C for a block that
+lives in Part A.
+
+**`GATEWAY_ENABLE_PUBSUB: "1"` is new here, and it is a fail-closed lever, not a
+convenience.** It is declared in the compose — where it is non-secret and
+captured — precisely so a stale `.env` cannot leave inbound silently **off**:
+with the flag on, a missing `CHAT_GATEWAY_PUBSUB_SUBSCRIPTION` or
+`GOOGLE_APPLICATION_CREDENTIALS` raises `RegistryError` and the process exits 2,
+naming the fault. Without it, the copied dev-box default `0` wins by the loader's
+own "environment wins" rule and the gateway boots **healthy with no subscriber at
+all** — the exact shape hard rule #5 exists to prevent. See §6.
 
 Matches house style: `restart: unless-stopped`, `pull_policy: missing`, `TZ` set,
 bind mounts under `/mnt/datapool/apps/<app>/`, **no** `container_name` (TrueNAS
@@ -475,27 +661,105 @@ points so they are not discovered live:
 3. **that the renderer honours `mem_limit` in a custom app.** If it is silently
    dropped, say so — a limit believed present but absent is worse than none.
 
-**§6 Secrets onto the box.** `scp` `.env` and `registry.yaml` from the dev box;
-`chmod` per §3. **Never through git, never through the compose document.** Add a
-row to the homelab repo's tracked `SECRETS.template.md` (structure only — the
-value goes in the operator's untracked local `SECRETS.md`).
+**§6 Secrets onto the box.** Transfer `.env` and `registry.yaml` by the stdin
+form in the standing rules — never as a command-line argument — and create
+restrictive, then fill, per §3.
 
-**§7 Verify — the gate.** Run `capture.sh`, then **read the captured JSON**.
-It must contain **zero** secret values. Do not trust
-`clean. safe to commit.` — §1.2 of the spec shows that script's suffix rule
-cannot see this project's secret shapes. **Cross-repo note, not our change:**
-if the homelab repo ever wants defence in depth here, a `*_API_KEY__*` /
-`*_WEBHOOK_URL__*` substring rule is the shape that would catch these.
+⚠ **ADDED 2026-08-03 — the dev box's `.env` is NOT usable verbatim, and this
+Part said "scp `.env`" as though it were.** "Environment wins" makes the compose
+authoritative for the three path vars it sets, so the copied dev values for
+`CHAT_GATEWAY_REGISTRY`, `CHAT_GATEWAY_STATE_DIR` and `CHAT_GATEWAY_INBOX_DIR` are
+harmlessly overridden. **Two keys are not in the compose, so the file's dev-box
+values win — and both are wrong on the box:**
+
+| Key | Dev-box value | On the box | If not corrected |
+|---|---|---|---|
+| `GOOGLE_APPLICATION_CREDENTIALS` | a dev-relative path | `/secrets/<sa-key>.json` | ⚠ **boots clean, fails at every tier-2 call** |
+| `GATEWAY_ENABLE_PUBSUB` | `0` in `.env.example` | `1` | inbound silently off — now caught by §5's compose flag |
+
+**The first one is the dangerous one, and it is silent by construction.**
+`GoogleServiceAccountTokens.__init__` only *stores* the path — the key file is
+not opened until the first token mint. So a wrong path produces a gateway that
+starts, builds the Chat API adapter, and reports it present; **`/healthz` does
+not check that the file exists** (`registry.health()` reports identity env-var
+resolution and per-app key configuration, and no code path stats the credential
+file). It looks alive and cannot talk to Google. That is the same failure this
+row's own loader property #3 exists to prevent, one level up — so the runbook
+closes it the same way, with an explicit check rather than a reminder:
+
+```bash
+# after transferring .env, BEFORE app.create — proves the path resolves IN the
+# container, without printing a single byte of the file
+ssh nas 'sudo docker run --rm --env-file /mnt/datapool/apps/chat-gateway/.env \
+  -v /mnt/datapool/apps/chat-gateway/secrets:/secrets:ro \
+  chat-gateway:local sh -c "test -r \"\$GOOGLE_APPLICATION_CREDENTIALS\" \
+  && echo CREDS-OK || echo CREDS-MISSING"'
+```
+
+Record the edited keys in the runbook as a **table of what differs between the
+dev `.env` and the box's**, so the next transfer is a diff rather than a
+rediscovery.
+
+**Then register the secret in the homelab repo** — `SECRETS.template.md` is the
+**tracked** one (`.gitignore` carries the `!SECRETS.template.md` negation);
+`SECRETS.md` is gitignored and holds real values. Its rows are three columns,
+`| Secret | Where it lives on the box | How to regenerate / rotate |`, and the
+model to copy is the existing Chroma row, which names the **env var and the
+service** rather than a value. Two rows, structure only:
+
+- the per-app API keys — regenerate with `python3 -m chat_gateway mint-key`, then
+  update the consumer;
+- the tier-1 webhook URLs — ⚠ **no rotate-in-place exists.** Recovery is
+  delete-and-recreate by hand per `docs/google-cloud-setup.md` §8a. Say so in the
+  rotate column; this project burned every webhook it owns once, on 2026-07-29.
+
+**§7 Verify — the gate.**
+
+⚠ **CORRECTED 2026-08-03: do NOT run `capture.sh`.** This Part said *"Run
+`capture.sh`"*, which **contradicts this plan's own standing rules**, where it is
+a 🛑 — it rewrites `nas/compose/*.json` for **all ten** stacks, a cross-repo write
+owned by whoever holds that working tree. Part C already has this right
+(*"request it, then read what it produced"*). **Request the run; then read the
+output.** A stop means stop.
+
+The file to read is **`nas/compose/chat-gateway.config.json`** — the pattern is
+`nas/compose/<app-name>.config.json`, and the app set is derived live from
+`app.query` filtered on `custom_app`, so **this file appears automatically on the
+first capture after the app exists.** Nobody opts in; that is what makes the leak
+this row prevents a default rather than a mistake.
+
+It must contain **zero** secret values. ⚠ **Do not trust `clean. safe to
+commit.`** — re-measured 2026-08-03 end to end through that repo's real redactor
+and real scan gate: a payload carrying a live-shaped `CHAT_GATEWAY_API_KEY__*`
+and a `GOOGLE_CHAT_WEBHOOK_URL__*` came back **with both values intact** and the
+scan **exited 0**. A `POSTGRES_PASSWORD` in the same payload was redacted, which
+is exactly what makes the green gate persuasive. Grep the captured file for the
+literal marker and for our own key prefixes rather than reading the console line.
+
+**Cross-repo note, not our change:** if the homelab repo ever wants defence in
+depth, a `*_API_KEY__*` / `*_WEBHOOK_URL__*` substring rule is the shape that
+would catch these. ⚠ **Note the second-order risk before proposing it there:**
+that repo's `lib/restore.sh --strip-redacted` **drops every marker-valued key
+from a deploy payload**, so a false positive silently deletes real config on
+restore — which is precisely why its suffix list is anchored and conservative.
+Our design does not need that rule, and this row must not be justified by it.
 
 **§8 Gotchas** — in the homelab house voice (a hard-won lesson with its cost):
-- **Tailnet reachability is FREE here, and that is a dependency on another app.**
+- **Tailnet reachability would be FREE here — and CG-55 declines it on purpose.**
+  ⚠ **REFRESHED 2026-08-03: the measurement stands, its consequence inverted.**
   Measured 2026-07-31: `ix-tailscale-tailscale-1` runs `network_mode: host` with
   `/dev/net/tun`, `CAP_NET_ADMIN` and `TS_USERSPACE=false`, so **`tailscale0` is a
-  real host interface**. Publishing `8085` on `0.0.0.0` is tailnet-reachable with
-  **no subnet router, userspace proxy, sidecar, `serve` or `funnel`.** ⚠ **If
-  that app is ever switched to userspace mode or off host networking,
-  `tailscale0` vanishes from the host and every service's tailnet reachability
-  goes silently with it** — nothing in the gateway's own config would show it.
+  real host interface**, and a port on `0.0.0.0` is tailnet-reachable with **no
+  subnet router, userspace proxy, sidecar, `serve` or `funnel`.** That is exactly
+  **why binding `0.0.0.0` is the thing not to do**: it publishes on every
+  interface the host has, including that one. **CG-55 binds the LAN address**, so
+  the port is not tailnet-reachable whatever the ACL says. Reasoning and residual
+  have one home — `docs/BUILDER_QUEUE.md` § CG-55, *"Two user decisions,
+  2026-08-03"*. ⚠ **Still record the dependency**, because it governs any future
+  decision to re-expose: if that app is switched to userspace mode or off host
+  networking, `tailscale0` vanishes from the host and every service's tailnet
+  reachability goes silently with it — nothing in the gateway's own config shows
+  it.
 - **`tailscale` is NOT on the host PATH.** Any tailnet inspection means
   `docker exec` into another stack's container, which the standing rules classify
   as a STOP.
@@ -504,39 +768,102 @@ if the homelab repo ever wants defence in depth here, a `*_API_KEY__*` /
   and `allow_inbound: false`, **`suppressed_opt_out` increments once per event
   there**, making the endpoint a live activity meter for another tenant's private
   trading spaces: volume and timing, no content and no attribution. Hard rule #6
-  is working — nothing crosses. ✅ **Decided (D2): the drafted homelab tailnet ACL
-  lands BEFORE this is deployed**, so the endpoint is fenced from the start. ⚠ The
-  ACL governs the **tailnet only** — anyone on the home **LAN** still reaches this
-  unauthenticated, which is the accepted residual, stated rather than glossed.
-  Per-app API keys (rule #4) protect `/v1/*` and nothing else.
-- **The restricting tailnet ACL is drafted but NOT applied** (homelab records
-  this, 2026-07-28) — the live policy is default allow-all, so any tailnet peer
-  can reach any `0.0.0.0`-bound port on that box today, including the teammates
-  group that exists for an unrelated service.
+  is working — nothing crosses. Per-app API keys (rule #4) protect `/v1/*` and
+  nothing else.
+  ⚠ **DO NOT ENUMERATE `/healthz`'s FIELDS IN THIS RUNBOOK.** Name the endpoint,
+  say what class of thing it exposes, and **link** to the one home: the
+  field-by-field table in `docs/integration-guide.md` § *Durability counters at
+  `/healthz`*. That table's own counts have been wrong **five** times (CG-69's
+  spec, category (c)) and **CG-76 landed as #63 on 2026-08-03**, adding four
+  degrade inputs and new fields — ⚠ *this sentence read "is in flight right now …
+  wrong the day CG-76 lands" and was falsified within hours of being written,
+  which is the point it was making.* A list copied here is a list that is wrong
+  on someone else's schedule — the two-homes-for-a-moving-fact trap `CLAUDE.md`
+  opens with.
+- ⚠ **The D2 tailnet ACL is DEFERRED — corrected 2026-08-03.** This Part said
+  *"✅ Decided (D2): the drafted homelab tailnet ACL lands BEFORE this is
+  deployed, so the endpoint is fenced from the start."* **That is no longer
+  true.** The user deferred the ACL on 2026-08-03: still wanted, **no longer
+  gating the deploy**, and no external homelab prerequisite remains on CG-55. The
+  **LAN bind is what replaces it** — and the two are one decision in two halves,
+  so neither reads correctly alone. One home for both:
+  `docs/BUILDER_QUEUE.md` § CG-55.
+  ⚠ **The bind does not make the ACL unnecessary.** It removes tailnet reach **to
+  this port** and says nothing about the rest of that box or the rest of the
+  tailnet. The live policy is still default allow-all (homelab recorded that
+  2026-07-28). **Accepted residual, stated rather than glossed: anyone on the home
+  LAN still reaches `/healthz` unauthenticated.** Part C records whether the ACL
+  was applied at deploy time, so the posture is a fact in the *Executed* section
+  rather than an assumption here.
 - **Zero swap.** An unbounded container OOM-kills a neighbour, and one neighbour
   is claude-mem's Postgres. See `mem_limit` in §5.
 - **No public ingress is needed or wanted.** Pub/Sub is an outbound pull. Never
   put this behind the public reverse proxy.
 - **`iac/chat-gateway-sa.json` is DEAD** — deleted project. Do not authenticate
   with it; its presence is not configuration.
-- **Restarting drops nothing once Part B lands, and drops everything before it.**
-  State the ordering explicitly so an operator deploying an interim build knows.
+- **Restarting drops nothing.** ⚠ **REFRESHED 2026-08-03 — this said *"once Part
+  B lands, and drops everything before it,"* and Part B LANDED** (CG-54, #45,
+  2026-07-31). There is no interim build to warn about: both queues are durable
+  and are replayed at boot **with the attempt count preserved**, which is what
+  stops a crash loop from resetting the backoff ladder and hammering Google.
+  The rule and its edge cases have one home each — `delivery.py`'s docstring and
+  `journal.py`'s. Link; do not restate.
+- ⚠ **A config error under `restart: unless-stopped` is a CRASH LOOP, and that is
+  the intended behaviour — say so, or it reads as a bug.** A missing
+  `CHAT_GATEWAY_ENV_FILE`, a bad registry path or a retention/state directory
+  overlap all exit **2** with `config error: …` on stderr, and TrueNAS restarts
+  the container. The operator sees a restarting app, and the reason is in
+  `docker logs`, not in `/healthz` — **there is no `/healthz` to read, which is
+  the entire point** (loader property #3). It costs nothing: the process dies
+  before the dispatcher exists, so a crash loop generates **no** Google traffic.
+  First diagnostic is the logs, not the endpoint.
 
-**§9 Alternatives and rollback.** Registry-image path; `midclt call app.delete`;
-what a rollback does *not* undo (state directories persist — deliberately).
+**§9 Alternatives, rollback, and the homelab-side handoff.** Registry-image path;
+`midclt call app.delete`; what a rollback does *not* undo (state directories
+persist — deliberately, and per §3 four of them hold tenant bodies, so "delete
+the app" is not "delete the data").
+
+⚠ **Also list, explicitly, the artifacts this repo CANNOT create** — they are in
+the homelab repo, and a chat-gateway Builder writing them is a standing-rules
+violation. Naming them here makes this a handoff rather than an omission:
+`nas/services/chat-gateway.md` (four-header, per `_TEMPLATE.md`), a
+`SECRETS.template.md` row per §6, `nas/scripts/restore-chat-gateway.sh` (the
+five-line wrapper form its four siblings use over `lib/restore.sh`), and the
+`nas/DASHBOARDS.md` / Homepage tile registration.
 
 **§10 Executed** — empty, dated and filled by Part C. Says so, so a reader can
 tell "planned" from "ran".
 
 ## A7 · Verify Part A
 
+⚠ **The baseline is 359, not this plan's `202`.** That number moves with every
+shipped item — **take it from the suite, not from here.** Measured on `main`
+(`7086482`) 2026-08-03: **359 passed.** Nine PRs merged between this Part being
+written and being dispatched.
+
+⚠ **This line has now been stale TWICE, hours apart.** It was refreshed to
+`345` (`4e55368`) earlier the same day and CG-76 landed as #63 before the refresh
+was even pushed, taking it to 359. **That is the argument for the instruction,
+not an exception to it:** re-run the suite, do not read this number.
+
 ```bash
-python -m pytest -q
+python -m pytest -q                           # the current baseline + the new tests
 python -m pytest -q tests/test_env_file.py
 python -c "import chat_gateway.__main__"      # import-time wiring is sound
 ```
 
-Confirm `CHAT_GATEWAY_ENV_FILE` unset ⇒ byte-identical behaviour to `main`.
+Confirm `CHAT_GATEWAY_ENV_FILE` unset ⇒ byte-identical behaviour to `main`. That
+is what makes the loader a no-op in **every** existing test and on the dev box —
+and it is a **claim to verify, not to assert**: the whole suite passing unchanged
+is the evidence.
+
+⚠ **Hard rule #3: this Part clears, adds and rewords NO ⚠ verification flag.** It
+adds a loader, a runbook and two doc edits; it exercises nothing against Google.
+Verify before opening the PR:
+
+```bash
+git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"   # MUST be 0
+```
 
 ---
 
