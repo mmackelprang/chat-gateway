@@ -242,6 +242,25 @@ class Dispatcher:
         #: stopped working is worse than an in-memory one, because it is
         #: trusted (hard rule #5).
         self.journal_write_errors = 0
+        #: Passes that RAISED, and passes that have raised since the last good
+        #: one. CG-74, the counter half of CG-68's F3 — the liveness half
+        #: shipped as CG-72 and left this block unable to tell a wedged loop
+        #: from a raising one, which two `/healthz` strings said in words.
+        #:
+        #: TWO NUMBERS, and only the CONSECUTIVE one may drive `status`. The
+        #: reasoning is `RetentionSweeper`'s, measured in its pre-merge review:
+        #: a cumulative counter never returns to zero, so one transient failure
+        #: that had already recovered pinned `degraded` for the life of the
+        #: process. The cumulative one stays as history in the body.
+        self.pass_failures = 0
+        self.consecutive_pass_failures = 0
+        #: The exception TYPE from the last failed pass, via
+        #: `describe_exception` (hard rule #2 / CG-29's allowlist), following
+        #: `RetentionSweeper.last_sweep_error`. Deliberately NOT
+        #: `SubscriberLoop`'s hand-rolled format, which CLAUDE.md records must
+        #: not be unified onto the helper and is therefore precedent for
+        #: nothing new. Cleared on recovery, with the counter beside it.
+        self.last_pass_error: str | None = None
 
     @property
     def journal(self):
@@ -511,8 +530,24 @@ class Dispatcher:
         while not self._stop.is_set():
             try:
                 self.process_due()
+                # RECOVERY CLEARS BOTH, and the second is what stops /healthz
+                # degrading for the life of the process after a transient
+                # failure. `RetentionSweeper._run` records the measurement:
+                # clearing the error string while leaving a degrading counter
+                # set is worse than not clearing it, because the reason line
+                # then renders the cleared value as the literal "(None)".
+                self.last_pass_error = None
+                self.consecutive_pass_failures = 0
             except Exception as exc:  # noqa: BLE001 — the loop must survive
-                print(f"dispatcher: pass error (will retry): {exc}", flush=True)
+                # COUNTED, not just printed. A dispatcher throwing every pass
+                # reported nothing at all and /healthz never degraded — the
+                # founding rule-#5 failure with a different noun, and the same
+                # finding audit F3 recorded against the sweeper.
+                self.pass_failures += 1
+                self.consecutive_pass_failures += 1
+                self.last_pass_error = describe_exception(exc)
+                print(f"dispatcher: pass error (will retry): "
+                      f"{self.last_pass_error}", flush=True)
             self._stop.wait(PASS_INTERVAL_S)
 
     def start(self) -> None:

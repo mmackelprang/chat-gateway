@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
 
+from .errors import describe_exception
+
 DEFAULT_TZ = "America/New_York"
 DEFAULT_REPEAT_S = 86400  # missed-alert repeat backoff: daily
 
@@ -180,6 +182,30 @@ class HeartbeatMonitor:
         #: `Dispatcher.started` — identical contract, identical reasoning.
         self._started = False
         self.last_scan_at: dt.datetime | None = None
+        #: Scans that RAISED, and scans that have raised since the last good
+        #: one. `Dispatcher`'s twin — with ONE deliberate asymmetry, stated here
+        #: rather than left for a reviewer to "fix":
+        #:
+        #: `scan_failures` is CUMULATIVE **and degrading**, where
+        #: `Dispatcher.pass_failures` is cumulative and inert. A failed dispatch
+        #: pass is recoverable — the due job is still in `_jobs` and the next
+        #: pass retries it. A failed SCAN is not. `HeartbeatStore.due_alerts`
+        #: marks the check (`status = "missed"`, `last_alerted = now`) under its
+        #: lock BEFORE persisting, and `scan_once` only notifies what
+        #: `due_alerts` returned — so a raise anywhere downstream leaves the
+        #: check marked alerted and the alert never sent, suppressed for the
+        #: whole `DEFAULT_REPEAT_S` window. Measured, both variants, including
+        #: one that persists the suppression and survives a restart. That is
+        #: `RetentionSweeper.errors`'s test — nothing for a later pass to
+        #: recover from — so it takes `RetentionSweeper.errors`'s posture.
+        #:
+        #: THE COUNTER IS NOT THE FIX. **CG-76** is. Until it lands this is the
+        #: only thing standing between a silently-dropped dead-man alert and a
+        #: green /healthz on an unauthenticated endpoint.
+        self.scan_failures = 0
+        self.consecutive_scan_failures = 0
+        #: See `Dispatcher.last_pass_error` — same helper, same reasoning.
+        self.last_scan_error: str | None = None
 
     def scan_once(self) -> int:
         fired = self._store.due_alerts(self._repeat)
@@ -228,8 +254,17 @@ class HeartbeatMonitor:
         while not self._stop.is_set():
             try:
                 self.scan_once()
+                # Only the CONSECUTIVE counter clears. `scan_failures` is
+                # cumulative and degrading on purpose — see `__init__`: the
+                # alert that scan would have sent is already gone.
+                self.last_scan_error = None
+                self.consecutive_scan_failures = 0
             except Exception as exc:  # noqa: BLE001 — the loop must survive
-                print(f"heartbeat: scan error (will retry): {exc}", flush=True)
+                self.scan_failures += 1
+                self.consecutive_scan_failures += 1
+                self.last_scan_error = describe_exception(exc)
+                print(f"heartbeat: scan error (will retry): "
+                      f"{self.last_scan_error}", flush=True)
             self._stop.wait(self._interval)
 
     def start(self) -> None:
