@@ -60,7 +60,7 @@ printed in full (see below); `adapters/` — webhook (tier 1), chat_api + pubsub
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 345 passing.
+`python` is 3.13.7) — offline, 359 passing.
 
 ## Current status (2026-07-31)
 
@@ -131,6 +131,25 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   — a retention policy working is not a fault, the same reasoning recorded for
   `suppressed_opt_out` below — while `delete_errors`, consecutive sweep failures
   and a dead sweep thread all do.
+- **The dead-man switch had SIX doors to a silently-dropped alert, not one
+  (CG-76, 2026-08-03).** `HeartbeatStore.due_alerts` recorded *"I have alerted"*
+  before anything was alerted — a promise about the future persisted as a
+  statement about the past — and each door was a different way for the future
+  not to arrive, or for `/healthz` not to notice that it hadn't. **Five of the
+  six raised nothing**, so `scan_failures` stayed `0` and `/healthz` answered
+  `ok`; on the worst of them **not one field in the entire body moved.** The
+  mark now happens in `mark_alerted`, after the alert is accepted into the
+  durable queue, which moves this path from at-most-once to **at-least-once** —
+  the posture `_finish`, `_journal_write` and `Inbox._audit` each already took,
+  for the reason each of them records. ⚠ **`scan_failures` still degrades but
+  its ORIGINAL justification expired**, and the weaker surviving one is stated
+  at `HeartbeatMonitor.__init__` rather than the strong one being re-quoted —
+  the same discipline this file applies to `__cg_action__`. Do not summarize the
+  six doors anywhere; the enumeration and its measurements have one home,
+  `docs/superpowers/specs/2026-08-03-dead-man-alert-loss-design.md` §2. ⚠ **The
+  count itself is the finding worth carrying:** four rounds of looking produced
+  four different answers, and it is six rather than four only because somebody
+  was asked to check the checker (spec §0).
 - **The live project is `chat-gateway-gw` (`#860649224827`), and it is the only
   one.** `chat-gateway-prod` — which every "Cloud resources now exist" note in
   this file used to describe — was **deleted 2026-07-30**, along with E1's

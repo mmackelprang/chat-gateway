@@ -151,19 +151,67 @@ class HeartbeatStore:
         with self._lock:
             return [c for (s, _), c in sorted(self._checks.items()) if s == source]
 
-    def due_alerts(self, repeat_s: int = DEFAULT_REPEAT_S) -> list[Check]:
-        """Checks whose missed-alert should fire now; marks them alerted."""
-        now = self._now()
-        fired = []
+    def list_all(self) -> list[Check]:
+        """Every check, regardless of source. For /healthz's census only.
+
+        Deliberately NOT exposed through any HTTP route: `GET /v1/heartbeat/
+        {source}` is per-source and authorization-checked, and this would be a
+        cross-tenant read. `/healthz` uses it to COUNT, never to name.
+        """
         with self._lock:
-            for check in self._checks.values():
-                if check.alert_due(now, repeat_s):
-                    check.status = "missed"
-                    check.last_alerted = now.isoformat()
-                    fired.append(check)
-            if fired:
-                self._save()
-        return fired
+            return list(self._checks.values())
+
+    def due_alerts(self, repeat_s: int = DEFAULT_REPEAT_S) -> list[Check]:
+        """Checks whose missed-alert should fire now. **Mutates NOTHING.**
+
+        THE MUTATION USED TO LIVE HERE, AND THAT WAS CG-76. This method set
+        `status = "missed"` and `last_alerted = now` under the lock and then
+        `_save()`d, all BEFORE returning to `HeartbeatMonitor.scan_once` — the
+        caller that actually notifies. The mark is a promise about the future
+        ("an alert will be sent") persisted as a statement about the past ("an
+        alert was sent"), and every way the future failed to arrive dropped the
+        alert for the whole `DEFAULT_REPEAT_S` window with `/healthz` green.
+        Six such ways were measured; five of them raise nothing at all, and one
+        moves no /healthz field whatsoever. See the spec's §2.
+
+        Selecting is now free of side effects, so a caller may call it, fail,
+        and call it again. `mark_alerted` is the second half.
+        """
+        now = self._now()
+        with self._lock:
+            return [c for c in self._checks.values() if c.alert_due(now, repeat_s)]
+
+    def mark_alerted(self, checks: list[Check]) -> None:
+        """Record that these checks' alerts were ACCEPTED for delivery.
+
+        Called by `scan_once` with only the checks whose notify actually got as
+        far as the durable queue — never with a check whose alert was refused,
+        deduped, or raised. Empty list is a no-op and does not touch the disk.
+
+        AT-LEAST-ONCE, DELIBERATELY. If `_save()` raises here — or the process
+        dies between the notify and this call — the check is not marked and the
+        next scan alerts AGAIN. That is a duplicate, not a drop, and it is the
+        posture every neighbouring mechanism in this repo already took for the
+        reason each of them records: `_finish`'s mid-flight window
+        (delivery.py, "losing an alert is the worse failure"), `_journal_write`
+        ("at most one duplicate on the next boot"), and `Inbox._audit` (unacked,
+        so Google redelivers). A duplicate "heartbeat missed" costs one
+        redundant phone notification; a dropped one costs the whole feature,
+        silently, for 24 hours.
+
+        `_save()` stays UNGUARDED on purpose. It is now on the far side of the
+        notify, so raising is honest — the alert is already queued and the raise
+        costs at most a duplicate. Wrapping it would re-create CG-76 in a
+        quieter form.
+        """
+        if not checks:
+            return
+        now = self._now().isoformat()
+        with self._lock:
+            for check in checks:
+                check.status = "missed"
+                check.last_alerted = now
+            self._save()
 
 
 class HeartbeatMonitor:
@@ -183,55 +231,177 @@ class HeartbeatMonitor:
         self._started = False
         self.last_scan_at: dt.datetime | None = None
         #: Scans that RAISED, and scans that have raised since the last good
-        #: one. `Dispatcher`'s twin — with ONE deliberate asymmetry, stated here
-        #: rather than left for a reviewer to "fix":
-        #:
+        #: one. `Dispatcher`'s twin — with ONE deliberate asymmetry:
         #: `scan_failures` is CUMULATIVE **and degrading**, where
-        #: `Dispatcher.pass_failures` is cumulative and inert. A failed dispatch
-        #: pass is recoverable — the due job is still in `_jobs` and the next
-        #: pass retries it. A failed SCAN is not. `HeartbeatStore.due_alerts`
-        #: marks the check (`status = "missed"`, `last_alerted = now`) under its
-        #: lock BEFORE persisting, and `scan_once` only notifies what
-        #: `due_alerts` returned — so a raise anywhere downstream leaves the
-        #: check marked alerted and the alert never sent, suppressed for the
-        #: whole `DEFAULT_REPEAT_S` window. Measured, both variants, including
-        #: one that persists the suppression and survives a restart. That is
-        #: `RetentionSweeper.errors`'s test — nothing for a later pass to
-        #: recover from — so it takes `RetentionSweeper.errors`'s posture.
+        #: `Dispatcher.pass_failures` is cumulative and inert.
         #:
-        #: THE COUNTER IS NOT THE FIX. **CG-76** is. But what it covers until
-        #: then is NARROWER than "a dropped dead-man alert", and the gap is
-        #: MEASURED rather than reasoned about: this is the only /healthz signal
-        #: for a scan that RAISES, and a scan can drop an alert without raising.
-        #: A notify REFUSED FOR WANT OF A ROUTE is that path — `route_for` finds
-        #: neither an `alert` nor a `default` route for the source, so it raises
-        #: `RegistryError`, `emit_notification` converts that to
-        #: `HTTPException(503)`, and `service.py`'s `_monitor_notify` CATCHES it
-        #: and writes a `"failed" / "no route: ..."` delivery-log line. Nothing
-        #: propagates, `scan_once` completes, `last_scan_at` stamps. Run against
-        #: a real uvicorn server over real HTTP, with an app carrying no
-        #: `routes:` block and a real check gone missed: the check on disk read
-        #: `status: missed` with `last_alerted` set — suppressed for the whole
-        #: repeat window — zero notifications were sent, `scan_failures` stayed
-        #: 0, `last_scan_error` stayed None, and /healthz answered `ok`. Pinned
-        #: by `test_a_routeless_alert_is_dropped_without_raising_or_counting`.
+        #: ⚠ THE ORIGINAL REASON FOR THAT ASYMMETRY EXPIRED WITH CG-76. It read:
+        #: "a failed SCAN is not [recoverable] — `due_alerts` marks the check
+        #: before persisting, and `scan_once` only notifies what `due_alerts`
+        #: returned, so a raise leaves the check marked alerted and the alert
+        #: never sent." That was true and measured when CG-74 shipped it. CG-76
+        #: reordered exactly that: the mark now happens in `mark_alerted`, AFTER
+        #: the notify is accepted, so a scan that raises has NOT marked the
+        #: check and the next scan re-fires it. A failed scan is now
+        #: RECOVERABLE — which is precisely the property that makes
+        #: `pass_failures` inert.
+        #:
+        #: IT STAYS DEGRADING ANYWAY, AND THE REASON IS NOW THE WEAKER ONE —
+        #: say so rather than keep quoting the strong one (the discipline
+        #: CLAUDE.md applies to `__cg_action__`). A loop that keeps raising is
+        #: still a dead-man monitor that is not completing scans, on aitrader's
+        #: contract surface, and the conservative posture there is to degrade.
+        #: What a raise now risks is a DELAYED or DUPLICATED alert, not a lost
+        #: one. Flipping this to inert is defensible after CG-76 and is
+        #: deliberately NOT done here — it is a separate user decision with its
+        #: own measurement, not a fold-in (spec §7.2).
+        #:
+        #: THIS IS NOT THE DROPPED-ALERT COUNTER. `alerts_undeliverable` is.
+        #: An alert can be dropped with nothing raising at all.
         self.scan_failures = 0
         self.consecutive_scan_failures = 0
         #: See `Dispatcher.last_pass_error` — same helper, same reasoning.
         self.last_scan_error: str | None = None
+        #: CG-76. Alerts that came due and could NOT be accepted for delivery,
+        #: over the life of the process. This is the counter `scan_failures`
+        #: was mistaken for: a dead-man alert can be dropped WITHOUT any scan
+        #: raising, and three separate paths do it (spec §2.2–§2.4) — a notify
+        #: refused for want of a route, and a notify deduped against an earlier
+        #: outage's alert. Both return normally, so nothing else sees them.
+        #:
+        #: ⚠ COUNTS ATTEMPTS, NOT DISTINCT ALERTS — and the docstring here said
+        #: otherwise until the CG-76 pre-merge review. It read: "CUMULATIVE and
+        #: DEGRADING. Cumulative because *an alert refused now is not re-sent by
+        #: a later scan once the check is eventually marked*". The italicised
+        #: half is FALSE, and §4.3's self-heal design is what falsifies it: a
+        #: refused alert leaves the check UNMARKED precisely so it re-fires, so
+        #: a permanently routeless check is re-attempted on EVERY scan. Measured
+        #: at the 60s default: one increment (and one `GET /v1/deliveries` line)
+        #: per scan — ~1440/day for ONE misconfigured check.
+        #:
+        #: What is true instead: this is the count of alert ATTEMPTS that were
+        #: not accepted for delivery. `checks_undeliverable` beside it is the
+        #: number of distinct checks in that state on the last scan, and is the
+        #: number an operator should read as "how big is this".
+        #:
+        #: STILL CUMULATIVE, STILL DEGRADING, and the reason is the second half
+        #: of the old sentence rather than the first: this names a guarantee
+        #: BREAKING on aitrader's contract surface — the exact opposite of
+        #: `suppressed_opt_out`, which names a guarantee WORKING and is
+        #: correctly inert (CG-12). A number that only ever grew while a source
+        #: was unmonitored is the honest shape for that, even when it grows a
+        #: thousand times for one fault; the re-attempt cadence it counts is
+        #: required by §4.3 and must not be retuned to make this number smaller.
+        #:
+        #: ⚠ PER ALERT ATTEMPT, never derived from `check.status` (spec §6b,
+        #: D4c). That shape is what closes door 6 — the 24h repeat that moved
+        #: zero /healthz fields — so "simplifying" it into a check-state
+        #: derivation looks like tidying and silently reopens it.
+        #:
+        #: A BARE INTEGER. No app id, no check id: /healthz is unauthenticated
+        #: and CG-12 rejected metadata-only records on exactly that ground. The
+        #: operator who needs to know WHICH check reads the authenticated
+        #: `GET /v1/deliveries`, where `_monitor_notify` already writes the
+        #: identifying line.
+        self.alerts_undeliverable = 0
+        #: The same fact as a GAUGE: how many checks were undeliverable on the
+        #: LAST scan. Returns to 0 when the registry is fixed, so it is the live
+        #: signal beside the cumulative history — `RetentionSweeper`'s split,
+        #: and CG-74 measured why one number cannot do both jobs.
+        self.checks_undeliverable = 0
 
     def scan_once(self) -> int:
+        """One pass: select due checks, notify each, mark only what was accepted.
+
+        Returns how many alerts were ACCEPTED for delivery — not how many were
+        due. The two used to be the same number because marking happened before
+        notifying; they are different now, and the difference is the point.
+
+        PER CHECK, NOT PER BATCH, and the reason is cross-tenant. `fired` can
+        hold checks owned by DIFFERENT apps — the store is gateway-wide, keyed
+        (source, check_id). Before CG-76 this loop had no `try` inside it, so
+        one app's failing notify aborted the loop and left every LATER check
+        unnotified while `due_alerts` had already marked all of them alerted.
+        Measured: a routeless `job-hunter` check suppressed `aiteam-harness`'s
+        dead-man alert for 24h. That is the isolation instinct hard rules #4
+        and #6 apply to inbound, and it costs one `try`.
+
+        ⚠ THE ISOLATION COVERS THE NOTIFY, AND ONLY THE NOTIFY. This docstring
+        used to promise, flatly, that one app's failure cannot strand another —
+        which overclaims what the per-check `try` delivers. SELECTION is still
+        shared fate: `due_alerts`'s comprehension calls `alert_due -> is_missed
+        -> deadline -> next_due`, which runs `parse_schedule`, `fromisoformat`,
+        `parse_duration` and `ZoneInfo` on the PERSISTED fields, and `_load`
+        validates none of them. So one corrupt row in `heartbeats.json` makes
+        selection raise before the loop is ever entered, and NO tenant is
+        notified on that scan.
+
+        That residue is deliberately left as-is here and is NOT a silent door:
+        the raise reaches `_run`, `scan_failures` and `consecutive_scan_failures`
+        move, `last_scan_error` is set and `/healthz` degrades — spec §2.11's
+        posture. Hardening selection itself is adjacent to CG-77 and is not
+        folded in here.
+        """
         fired = self._store.due_alerts(self._repeat)
+        accepted: list = []
+        undeliverable = 0
+        first_error: Exception | None = None
         for check in fired:
-            self._notify(
-                check.source,
-                f"heartbeat missed: {check.check_id}",
-                f"No refresh since {check.last_seen} (schedule {check.schedule}, "
-                f"grace {check.grace}). Repeats daily until refreshed or deleted.",
-                f"hb:{check.check_id}",
-            )
+            try:
+                if self._notify(
+                    check.source,
+                    f"heartbeat missed: {check.check_id}",
+                    f"No refresh since {check.last_seen} (schedule {check.schedule}, "
+                    f"grace {check.grace}). Repeats daily until refreshed or deleted.",
+                    # NO DEDUPE KEY — CG-76 door 4, and the removal is total
+                    # rather than retuned. `alert_due()` IS this path's dedupe:
+                    # it already guarantees at most one alert per check per
+                    # `DEFAULT_REPEAT_S` (86400s). `Deduper`'s window is
+                    # `DEFAULT_DEDUPE_WINDOW_S` (3600s). Since 86400 > 3600 the
+                    # deduper can NEVER suppress an actual duplicate here — the
+                    # monitor does not emit one — so every suppression it
+                    # performed on this path was a FALSE POSITIVE. Measured: a
+                    # source that died, recovered, refreshed its check, and died
+                    # again inside the hour produced TWO outages and ONE alert.
+                    # This is not a control with a trade-off; it is a control
+                    # with no upside case. Pinned by
+                    # `test_repeat_window_must_exceed_the_dedupe_window`.
+                    None,
+                ):
+                    accepted.append(check)
+                else:
+                    # The notify returned WITHOUT accepting — a route refusal
+                    # (spec §2.2) or a dedupe (§2.4). Not an exception, so it
+                    # must be counted here or it is invisible. The check is NOT
+                    # marked, so it re-fires next scan and self-heals the moment
+                    # the registry is fixed.
+                    undeliverable += 1
+            except Exception as exc:  # noqa: BLE001 — one tenant must not strand another
+                undeliverable += 1
+                if first_error is None:
+                    first_error = exc
+        # COUNTERS BEFORE `mark_alerted`, and that ordering is a fix, not a
+        # style choice. `mark_alerted`'s `_save()` is UNGUARDED by design, so it
+        # can raise — and while it sat above these two lines, a scan in which an
+        # alert was genuinely lost AND the disk was full discarded the loss
+        # permanently: `alerts_undeliverable` never took the increment, and the
+        # `checks_undeliverable` GAUGE stuck at the previous scan's value, so
+        # /healthz went on reporting checks as unroutable against a registry
+        # that was fine. That is the exact class of dishonest number this row
+        # exists to remove (hard rule #5).
+        #
+        # The ordering constraint the comment below states is `mark_alerted`
+        # before the RE-RAISE. It says nothing about the counters, and nothing
+        # requires them to be second.
+        self.alerts_undeliverable += undeliverable
+        self.checks_undeliverable = undeliverable
+        # Mark BEFORE re-raising: the alerts that DID get accepted must not be
+        # re-sent because a different check failed.
+        self._store.mark_alerted(accepted)
+        if first_error is not None:
+            raise first_error
         self.last_scan_at = dt.datetime.now(dt.timezone.utc)
-        return len(fired)
+        return len(accepted)
 
     @property
     def interval_seconds(self) -> float:
@@ -268,8 +438,11 @@ class HeartbeatMonitor:
             try:
                 self.scan_once()
                 # Only the CONSECUTIVE counter clears. `scan_failures` is
-                # cumulative and degrading on purpose — see `__init__`: the
-                # alert that scan would have sent is already gone.
+                # cumulative and degrading on purpose — see `__init__`, which
+                # is the one home of WHY. ⚠ This comment used to restate that
+                # reason ("the alert that scan would have sent is already
+                # gone") and CG-76 falsified it: the check is no longer marked
+                # before the notify, so a raising scan re-fires next pass.
                 self.last_scan_error = None
                 self.consecutive_scan_failures = 0
             except Exception as exc:  # noqa: BLE001 — the loop must survive

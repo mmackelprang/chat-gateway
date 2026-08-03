@@ -71,6 +71,27 @@ curl -s $GW/v1/heartbeat/aitrader -H "$AUTH"            # your checks + states
 curl -s -X DELETE $GW/v1/heartbeat/aitrader/daily-trading-run -H "$AUTH"
 ```
 
+**422s on this endpoint.** A bad `schedule`/`grace`/`tz` returns the parser's
+own message. Since CG-76 there is a second one: **registering a `check_id` you
+do not already have, while your app has no `alert` (or `default`) route, is
+refused** — a dead-man check whose alert could never be routed is a check that
+goes missed and tells nobody.
+
+⚠ **It applies to registration only.** Because register and refresh are the same
+call, a **refresh of an existing check is your liveness ping and is always
+accepted**, even after the route disappears — refusing it would freeze
+`last_seen`, drive the check into the missed state, and manufacture a
+"heartbeat missed" alert for a source that never died. A route removed *after*
+registration is covered at runtime instead: `heartbeats.alerts_undeliverable`
+and `heartbeats.checks_undeliverable` degrade `/healthz`, and the check is left
+unmarked so it delivers the moment the route is restored.
+
+⚠ **The same registry fault is 503 on `/v1/notify` and 422 here, on purpose.**
+503 says *the gateway cannot serve this right now*; 422 says *this request is
+wrong and the caller can fix it*. Registering a dead-man check with no alert
+route really is wrong at the moment it is made, so this endpoint chose the
+status that points at the party holding the registry (CG-76 spec §4.2).
+
 ## Delivery log — `GET /v1/deliveries?limit=50`
 
 Per-source accounting: `enqueued → retrying* → delivered | failed` (plus
@@ -456,6 +477,7 @@ answer, and the last of the three degrades **cumulatively**: see its row.
 | `inbox.replayed_at_boot` | pending inbound replies restored at boot; still yours to poll | no — same |
 | `delivery.expired_at_boot` | queued jobs older than the 24h replay ceiling, **closed rather than posted** — a three-day-old alert delivered now actively misleads | **yes** |
 | `delivery.unroutable_at_boot` | queued jobs that could not be rebuilt at boot: the registry no longer grants that identity (never sent on a withdrawn permission), **or** the stored payload no longer validates as an envelope — the outbound twin of `unrevivable` | **yes** |
+| `delivery.delivery_failures` | accepted jobs that **exhausted the retry ladder** and were dropped. The in-process sibling of `expired_at_boot` / `unroutable_at_boot` above: the gateway returned `202` and then did not deliver. **Cumulative** | **yes** |
 | `inbox.unrevivable_at_boot` | journalled replies that no longer parse as an `InboundReply`; dropped, not delivered | **yes** |
 | `inbox.quarantined_at_boot` | how many of those were preserved in full — payload included — under the state dir's `quarantine/`, which is never pruned. Read it **against** the field above: that one is what left the queue, this one is what you can still recover | no — the recovery mechanism working |
 | `inbox.quarantine_write_errors` | quarantine writes that **failed**. At least one unrevivable reply has **no preserved copy**, so only the per-app audit trail records that it ever arrived | **yes** |
@@ -492,21 +514,25 @@ answer, and the last of the three degrades **cumulatively**: see its row.
 | `heartbeats.seconds_since_last_scan` | how stale `last_scan_at` is, as a number. `null` before the first scan | **yes** — past the budget below |
 | `heartbeats.stale_after_seconds` | the silence budget: six scan intervals, floored at 300s. `scan_once` does no network I/O, so unlike delivery this needs no allowance for a slow remote call | no |
 | `heartbeats.scan_interval_seconds` | the configured scan interval the budget is derived from — sixty seconds by default, and settable per deployment, which is why the budget is published rather than assumed | no |
-| `heartbeats.scan_failures` | scans that **raised**, over the life of the process — and unlike its `delivery.*` counterpart this one **degrades**. A scan that raises after marking a check `missed` has already dropped that alert for the 24h repeat window, and no later scan re-sends it, so this is a report of loss rather than of history. **Cumulative and does not reset** | **yes** |
+| `heartbeats.scan_failures` | scans that **raised**, over the life of the process — and unlike its `delivery.*` counterpart this one **degrades**. ⚠ **Its original justification expired with CG-76**: before that row a raising scan had already marked the check and dropped the alert; now the mark happens only after the alert is accepted, so a raise risks a **delayed or duplicated** alert rather than a lost one. It stays degrading on the weaker reason — a monitor that keeps raising is not evaluating checks — and `heartbeats.alerts_undeliverable` is the counter for an alert actually lost. **Cumulative and does not reset** | **yes** |
 | `heartbeats.consecutive_scan_failures` | scans that have raised **since the last good one**, returning to `0` on recovery. The live signal: the monitor is evaluating **no** registered check while this is climbing | **yes** — at 3 |
 | `heartbeats.last_scan_error` | the exception **type** from the last failed scan. Companion to the row above; cleared on recovery | no — reported with the row above |
+| `heartbeats.alerts_undeliverable` | dead-man alert **attempts** that came due and could **not be accepted for delivery**, over the life of the process. This is the dropped-alert counter — `scan_failures` is not, and said so until CG-76. An alert is dropped here without anything raising: the source has no `alert`/`default` route, or its routed identity is gone. ⚠ **Attempts, not distinct alerts, and the difference is large.** A check whose route stays broken is deliberately re-attempted on **every scan** so that it self-heals the moment the route returns — measured at **one increment (and one `GET /v1/deliveries` line) per scan, ≈1440/day at the 60s default interval, for a single misconfigured check.** Read `checks_undeliverable` for how big the fault is; read this for whether one ever happened. **Cumulative and does not reset.** A bare integer by design — `GET /v1/deliveries` (authenticated) names which check | **yes** |
+| `heartbeats.checks_undeliverable` | how many **distinct checks** were in that state on the **last** scan — the number to size the fault by, where the row above sizes the retry cadence. Returns to `0` when the registry is fixed, so this is the live signal beside the cumulative row above | **yes** |
+| `heartbeats.checks_orphaned` | registered checks whose `source` is **not a registered app** — renamed, removed, or a registry block that failed to load. ⚠ **`checks` and `missed` above EXCLUDE these**, so without this row those two under-report the deployment's dead-man coverage while the checks are still scanned and their alerts still fail. A bare count, never the ids | **yes** |
 
 Four things the field names do not tell you:
 
 - **Two of the `delivery.*` fields count both queues.**
   `journal_skipped_lines` and `journal_write_errors` are sums across the
-  outbound *and* inbox journals — despite the prefix. The other **twelve**
+  outbound *and* inbox journals — despite the prefix. The other **thirteen**
   `delivery.*` fields, and **all four** `inbox.*` fields, are per-queue exactly
-  as their prefixes say — including the six added on 2026-08-02 and the three
-  added on 2026-08-03, all nine of which describe the outbound dispatch thread
+  as their prefixes say — including the six added on 2026-08-02 and the four
+  added on 2026-08-03, all ten of which describe the outbound dispatch thread
   and nothing else. (This read *"the other three"* until 2026-08-02, which was
-  true of the five-row block it was written for, and *"the other nine"* until
-  2026-08-03.) Do not read the prefix as a guarantee on those two.
+  true of the five-row block it was written for, *"the other nine"* until
+  2026-08-03, and *"the other twelve"* until CG-76 added `delivery_failures`
+  the same day.) Do not read the prefix as a guarantee on those two.
 - **`delivery.audit_write_errors` is summed too, but in a different sense, and
   the two must not be folded together.** It is not a sum across two *queues* —
   the inbox has no delivery log. It is a sum across two `DeliveryLog`
@@ -516,9 +542,9 @@ Four things the field names do not tell you:
   dedupes by identity, so the ordinary one-object deployment is not
   double-counted. Everything the prefix says about *which queue* still holds:
   it is outbound-only.
-- **Twenty-one degrading fields — the field count from above, not the eighteen
-  rows the column marks — and the map to `reasons` lines is one-to-one in
-  neither direction.** `expired_at_boot` and `unroutable_at_boot` share one
+- **Twenty-five degrading fields — the field count from above, not the
+  twenty-two rows the column marks — and the map to `reasons` lines is
+  one-to-one in neither direction.** `expired_at_boot` and `unroutable_at_boot` share one
   entry: both mean "queued, then not delivered", and one investigation reads
   them together. In the other direction the `retention.*` liveness fields —
   `thread_started`, `thread_alive`, `seconds_since_last_sweep` — are read in
@@ -536,16 +562,25 @@ Four things the field names do not tell you:
   `heartbeats.scan_failures` can print a **second** `heartbeats:` reason beside
   whichever the chain produced, because "has an alert already been lost" is a
   different question from "is this loop running" and both can be true at once.
+  **Since CG-76 there are four such outside-the-chain counters, not one**, and
+  three of them are the ones that actually answer that first question —
+  `alerts_undeliverable`, `checks_undeliverable` and `checks_orphaned` — so a
+  `heartbeats:` block can now print several lines at once. That is deliberate:
+  they are different investigations, not one fault described four ways.
   (It was five fields and four lines until 2026-07-31;
   `quarantine_write_errors` added one of each,
   `retention.*` added five fields and three lines on 2026-08-02, the two
   thread blocks added six fields and two lines the same day — 17 and 10 —
   CG-75's `audit_write_errors` added one of each on 2026-08-03: 18 and 11 —
-  and CG-74's failure counters added three fields and three lines the same day:
-  **21 and 14**. The three lines are the two consecutive counters and
-  `scan_failures`; the three cumulative-or-companion rows
+  CG-74's failure counters added three fields and three lines the same day —
+  21 and 14 — and CG-76 added four fields and four lines the same day again:
+  **25 and 18**. CG-74's three lines are the two consecutive counters and
+  `scan_failures`; its three cumulative-or-companion rows
   (`delivery.pass_failures`, `delivery.last_pass_error`,
-  `heartbeats.last_scan_error`) add neither.
+  `heartbeats.last_scan_error`) add neither. CG-76's four are
+  `heartbeats.alerts_undeliverable`, `heartbeats.checks_undeliverable`,
+  `heartbeats.checks_orphaned` and `delivery.delivery_failures` — one line
+  each, none of them a liveness signal and none of them in an `elif` chain.
   Recount against `service.py`'s `reasons` chain rather than trusting this
   sentence — a
   copied count is what `CLAUDE.md`'s test-count note is about — but count the way

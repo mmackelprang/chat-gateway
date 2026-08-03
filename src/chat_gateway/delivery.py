@@ -261,6 +261,29 @@ class Dispatcher:
         #: not be unified onto the helper and is therefore precedent for
         #: nothing new. Cleared on recovery, with the counter beside it.
         self.last_pass_error: str | None = None
+        #: Jobs that reached a TERMINAL `failed` — the retry ladder exhausted —
+        #: over the life of the process. CG-76 door 3.
+        #:
+        #: `expired` and `unroutable` beside this count boot-replay losses and
+        #: are published as `*_at_boot`. This is the same fact arriving by the
+        #: other route: a job the gateway returned 202 ACCEPTED for, and then
+        #: did not deliver, and will not retry. It was the one variant of that
+        #: family with no counter at all, so ~73 minutes of Google being
+        #: unreachable discarded a dead-man alert with nothing on /healthz.
+        #:
+        #: NOT scoped to `kind == "heartbeat"`, deliberately. A terminal failure
+        #: on ANY accepted notification is a broken promise, and CG-12's "a
+        #: guarantee working is not a fault" test does not apply — this is a
+        #: guarantee breaking. The authenticated delivery log carries the
+        #: per-source breakdown; this is a bare integer (hard rule #5 vs the
+        #: unauthenticated endpoint).
+        #:
+        #: ⚠ POST-CG-75 THIS PATH IS SILENT, which is why the counter is needed
+        #: now and was not before. Until CG-75, `_finish` on a full disk RAISED
+        #: here and produced the 1/second send storm, which tripped staleness.
+        #: CG-75 guarded that write — correctly — and in doing so removed the
+        #: only thing that made ladder exhaustion loud.
+        self.delivery_failures = 0
 
     @property
     def journal(self):
@@ -387,6 +410,10 @@ class Dispatcher:
         return attempted
 
     def _finish(self, job: Job, status: str, detail: str) -> None:
+        if status == "failed":
+            # CG-76 door 3. Counted BEFORE `record`, which is guarded (CG-75)
+            # and therefore cannot be relied on to have happened.
+            self.delivery_failures += 1
         self._log.record(job.source, job.kind, job.title, status, detail,
                          entry_id=job.entry_id)
         # THE MID-FLIGHT WINDOW, stated rather than hidden: the send has

@@ -1377,12 +1377,22 @@ def test_pass_failures_alone_does_not_degrade(env):
 
 
 def test_cumulative_scan_failures_DO_degrade(env):
-    """The deliberate asymmetry with the row above — a lost alert is not history.
+    """The deliberate asymmetry with the row above — `scan_failures` degrades.
 
-    A raising scan has already had `due_alerts` mark its check `missed` and
-    stamp `last_alerted`, so the alert is suppressed for the 24h repeat window
-    and no later scan re-sends it. There is nothing for a later pass to recover,
-    which is `RetentionSweeper.errors`'s own test for a cumulative degrade.
+    ⚠ THE ASSERTED STRING CHANGED WITH CG-76, AND SO DID THIS DOCSTRING. Both
+    used to say a raising scan "has already had `due_alerts` mark its check
+    `missed` ... so the alert is suppressed for the 24h repeat window and no
+    later scan re-sends it". That was true and measured when CG-74 shipped it,
+    and CG-76 reordered exactly that: the mark now happens in `mark_alerted`,
+    after the notify is accepted, so a raising scan leaves the check UNMARKED
+    and the next scan re-fires it.
+
+    The counter still degrades — the user's D3 decision stands (spec §7.2) —
+    but on the weaker reason, so the reason STRING no longer claims a loss.
+    This test therefore matches on "DELAYED or DUPLICATED" rather than the
+    retired "may already have been lost". It is NOT a loosened assertion: the
+    degrade, the count and the outside-the-chain placement are all still pinned,
+    and `alerts_undeliverable` is now the counter for an alert actually lost.
 
     Note this fires with the monitor NEVER STARTED: it is not a liveness signal
     and is not gated on `thread_started`, which is why it lives outside the
@@ -1393,7 +1403,7 @@ def test_cumulative_scan_failures_DO_degrade(env):
     body = client.get("/healthz").json()
     assert body["status"] == "degraded"
     hits = [r for r in body["reasons"] if r.startswith("heartbeats: ")]
-    assert len(hits) == 1 and "may already have been lost" in hits[0]
+    assert len(hits) == 1 and "DELAYED or DUPLICATED" in hits[0]
 
 
 def test_a_raising_dispatcher_outranks_the_staleness_branch(env):
@@ -1504,7 +1514,11 @@ def test_a_raising_monitor_prints_two_heartbeat_reasons_not_one(env):
     hits = [r for r in body["reasons"] if r.startswith("heartbeats: ")]
     assert len(hits) == 2, hits
     live = [r for r in hits if "consecutive scans have RAISED" in r]
-    lost = [r for r in hits if "may already have been lost" in r]
+    # ⚠ "may already have been lost" until CG-76, which retired that claim: a
+    # raising scan no longer marks the check, so the risk is a delayed or
+    # duplicated alert rather than a lost one (spec §7.1). The TWO-REASON SHAPE
+    # this test exists for is unchanged — only the second string's wording is.
+    lost = [r for r in hits if "DELAYED or DUPLICATED" in r]
     assert len(live) == 1 and len(lost) == 1
     assert "(last: OSError)" in live[0]
     assert f"{SCAN_FAILURE_THRESHOLD} scan(s) have raised since start" in lost[0]
@@ -1568,7 +1582,11 @@ def test_a_dead_scan_thread_outranks_the_raising_counter(env):
     assert body["status"] == "degraded"
     hits = [r for r in body["reasons"] if r.startswith("heartbeats: ")]
     assert len(hits) == 2, hits
-    from_chain = [r for r in hits if "may already have been lost" not in r]
+    # ⚠ The `scan_failures` string this excludes was matched on "may already
+    # have been lost" until CG-76 retired that claim (spec §7.1). The exclusion
+    # is what scopes this assertion to the CHAIN; the substring is incidental to
+    # the ordering question and only its wording moved.
+    from_chain = [r for r in hits if "DELAYED or DUPLICATED" not in r]
     assert len(from_chain) == 1
     assert "NOT RUNNING" in from_chain[0] and "restart the service" in from_chain[0]
     assert "consecutive scans have RAISED" not in from_chain[0]

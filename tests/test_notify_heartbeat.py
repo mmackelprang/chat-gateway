@@ -651,12 +651,23 @@ def test_a_raising_scan_is_counted_but_the_cumulative_one_never_clears():
     """The asymmetry, pinned. `scan_failures` must survive recovery.
 
     `Dispatcher.pass_failures` clears nothing either — but it drives nothing, so
-    nobody would notice if it did. This one degrades `/healthz`, and the reason
-    it may is that the alert a raising scan would have sent is already gone:
-    `due_alerts` marked the check before persisting, so no later scan re-sends
-    it. See `HeartbeatMonitor.__init__` for the measurement.
+    nobody would notice if it did. This one degrades `/healthz`.
+
+    ⚠ THE DOCSTRING'S REASON CHANGED WITH CG-76; THE ASSERTIONS DID NOT. It used
+    to end: "the reason it may is that the alert a raising scan would have sent
+    is already gone: `due_alerts` marked the check before persisting, so no
+    later scan re-sends it." CG-76 reordered exactly that, so a raising scan now
+    leaves the check unmarked and the next one re-fires it. The counter still
+    degrades, on the weaker surviving reason, which has ONE home —
+    `HeartbeatMonitor.__init__` — and this is not it.
+
+    The fake notify returns True for the reason every fake notify in this suite
+    now must: since CG-76 `scan_once` reads the return value, and a `None` reads
+    as "not accepted for delivery". It is never actually called here (`scan_once`
+    is stubbed and the store is empty), but a fake that would misreport if it
+    were is a trap for whoever copies it next.
     """
-    mon = HeartbeatMonitor(HeartbeatStore(), lambda *a: None, interval_seconds=0.01)
+    mon = HeartbeatMonitor(HeartbeatStore(), lambda *a: True, interval_seconds=0.01)
     calls = {"n": 0}
 
     def flaky():
@@ -684,65 +695,493 @@ ROUTELESS_REGISTRY_YAML = REGISTRY_YAML.replace(
 assert "routes:" not in ROUTELESS_REGISTRY_YAML  # the replace really landed
 
 
-def test_a_routeless_alert_is_dropped_without_raising_or_counting(registry, tmp_path):
-    """This pins the LIMIT of CG-74's signal, NOT a behaviour worth keeping.
+def test_a_routeless_alert_is_counted_and_degrades_healthz(registry, tmp_path):
+    """CG-76 door 2. THIS TEST USED TO ASSERT THE OPPOSITE, on purpose.
 
-    `HeartbeatMonitor.__init__` claimed `scan_failures` was "the only thing
-    standing between a silently-dropped dead-man alert and a green /healthz".
-    It is not, and the counter-example is here: an app with no `routes:` block
-    at all. `due_alerts` marks the check `missed` and stamps `last_alerted`
-    under its lock, then `_monitor_notify` gets an `HTTPException(503)` out of
-    `route_for` — no `alert` route, no `default` — CATCHES it, and writes a
-    delivery-log line. The alert is gone for the whole 24h repeat window and
-    `scan_once` returns normally, so no counter in this file moves and
-    `/healthz` stays `ok`.
+    Its previous name was
+    `test_a_routeless_alert_is_dropped_without_raising_or_counting`, and its
+    docstring said: "CG-76 is expected to change what this asserts. When a
+    dropped alert becomes visible on /healthz, this test is the one that should
+    go red — the `scan_failures == 0` and `status == "ok"` assertions below are
+    a record of a hole, not a contract."
 
-    **CG-76 is expected to change what this asserts.** When a dropped alert
-    becomes visible on `/healthz`, this test is the one that should go red —
-    the `scan_failures == 0` and `status == "ok"` assertions below are a record
-    of a hole, not a contract. Do not "fix" it by loosening them.
+    This is that change. The hole is closed: the alert is still not delivered —
+    there is genuinely no route — but it is now COUNTED, /healthz DEGRADES, and
+    the check is NOT marked, so it re-fires and will deliver the moment a route
+    is added.
     """
     from pathlib import Path
 
     import chat_gateway.registry as regmod
 
-    # Friday 2026-07-24 16:30 ET, the same clock the weekday dead-man case uses.
     clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
     p = Path(str(tmp_path)) / "routeless.yaml"
     p.write_text(ROUTELESS_REGISTRY_YAML, encoding="utf-8")
     client, app, adapter = make_client(regmod.load_registry(p), clock, tmp_path)
 
-    r = client.post("/v1/heartbeat", headers=AUTH, json={
-        "check_id": "daily-run", "schedule": "weekdays", "grace": "2h"})
-    assert r.status_code == 200
+    # Registration itself is now refused (Task A4b) — so drive the store
+    # directly to reach the runtime path this test is about.
+    app.state.heartbeats.refresh("aitrader", "daily-run", "weekdays", "2h")
 
-    # Monday past the grace deadline: the check really does come due.
     clock.now = dt.datetime(2026, 7, 27, 23, 0, tzinfo=UTC)
-    assert app.state.monitor.scan_once() == 1
+    assert app.state.monitor.scan_once() == 0          # 0 ACCEPTED, not 0 due
 
-    # ...and nothing was sent. Not queued-and-unsent either — `emit_notification`
-    # raised before `enqueue`, so draining the dispatcher changes nothing.
     app.state.dispatcher.process_due()
     assert adapter.sent == []
-    assert app.state.dispatcher.pending() == 0
 
-    # The check is nonetheless marked alerted, and the suppression is real: the
-    # next scan finds nothing due, so this alert is not coming back today.
+    # The check is NOT marked, so it re-fires rather than going quiet for 24h.
     state = client.get("/v1/heartbeat/aitrader", headers=AUTH).json()["checks"][0]
-    assert state["status"] == "missed" and state["last_alerted"]
+    assert state["status"] == "ok" and state["last_alerted"] is None
+    assert len(app.state.heartbeats.due_alerts()) == 1
+
+    body = client.get("/healthz").json()
+    assert body["heartbeats"]["alerts_undeliverable"] == 1
+    assert body["heartbeats"]["checks_undeliverable"] == 1
+    assert body["heartbeats"]["scan_failures"] == 0     # nothing RAISED
+    assert body["status"] == "degraded"
+    assert any("could NOT be routed" in r for r in body["reasons"])
+
+
+def test_a_second_outage_inside_the_dedupe_window_is_still_alerted(registry, tmp_path):
+    """CG-76 door 4. Two distinct outages used to produce ONE alert.
+
+    A source dies, is alerted on, recovers and refreshes its check (which
+    clears `last_alerted`), then dies AGAIN inside the deduper's 3600s window.
+    The second alert used to be deduped against the first outage's — a false
+    positive, because `alert_due` already guarantees at most one alert per check
+    per 86400s, so the deduper could never suppress a real duplicate here.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "every:60s", "grace": "60s"})
+    clock.now += dt.timedelta(seconds=300)
+    assert app.state.monitor.scan_once() == 1
+    app.state.dispatcher.process_due()
+    assert len(adapter.sent) == 1
+
+    # Recovered, refreshed — a brand-new check with `last_alerted` cleared.
+    clock.now += dt.timedelta(seconds=60)
+    client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "every:60s", "grace": "60s"})
+
+    # ...and dies again, still well inside DEFAULT_DEDUPE_WINDOW_S.
+    clock.now += dt.timedelta(seconds=300)
+    assert app.state.monitor.scan_once() == 1
+    app.state.dispatcher.process_due()
+    assert len(adapter.sent) == 2, "the second real outage must alert"
+    assert client.get("/healthz").json()["heartbeats"]["alerts_undeliverable"] == 0
+
+
+def test_repeat_window_must_exceed_the_dedupe_window(registry, tmp_path):
+    """Pins the REASONING behind dropping the dead-man path's dedupe_key.
+
+    The key was removed because `alert_due`'s repeat window is strictly longer
+    than the deduper's, so the deduper could only ever produce false positives
+    on that path. If someone inverts these constants that argument stops
+    holding, and this test is where they are told.
+    """
+    from chat_gateway.heartbeat import DEFAULT_REPEAT_S
+    from chat_gateway.notifications import DEFAULT_DEDUPE_WINDOW_S
+
+    assert DEFAULT_REPEAT_S > DEFAULT_DEDUPE_WINDOW_S
+
+
+def test_an_exhausted_retry_ladder_is_counted_and_degrades_healthz(registry, tmp_path):
+    """CG-76 door 3. An accepted alert that never lands used to be invisible.
+
+    `expired`/`unroutable` are BOOT-REPLAY counters (`*_at_boot`); a job that
+    exhausts the ladder in-process had none. Post-CG-75 this path is silent —
+    until CG-75 it raised and produced the send storm, which is the only thing
+    that ever made it loud.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    adapter = FakeAdapter(fail_times=99)
+    client, app, _ = make_client(registry, clock, tmp_path, adapter=adapter)
+
+    client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "every:60s", "grace": "60s"})
+    clock.now += dt.timedelta(seconds=300)
+    assert app.state.monitor.scan_once() == 1
+
+    for _ in range(len(delivery_module.BACKOFF_S) + 2):
+        app.state.dispatcher.process_due()
+        clock.now += dt.timedelta(seconds=4000)
+
+    assert adapter.sent == []
+    assert app.state.dispatcher.pending() == 0
+    body = client.get("/healthz").json()
+    assert body["delivery"]["delivery_failures"] == 1
+    assert body["delivery"]["pass_failures"] == 0        # nothing RAISED
+    assert body["status"] == "degraded"
+    assert any("exhausted the retry ladder" in r for r in body["reasons"])
+
+
+def test_one_tenants_failing_notify_does_not_strand_anothers_alert(tmp_path):
+    """CG-76 §2.7. Measured before the fix: a routeless `job-hunter` check
+    aborted the loop, `aiteam-harness`'s alert was NEVER ATTEMPTED, and all
+    three checks were marked alerted anyway — so the next scan fired zero."""
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    store = HeartbeatStore(tmp_path / "hb.json", now_fn=clock)
+    for src in ("aitrader", "job-hunter", "aiteam-harness"):
+        store.refresh(src, "c", "every:60s", "60s")
+
+    sent = []
+
+    def notify(source, title, body, key):
+        if source == "job-hunter":
+            raise RuntimeError("no route")
+        sent.append(source)
+        return True
+
+    monitor = HeartbeatMonitor(store, notify)
+    clock.now += dt.timedelta(seconds=300)
+    with pytest.raises(RuntimeError):
+        monitor.scan_once()
+
+    assert sorted(sent) == ["aiteam-harness", "aitrader"]
+    # The two that succeeded are marked; the one that failed is not, and
+    # re-fires on the next scan.
+    assert [c.source for c in store.due_alerts()] == ["job-hunter"]
+    assert monitor.alerts_undeliverable == 1
+
+
+def test_a_failing_save_no_longer_suppresses_the_alert(registry, tmp_path, monkeypatch):
+    """CG-76 door 1. The alert is now SENT before the mark is attempted, so a
+    failing `_save()` costs at most a duplicate on the next scan — never a drop.
+
+    ⚠ This is the scenario CG-74's UAT used, and it now produces a DIFFERENT
+    and better result. There, `main` sent zero notifications and answered `ok`
+    while the branch sent zero and answered `degraded`. Here the alert is
+    actually DELIVERED. `scan_failures` still moves; what it accompanies is no
+    longer a lost alert (spec §7.3).
+
+    ⚠ WHERE THE DUPLICATE LANDS: THE NEXT BOOT, NOT THE NEXT SCAN. The plan's
+    draft of this test asserted `due_alerts() == 1` immediately after the failed
+    save, i.e. an in-PROCESS re-fire. Measured, that is not what `mark_alerted`
+    does and it must not be: the marks are applied in memory and `_save()` then
+    raises, so the live store is marked and only the DISK is stale. Rolling the
+    marks back to get an in-process re-fire would re-notify every scan interval
+    for as long as the disk stayed full — the unbounded re-send storm
+    `_journal_write` names in as many words, and the failure CG-75 was filed
+    for. What the reordering buys is stated exactly by `mark_alerted`'s own
+    docstring, which cites `_journal_write`'s wording: "at most one duplicate on
+    the next boot". So this test asserts BOTH halves — no in-process storm, and
+    a restart that re-alerts.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+    client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "every:60s", "grace": "60s"})
+
+    def boom():
+        raise OSError("disk full")
+
+    monkeypatch.setattr(app.state.heartbeats, "_save", boom)
+    clock.now += dt.timedelta(seconds=300)
+    with pytest.raises(OSError):
+        app.state.monitor.scan_once()
+
+    app.state.dispatcher.process_due()
+    assert len(adapter.sent) == 1, "the alert must be sent before the mark"
+
+    # No in-process storm: the live store IS marked, so the next scan is quiet.
+    assert app.state.heartbeats.due_alerts() == []
     assert app.state.monitor.scan_once() == 0
 
-    # The one trace it left is a delivery-log line — which is NOT a send.
-    log = app.state.delivery_log.query("aitrader")
-    assert [(e["kind"], e["status"]) for e in log] == [("heartbeat", "failed")]
-    assert "no route" in log[0]["detail"]
+    # ...and the durability that was lost shows up where the loss actually is —
+    # on disk. A restart re-reads an UNMARKED check and alerts again. That is
+    # the duplicate, and it is the whole of the cost.
+    rebooted = HeartbeatStore(tmp_path / "hb.json", now_fn=clock)
+    assert len(rebooted.due_alerts()) == 1
+    assert [(c.status, c.last_alerted) for c in rebooted.list_all()] == [("ok", "")]
 
-    # And the part that makes this a defect rather than a curiosity: /healthz.
-    assert app.state.monitor.scan_failures == 0
-    assert app.state.monitor.consecutive_scan_failures == 0
-    assert app.state.monitor.last_scan_error is None
+
+def test_registering_a_check_with_no_alert_route_is_refused(registry, tmp_path):
+    """CG-76 §4.2. `aiteam-harness` and `job-hunter` have no `routes:` block in
+    the example registry, so this is the live shape, not a contrived one.
+
+    Takes the `registry` fixture without using its return value — the fixture is
+    what monkeypatches `T_KEY_AITRADER` into the environment, and without it the
+    app would 401 before ever reaching the check this test is about.
+    """
+    from pathlib import Path
+
+    import chat_gateway.registry as regmod
+
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    p = Path(str(tmp_path)) / "routeless.yaml"
+    p.write_text(ROUTELESS_REGISTRY_YAML, encoding="utf-8")
+    client, _, _ = make_client(regmod.load_registry(p), clock, tmp_path)
+
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "weekdays", "grace": "2h"})
+    assert r.status_code == 422
+    assert "no route for alert" in r.json()["detail"] or \
+           "no route" in r.json()["detail"]
+    assert "http" not in r.json()["detail"].lower(), "hard rule #2: never a URL"
+
+
+def test_a_check_whose_source_left_the_registry_is_counted_not_hidden(
+        registry, tmp_path):
+    """CG-76 door 5. Measured before the fix: renaming the app took the check
+    out of BOTH `checks` and `missed` — `checks: 1 -> 0` — while the store
+    still held it, still scanned it, and its alert still died through
+    `route_for`'s `unknown app` branch. `/healthz` claimed zero dead-man
+    coverage, which reads as "nothing to worry about"."""
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+    client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "every:60s", "grace": "60s"})
+    assert client.get("/healthz").json()["heartbeats"]["checks"] == 1
+
+    # The tenant leaves the registry; the state file is untouched. BOTH the key
+    # and the Check's own `source` carry the dead id — `refresh` always writes
+    # the two together, `list_for` reads the key and `_checks_orphaned` reads
+    # the field, and a fixture that moved only one of them would exercise
+    # neither census honestly.
+    orphan = app.state.heartbeats._checks.pop(("aitrader", "daily-run"))
+    orphan.source = "ghost"
+    app.state.heartbeats._checks[("ghost", "daily-run")] = orphan
+
     body = client.get("/healthz").json()
-    assert body["heartbeats"]["scan_failures"] == 0
-    assert body["heartbeats"]["last_scan_error"] is None
-    assert body["status"] == "ok"
-    assert not [r for r in body["reasons"] if r.startswith("heartbeats: ")]
+    assert body["heartbeats"]["checks"] == 0        # still excluded, by design
+    assert body["heartbeats"]["checks_orphaned"] == 1
+    assert body["status"] == "degraded"
+    assert any("NOT a registered app" in r for r in body["reasons"])
+    assert "ghost" not in json.dumps(body), "hard rule #5 vs CG-12: count, never name"
+
+
+def test_a_failed_REPEAT_alert_is_counted_even_though_missed_does_not_move(
+        registry, tmp_path):
+    """CG-76 door 6 — the worst of the six, and the one that survived the first
+    deliberate sweep.
+
+    `heartbeats.missed` is derived from `check.status`, which `due_alerts` set
+    to "missed" on the FIRST fire. So when the 24h REPEAT — the alert that
+    exists to keep shouting — dies, `missed` was already 1 and did not move.
+    Measured on `main`: NOT ONE FIELD in the whole /healthz body changed.
+
+    ⚠ This is why `alerts_undeliverable` counts per ALERT ATTEMPT and never
+    references `check.status`. Do not "simplify" it into a derivation from
+    check state — that refactor looks like tidying and reopens this door.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    adapter = FakeAdapter()
+    client, app, _ = make_client(registry, clock, tmp_path, adapter=adapter)
+    client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "every:60s", "grace": "60s"})
+
+    # First alert: delivered. `missed` goes 0 -> 1 and now STAYS there.
+    clock.now += dt.timedelta(seconds=300)
+    assert app.state.monitor.scan_once() == 1
+    app.state.dispatcher.process_due()
+    assert len(adapter.sent) == 1
+    assert client.get("/healthz").json()["heartbeats"]["missed"] == 1
+
+    # Chat becomes unreachable, and the 24h REPEAT comes due.
+    adapter.fail_times = 99
+    clock.now += dt.timedelta(seconds=86401)
+    assert app.state.monitor.scan_once() == 1, "the repeat must re-fire"
+    for _ in range(len(delivery_module.BACKOFF_S) + 2):
+        app.state.dispatcher.process_due()
+        clock.now += dt.timedelta(seconds=4000)
+
+    body = client.get("/healthz").json()
+    assert len(adapter.sent) == 1, "the repeat never landed"
+    # THE POINT: `missed` is unchanged — it was already 1 — and on `main` that
+    # was the whole of the observable state. Now something else moved.
+    assert body["heartbeats"]["missed"] == 1
+    assert body["delivery"]["delivery_failures"] == 1
+    assert body["status"] == "degraded"
+    assert any("exhausted the retry ladder" in r for r in body["reasons"])
+
+
+def test_mark_alerted_with_nothing_does_not_touch_the_disk(tmp_path):
+    store = HeartbeatStore(tmp_path / "hb.json")
+    store.refresh("aitrader", "c", "every:60s", "60s")
+    before = (tmp_path / "hb.json").stat().st_mtime_ns
+    store.mark_alerted([])
+    assert (tmp_path / "hb.json").stat().st_mtime_ns == before
+
+
+# --- CG-76 pre-merge review: what the first cut of the fix broke -------------
+
+def test_an_existing_checks_refresh_survives_its_alert_route_disappearing(
+        registry, tmp_path):
+    """The §4.2 refusal must NOT fire on a refresh — only on a registration.
+
+    `POST /v1/heartbeat` is both calls; docs/consumers/aitrader.md §2 says so in
+    as many words ("Registering and refreshing are the **same call**"). The
+    first cut of the A4b guard ran on every call, so an operator removing the
+    alert route turned a healthy source's on-schedule pings into 422s.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, _, _ = make_client(registry, clock, tmp_path)
+
+    body = {"check_id": "daily-run", "schedule": "every:60s", "grace": "60s"}
+    assert client.post("/v1/heartbeat", headers=AUTH, json=body).status_code == 200
+
+    # An operator edits the registry and the alert route goes away. There is no
+    # `default` route in this fixture, so `route_for(..., "alert")` now raises.
+    registry.apps["aitrader"].routes.pop("alert")
+
+    clock.now += dt.timedelta(seconds=30)
+    r = client.post("/v1/heartbeat", headers=AUTH, json=body)
+    assert r.status_code == 200, "a liveness ping is not the moment to refuse"
+
+    # A DIFFERENT check id is a registration, and is still refused.
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "a-new-one", "schedule": "every:60s", "grace": "60s"})
+    assert r.status_code == 422
+
+
+def test_a_broken_alert_route_never_manufactures_an_alert_for_a_live_source(
+        registry, tmp_path):
+    """⚠ ANTI-REGRESSION for a FALSE ALERT, measured end-to-end on a real server.
+
+    With the refusal applied to every call: route removed -> the source's pings
+    422 -> `last_seen` freezes -> the check drifts into `is_missed` -> and the
+    moment the route was restored the gateway delivered
+    `[ALERT] heartbeat missed: daily-run` for a source that never stopped
+    pinging. The dead-man switch must never be the thing that invents the death.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    body = {"check_id": "daily-run", "schedule": "every:60s", "grace": "60s"}
+    assert client.post("/v1/heartbeat", headers=AUTH, json=body).status_code == 200
+
+    registry.apps["aitrader"].routes.pop("alert")
+
+    # The source is ALIVE and pinging well inside schedule+grace (60s+60s).
+    # Statuses are COLLECTED rather than asserted in the loop, deliberately: the
+    # finding this test exists for is the fabricated alert below, and asserting
+    # 200 here first would short-circuit before ever reaching it.
+    ping_statuses = []
+    for _ in range(6):
+        clock.now += dt.timedelta(seconds=30)
+        ping_statuses.append(
+            client.post("/v1/heartbeat", headers=AUTH, json=body).status_code)
+        app.state.monitor.scan_once()
+
+    # The operator notices and restores the route. The scan tick lands BEFORE
+    # the source's next ping — the two run on independent clocks and nothing
+    # orders them — and that ordering is where the fabricated alert was
+    # delivered: a check driven into `missed` by refused pings, now routable.
+    registry.apps["aitrader"].routes["alert"] = "aitrader-alerts"
+    clock.now += dt.timedelta(seconds=30)
+    app.state.monitor.scan_once()
+    app.state.dispatcher.process_due()
+
+    assert adapter.sent == [], "no alert for a source that never died"
+
+    ping_statuses.append(
+        client.post("/v1/heartbeat", headers=AUTH, json=body).status_code)
+    hb = client.get("/healthz").json()["heartbeats"]
+    assert hb["missed"] == 0
+    assert hb["alerts_undeliverable"] == 0
+    assert hb["checks_undeliverable"] == 0
+    # ...and the cause: every ping was accepted, so `last_seen` kept advancing.
+    assert ping_statuses == [200] * 7
+
+
+def test_the_counters_survive_a_mark_alerted_that_raises(tmp_path, monkeypatch):
+    """`mark_alerted`'s `_save()` is unguarded BY DESIGN, so it can raise — and
+    while the counter updates sat after it, a scan that both lost an alert and
+    hit a full disk discarded the loss permanently: the cumulative count never
+    took the increment and the gauge stuck at a stale value, so /healthz went on
+    reporting checks as unroutable against a registry that was fine.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    store = HeartbeatStore(tmp_path / "hb.json", now_fn=clock)
+    store.refresh("aitrader", "good", "every:60s", "60s")
+    store.refresh("job-hunter", "broken", "every:60s", "60s")
+
+    routed = {"job-hunter": False}
+
+    def notify(source, title, body, key):
+        return routed.get(source, True)
+
+    monitor = HeartbeatMonitor(store, notify)
+    monkeypatch.setattr(store, "_save", lambda: (_ for _ in ()).throw(OSError("disk full")))
+
+    clock.now += dt.timedelta(seconds=300)
+    with pytest.raises(OSError):
+        monitor.scan_once()
+
+    assert monitor.alerts_undeliverable == 1, "the loss must not be discarded"
+    assert monitor.checks_undeliverable == 1
+
+    # The registry is fixed and the disk comes back: the gauge returns to 0
+    # while the cumulative history does not.
+    monkeypatch.undo()
+    routed["job-hunter"] = True
+    clock.now += dt.timedelta(seconds=300)
+    monitor.scan_once()
+    assert monitor.checks_undeliverable == 0
+    assert monitor.alerts_undeliverable == 1
+
+
+def test_a_notify_that_is_accepted_but_not_enqueued_is_reported_as_unaccepted(
+        registry, tmp_path):
+    """Pins `_monitor_notify`'s `!= "enqueued"` belt-and-braces branch.
+
+    D4 removed the only cause of it by passing no `dedupe_key` from the dead-man
+    path, so on today's code the branch is unreachable through `scan_once` — and
+    an unreachable branch with no test is one tidy-up away from deletion. Its
+    own comment says it is kept because the failure it guards is SILENT: a
+    future severity or route change that reintroduces a non-`enqueued` status
+    would otherwise have `scan_once` mark the check as alerted on a message
+    nobody ever queued. So drive it directly, with a dedupe_key.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+    emit = app.state.monitor._notify
+
+    assert emit("aitrader", "heartbeat missed: c", "body", "hb:c") is True
+    # Second call inside the deduper's window -> {"status": "deduped"} -> the
+    # branch. Not an exception, and a 202 to the caller; only the return value
+    # distinguishes it from a real acceptance.
+    assert emit("aitrader", "heartbeat missed: c", "body", "hb:c") is False
+
+    app.state.dispatcher.process_due()
+    assert len(adapter.sent) == 1
+    statuses = [d["status"] for d in
+                client.get("/v1/deliveries", headers=AUTH).json()["deliveries"]]
+    assert "failed" in statuses
+
+
+def test_a_refresh_between_selection_and_marking_leaves_the_check_ok(tmp_path):
+    """The recovery race D1 opened, and the property that makes it safe.
+
+    Splitting selection from marking put a real window between `due_alerts()`
+    and `mark_alerted()`: a source can come back to life inside it. If the
+    revived check were stamped `missed` + `last_alerted=now`, `alert_due` would
+    then suppress the next REAL outage for a full `DEFAULT_REPEAT_S` (24h).
+
+    ⚠ IT IS SAFE ONLY BECAUSE `refresh` CONSTRUCTS A NEW `Check` rather than
+    mutating the stored one — so `mark_alerted` stamps a now-detached object
+    that the store no longer holds. Nothing else asserts that, which is why this
+    test says it out loud: "optimizing" `refresh` into an in-place mutation
+    looks harmless and silently re-arms this race.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    store = HeartbeatStore(tmp_path / "hb.json", now_fn=clock)
+    store.refresh("aitrader", "daily-run", "every:60s", "60s")
+
+    clock.now += dt.timedelta(seconds=300)
+    fired = store.due_alerts()
+    assert len(fired) == 1
+
+    # ...the source wakes up and pings before the mark lands.
+    clock.now += dt.timedelta(seconds=1)
+    revived = store.refresh("aitrader", "daily-run", "every:60s", "60s")
+    assert revived is not fired[0], "refresh must not hand back the stored object"
+
+    store.mark_alerted(fired)
+
+    live = store.list_for("aitrader")[0]
+    assert (live.status, live.last_alerted) == ("ok", "")
+    assert store.due_alerts() == [], "and the revived check is not due"
