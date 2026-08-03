@@ -166,8 +166,17 @@ def _checks_orphaned(registry, checks) -> int:
     `HeartbeatStore` has no "all sources" accessor by design — `list_for` is
     per-source, which is what keeps the endpoint's own authorization honest —
     so this reads the private map under the store's lock via `list_all`.
+
+    `getattr` with a default, like every neighbouring /healthz read, and for
+    the reason CG-68's audit finding F0 recorded: `create_app` takes an
+    injected `heartbeats`, so a duck-typed store without this accessor would
+    500 the endpoint rather than report a zero. An unconditional lookup on this
+    endpoint is exactly what that finding cost.
     """
-    return sum(1 for c in checks.list_all() if c.source not in registry.apps)
+    list_all = getattr(checks, "list_all", None)
+    if list_all is None:
+        return 0
+    return sum(1 for c in list_all() if c.source not in registry.apps)
 
 
 def _journal_skipped(dispatch, inbox) -> int:
@@ -393,23 +402,51 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # `aiteam-harness` and `job-hunter` no `routes:` block at all, so this
         # is not hypothetical for two of the three registered consumers.
         #
+        # ⚠ ONLY WHEN THE CHECK DOES NOT ALREADY EXIST, and that condition is
+        # load-bearing rather than an optimization. THIS ENDPOINT IS ALSO THE
+        # LIVENESS PING — "Registering and refreshing are the **same call**"
+        # (docs/consumers/aitrader.md §2). Spec §4.2 reasons entirely about
+        # REGISTRATION and never considered that the same route carries the
+        # heartbeat itself.
+        #
+        # A blanket refusal was measured end-to-end against a real server:
+        # remove a LIVE source's alert route, and its on-schedule pings start
+        # returning 422 — so `last_seen` freezes, the check drifts into
+        # `is_missed`, and the moment the route is restored the gateway
+        # delivers `[ALERT] heartbeat missed: daily-run` for a source that
+        # never stopped pinging. A registry misconfiguration becomes a
+        # FABRICATED outage, on the very source this feature exists to watch.
+        # The dead-man switch must never be the thing that invents the death.
+        #
+        # So the split is: a NEW check with no alert route is a mistake being
+        # made right now, by the party who can fix it, and is refused. An
+        # EXISTING check's refresh is a LIVENESS SIGNAL and is always accepted.
+        # A route removed AFTER registration is covered by the RUNTIME half of
+        # D2 (§4.3) — `alerts_undeliverable` degrades /healthz, and the check
+        # is left unmarked so it self-heals the moment the route returns.
+        #
         # NOT "at boot": checks arrive at runtime and persist across restarts,
         # so registration is this object's equivalent of boot. And a snapshot
         # cannot be the whole fix — a route can be removed AFTER a check is
         # registered — which is why `alerts_undeliverable` exists as well.
         #
+        # Read through the public per-source `list_for`, not the store's map:
+        # the same accessor `GET /v1/heartbeat/{source}` uses, already scoped
+        # to one tenant, so this cannot become a cross-tenant read.
+        #
         # `str(exc)` is safe: `RegistryError`'s message is authored in
         # `registry.py` and names identities, never URLs (hard rule #2).
-        try:
-            registry.route_for(app_id, "alert")
-        except RegistryError as exc:
-            raise HTTPException(
-                status_code=422,
-                detail=(f"cannot register a dead-man check: this app has no "
-                        f"route for alert-severity notifications, so a missed "
-                        f"check could never be delivered ({exc}). Add "
-                        f"routes: {{alert: <identity>}} to the registry"),
-            ) from exc
+        if not any(c.check_id == h.check_id for c in checks.list_for(app_id)):
+            try:
+                registry.route_for(app_id, "alert")
+            except RegistryError as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(f"cannot register a dead-man check: this app has no "
+                            f"route for alert-severity notifications, so a missed "
+                            f"check could never be delivered ({exc}). Add "
+                            f"routes: {{alert: <identity>}} to the registry"),
+                ) from exc
         try:
             check = checks.refresh(app_id, h.check_id, h.schedule, h.grace, h.tz)
         except (HeartbeatError, Exception) as exc:
@@ -1099,11 +1136,17 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             )
         if hb["alerts_undeliverable"]:
             reasons.append(
-                f"heartbeats: {hb['alerts_undeliverable']} dead-man alert(s) "
-                "could not be accepted for delivery since start — a source that "
-                "went silent was not reported on. CUMULATIVE and will not clear "
-                "while this process runs; `checks_undeliverable` is the live "
-                "signal. `GET /v1/deliveries` names which"
+                f"heartbeats: {hb['alerts_undeliverable']} dead-man alert "
+                "ATTEMPT(s) were not accepted for delivery since start — a "
+                "source that went silent was not reported on. This counts "
+                "ATTEMPTS, not distinct alerts: a check whose route stays "
+                "broken is deliberately re-attempted on EVERY scan so it "
+                "self-heals, so one unreported source contributes one count "
+                "per scan interval (~1440/day at the 60s default). "
+                "`checks_undeliverable` above is how many distinct CHECKS are "
+                "affected — read that for the size of the fault. CUMULATIVE "
+                "and will not clear while this process runs. "
+                "`GET /v1/deliveries` names which"
             )
         if hb["checks_orphaned"]:
             reasons.append(

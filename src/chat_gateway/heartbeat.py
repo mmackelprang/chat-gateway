@@ -269,11 +269,34 @@ class HeartbeatMonitor:
         #: refused for want of a route, and a notify deduped against an earlier
         #: outage's alert. Both return normally, so nothing else sees them.
         #:
-        #: CUMULATIVE and DEGRADING. Cumulative because an alert refused now is
-        #: not re-sent by a later scan once the check is eventually marked;
-        #: degrading because this names a guarantee BREAKING on aitrader's
-        #: contract surface — the exact opposite of `suppressed_opt_out`, which
-        #: names a guarantee WORKING and is correctly inert (CG-12).
+        #: ⚠ COUNTS ATTEMPTS, NOT DISTINCT ALERTS — and the docstring here said
+        #: otherwise until the CG-76 pre-merge review. It read: "CUMULATIVE and
+        #: DEGRADING. Cumulative because *an alert refused now is not re-sent by
+        #: a later scan once the check is eventually marked*". The italicised
+        #: half is FALSE, and §4.3's self-heal design is what falsifies it: a
+        #: refused alert leaves the check UNMARKED precisely so it re-fires, so
+        #: a permanently routeless check is re-attempted on EVERY scan. Measured
+        #: at the 60s default: one increment (and one `GET /v1/deliveries` line)
+        #: per scan — ~1440/day for ONE misconfigured check.
+        #:
+        #: What is true instead: this is the count of alert ATTEMPTS that were
+        #: not accepted for delivery. `checks_undeliverable` beside it is the
+        #: number of distinct checks in that state on the last scan, and is the
+        #: number an operator should read as "how big is this".
+        #:
+        #: STILL CUMULATIVE, STILL DEGRADING, and the reason is the second half
+        #: of the old sentence rather than the first: this names a guarantee
+        #: BREAKING on aitrader's contract surface — the exact opposite of
+        #: `suppressed_opt_out`, which names a guarantee WORKING and is
+        #: correctly inert (CG-12). A number that only ever grew while a source
+        #: was unmonitored is the honest shape for that, even when it grows a
+        #: thousand times for one fault; the re-attempt cadence it counts is
+        #: required by §4.3 and must not be retuned to make this number smaller.
+        #:
+        #: ⚠ PER ALERT ATTEMPT, never derived from `check.status` (spec §6b,
+        #: D4c). That shape is what closes door 6 — the 24h repeat that moved
+        #: zero /healthz fields — so "simplifying" it into a check-state
+        #: derivation looks like tidying and silently reopens it.
         #:
         #: A BARE INTEGER. No app id, no check id: /healthz is unauthenticated
         #: and CG-12 rejected metadata-only records on exactly that ground. The
@@ -302,6 +325,22 @@ class HeartbeatMonitor:
         Measured: a routeless `job-hunter` check suppressed `aiteam-harness`'s
         dead-man alert for 24h. That is the isolation instinct hard rules #4
         and #6 apply to inbound, and it costs one `try`.
+
+        ⚠ THE ISOLATION COVERS THE NOTIFY, AND ONLY THE NOTIFY. This docstring
+        used to promise, flatly, that one app's failure cannot strand another —
+        which overclaims what the per-check `try` delivers. SELECTION is still
+        shared fate: `due_alerts`'s comprehension calls `alert_due -> is_missed
+        -> deadline -> next_due`, which runs `parse_schedule`, `fromisoformat`,
+        `parse_duration` and `ZoneInfo` on the PERSISTED fields, and `_load`
+        validates none of them. So one corrupt row in `heartbeats.json` makes
+        selection raise before the loop is ever entered, and NO tenant is
+        notified on that scan.
+
+        That residue is deliberately left as-is here and is NOT a silent door:
+        the raise reaches `_run`, `scan_failures` and `consecutive_scan_failures`
+        move, `last_scan_error` is set and `/healthz` degrades — spec §2.11's
+        posture. Hardening selection itself is adjacent to CG-77 and is not
+        folded in here.
         """
         fired = self._store.due_alerts(self._repeat)
         accepted: list = []
@@ -341,11 +380,24 @@ class HeartbeatMonitor:
                 undeliverable += 1
                 if first_error is None:
                     first_error = exc
+        # COUNTERS BEFORE `mark_alerted`, and that ordering is a fix, not a
+        # style choice. `mark_alerted`'s `_save()` is UNGUARDED by design, so it
+        # can raise — and while it sat above these two lines, a scan in which an
+        # alert was genuinely lost AND the disk was full discarded the loss
+        # permanently: `alerts_undeliverable` never took the increment, and the
+        # `checks_undeliverable` GAUGE stuck at the previous scan's value, so
+        # /healthz went on reporting checks as unroutable against a registry
+        # that was fine. That is the exact class of dishonest number this row
+        # exists to remove (hard rule #5).
+        #
+        # The ordering constraint the comment below states is `mark_alerted`
+        # before the RE-RAISE. It says nothing about the counters, and nothing
+        # requires them to be second.
+        self.alerts_undeliverable += undeliverable
+        self.checks_undeliverable = undeliverable
         # Mark BEFORE re-raising: the alerts that DID get accepted must not be
         # re-sent because a different check failed.
         self._store.mark_alerted(accepted)
-        self.alerts_undeliverable += undeliverable
-        self.checks_undeliverable = undeliverable
         if first_error is not None:
             raise first_error
         self.last_scan_at = dt.datetime.now(dt.timezone.utc)
