@@ -60,7 +60,7 @@ printed in full (see below); `adapters/` — webhook (tier 1), chat_api + pubsub
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 359 passing.
+`python` is 3.13.7) — offline, 369 passing.
 
 ## Current status (2026-07-31)
 
@@ -497,6 +497,25 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
     gateway no response channel. **Doc-derived inference, never tested on either
     runtime.** Do not restate it as an observation. Full wording, with the
     add-ons/classic split: ADR-0001 §7.
-- Deploy target: `/srv/chat-gateway/` on the appserver (homelab conventions:
-  off-repo `.env` mode 600, SECRETS.md pointers, service doc + DASHBOARDS +
-  Homepage registration).
+- **Deploy target — this bullet named the WRONG HOST for the whole arc, corrected
+  2026-08-03 (CG-53).** It read *"`/srv/chat-gateway/` on the appserver (homelab
+  conventions: off-repo `.env` mode 600, SECRETS.md pointers, service doc +
+  DASHBOARDS + Homepage registration)"*, and `docker-compose.yml`'s header said
+  the same. That was the v0 intent and it was never revisited; the entire
+  production-readiness arc — spec, plan, and every queue row from CG-53 to CG-59
+  — targets the **NAS**, as a **TrueNAS custom app**. Two of the three things the
+  old wording implied are actively false there: a custom app's compose is
+  submitted over an API, so there is **no build context and no relative mount**,
+  and it is then **captured into the homelab repo** by a script whose secret
+  detection this project's key names defeat — which is the whole reason
+  `env_file.py` exists. The homelab conventions in the parenthetical **do still
+  apply**; only the host and the mechanism changed, which is precisely why a
+  silent path swap would have read as harmless.
+  **The on-box layout has ONE home and it is not here:** `docs/deploy/nas.md`
+  (§3 the tree, §5 the compose document, §6 what differs from the dev box). Do
+  not copy the tree into this file — four of its six state entries hold tenant
+  message bodies and the set has already grown twice, which is the same
+  two-homes-for-a-moving-fact trap as the test count above.
+  ⚠ **Nothing here is deployed.** That runbook's §10 *Executed* is empty by
+  design and is filled by CG-55; until it has entries, "deploy target" is an
+  intention, not a fact.
