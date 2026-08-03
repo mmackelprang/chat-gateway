@@ -1,9 +1,23 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-03 (Planner — **CG-74 + CG-75 specced and planned;
-CG-76 filed; CG-55 gains a dependency**). No `src/` change: spec, plan and this
-file only. Suite **324**, re-measured on `696a8cd` (`324 passed in 32.66s`), not
-copied from the row below.
+**Last updated:** 2026-08-03 (Builder — **CG-75 shipped (#58): the unguarded
+delivery-log write no longer storms Google**). Suite **324 → 333**, both ends
+re-measured with `python3 -m pytest -q`, neither copied from a row.
+
+**The storm was reproduced against a real kernel `PermissionError`, not a
+monkeypatch, at both ends of the fix:** 60 sends in 60 passes → **1** on the
+delivered path, and 1654 sends over 6000 passes → **5** (exactly `len(BACKOFF_S)`)
+on the retry path. The other half of the row mattered as much: `POST /v1/notify`
+**still returns 500 on a full disk** — verified on a real uvicorn server with the
+state tree chmod'd read-only — because `enqueue`'s journal `open` stays unguarded
+on purpose. The guard stops *already-accepted* work from storming; it must never
+hide a full disk, and it does not.
+
+⚠ **CG-55's CG-75 dependency is now satisfied.** CG-61's live-registry operator
+action and the D2 tailnet ACL still gate it.
+
+**Previously (Planner, same day): CG-74 + CG-75 specced and planned; CG-76 filed;
+CG-55 gained a dependency.**
 
 **Two rows, one root cause, two PRs.** CG-72's Builder filed CG-74 and CG-75
 separately and both were separately right — but they are the same unguarded
@@ -943,7 +957,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-69** · published-promise inventory (process control) | 📋 queued | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. No plan yet |
 | **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued · **decided** | Filed by CG-65's Builder (LOW). ✅ **Planner call made 2026-08-02: option (a), and the row's own argument against it was measurably wrong.** `strace` shows every append already issues the stat and the kernel already returns the mode in it — (a) costs **zero** extra syscalls in the steady state. (b) goes to CG-53 for the files (a) provably cannot reach; (c) rejected. Severity unchanged; the reason changed from *"defer, it is low"* to *"do it, it is free"*. Spec §6 |
 | **CG-72** · `/healthz` cannot see two of the four threads (rule #5) | ✅ done (#56) | `dispatcher` and `monitor` now publish `thread_alive`/`thread_started` + staleness and **degrade**. Proven by killing both threads in a **real** server through the documented hole — an exception raised inside `_run`'s own handler, not `.stop()`: on `main` `/healthz` answered `status: ok`, `reasons: []`; on the branch, `degraded` with one reason each. Suite **314 → 324**. Review found **0 HIGH, 3 MEDIUM, 6 LOW** — the sharpest, **M1**, was a reason string asserting *"neither completing nor raising"* on two blocks that **count no failures**, copied from siblings where a counter branch made it true; reworded, and the counters filed as **CG-74**. **M2**: `last_pass_at` stamped the pass **start** while three places defined it as completion — the plan's own "do not call `self._now()` twice" had silently changed the field's meaning. [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §2.6/§4 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part A |
-| **CG-75** · a raising `_finish` re-sends the same job every second, unbounded | 🚀 in-flight · ⚠ **BLOCKS CG-55** | **Pre-existing; surfaced by CG-72's review, not caused by it.** `_finish` calls `self._log.record(...)` **before** the job leaves `_jobs`, and the delivered path never advances `next_attempt_at`. `DeliveryLog.record` does raw `mkdir`/`open`/`write` with **no guard** — so an `OSError` there propagates out of `process_due` with the job still due, and the next pass **sends it again**, once a second, forever. **Measured 2026-08-03, not reasoned about: one message, one successful send, then 60 passes → 60 SENDS TO GOOGLE in 60 seconds.** Exactly the failure `_journal_write`'s docstring exists to prevent for the journal, on the one write path that never got it. Severity **HIGH on impact**; the *"low likelihood"* half is now recorded as **an artifact of never having been deployed** — hence the CG-55 dependency (user decision 2026-08-02). [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §3 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part A** |
+| **CG-75** · a raising `_finish` re-sends the same job every second, unbounded | ✅ done (#58) | **Pre-existing; surfaced by CG-72's review, not caused by it.** `_finish` calls `self._log.record(...)` **before** the job leaves `_jobs`, and the delivered path never advances `next_attempt_at`. `DeliveryLog.record` does raw `mkdir`/`open`/`write` with **no guard** — so an `OSError` there propagates out of `process_due` with the job still due, and the next pass **sends it again**, once a second, forever. **Measured 2026-08-03, not reasoned about: one message, one successful send, then 60 passes → 60 SENDS TO GOOGLE in 60 seconds.** Exactly the failure `_journal_write`'s docstring exists to prevent for the journal, on the one write path that never got it. Severity **HIGH on impact**; the *"low likelihood"* half is now recorded as **an artifact of never having been deployed** — hence the CG-55 dependency (user decision 2026-08-02). [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §3 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part A** |
 | **CG-74** · `Dispatcher` and `HeartbeatMonitor` count no failures — CG-68's F3, counter half | 📋 queued · **after CG-75** | **Filed by CG-72's Builder from its own pre-merge review (M1).** The liveness half shipped; the counter half did not. `retention.py` and `pubsub.py` both carry `*_failures` / `consecutive_*_failures` and a reason branch **above** their staleness branch — which is the only reason their *"wedged rather than erroring"* wording is true. ⚠ **Two `/healthz` strings now point at this row's absence in words**; building it means correcting them. ⚠ **The row's own claim is NARROWED by measurement (2026-08-03):** *"the staleness branch never fires at all"* holds for the **whole 72.5-minute backoff ladder** (measured worst staleness **1.0s** against a 600s budget over 400 passes) and then **stops holding** — at t=4350s the ladder exhausts, `_finish(job, "failed")` raises, and the retry path degenerates into CG-75's 1/second storm, which *does* trip staleness. The blindness is bounded and long, and what ends it is the failure getting worse. ⚠ Ships **after CG-75**, never concurrently — same two functions, same two strings. [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §5 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part B** |
 | **CG-76** · a failed heartbeat scan silently drops the dead-man alert | 📋 queued | **Filed by CG-74/CG-75's Planner, 2026-08-03, from the sibling sweep — and it is worse in kind than either.** `HeartbeatStore.due_alerts` marks the check (`status="missed"`, `last_alerted=now`) **under its lock, before** `_save()`, and `scan_once` only notifies what `due_alerts` returned. A raise anywhere downstream leaves the check marked alerted and the alert **never sent** — suppressed for the 24h repeat window, after which the next idle scan re-stamps `last_scan_at` and `/healthz` goes **green**. Measured, both variants; in the second `_save()` lands first, so the suppression is **on disk and survives a restart**. ⚠ **CG-75's fix does NOT rescue it** — measured separately: post-CG-75 the raise arrives from `enqueue`'s journal `open`, which is unguarded **by design**. Fixing it means reordering `due_alerts`/`scan_once` so persist and notify cannot succeed independently — a different design question, on a different class, with its own compensating-action decision. **The dead-man switch is aitrader's contract surface.** No plan yet. [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §2.4 |
 | **CG-71** · four `.start()`, zero `.stop()` — the runtime has no shutdown path | 📋 queued | CG-68's deferred L4, **measured and found broader**: not the retention row's missing cleanup but four threads with no shutdown path at all. ⚠ **`uvicorn.run()` does not return on SIGTERM** — a `try/finally` is a measured no-op. Depends on **CG-72** (same two classes; must not run concurrently). [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §5 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part B |
@@ -2297,7 +2311,7 @@ lesson with a `KeyError` instead of a false alarm.
 
 ---
 
-### CG-75 · A raising `_finish` re-sends the same job every second  🚀 in-flight · ⚠ **BLOCKS CG-55**
+### CG-75 · A raising `_finish` re-sends the same job every second  ✅ done (#58)
 
 | | |
 |---|---|
@@ -2306,6 +2320,46 @@ lesson with a `KeyError` instead of a false alarm.
 | **Touches** | `delivery.py::DeliveryLog.record`, `service.py::healthz` (body field + one reason + two string corrections) |
 | **Merge gate** | no |
 | **Docs** | [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §2.2/§3/§6 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part A**, Tasks A1–A5 |
+| **Shipped** | **#58**, 2026-08-03. Suite **324 → 333** |
+
+✅ **Shipped, and the storm was measured gone rather than asserted gone.** The
+same harness that produced the 60/60 above was re-run against the branch with a
+**real kernel `PermissionError` (errno 13)** — an unwritable directory, not a
+monkeypatched `Path.mkdir`, so what met the refusal was the real method:
+**60 sends → 1** on the delivered path, and **1654 sends over 6000 passes → 5**
+on the retry path, which is `len(BACKOFF_S)` exactly. `pending()` reaches 0 and
+`last_pass_at` stamps again, where pre-fix it was frozen at `None`.
+
+**The half that could have been broken silently was checked too:** on a real
+uvicorn server wired like `__main__ serve`, with the whole state tree chmod'd
+read-only mid-flight, `POST /v1/notify` **still returns 500**. `enqueue`'s
+journal `open` is untouched, so a genuinely full disk still hands the alert back
+to the consumer's fallback log. The in-flight job already accepted was delivered
+**once** across 20+ subsequent passes, `/healthz` went `degraded` with one
+`delivery log:` reason, and `GET /v1/deliveries` still answered `delivered` off
+the in-memory ring — which is the whole reason the guard sits below the ring
+append rather than around the call sites.
+
+Review found **0 HIGH, 2 MEDIUM, 0 LOW**, both fixed before merge and both about
+test fidelity rather than the fix. **M1** is the sharper one and is worth keeping:
+the two storm tests chmod'd the audit dir unwritable *before* the `DeliveryLog`
+existed, so on pre-fix code they raised out of `enqueue`'s first `record` and
+**never reached `process_due` at all** — red, but for the wrong reason, and
+therefore not a pin on this row's defect. Restructured to the measured sequence
+(enqueue succeeds, *then* the disk fills) and proven red-then-green by removing
+the guard in a working tree. **M2**: the reworded heartbeat `/healthz` string had
+no test while its delivery twin had one — a corrected rule-#5 string with no pin.
+
+A measured constraint fell out of M1 and now lives in the test helper's docstring:
+`Path.mkdir(parents=True, exist_ok=True)` on an **existing** directory does not
+raise even inside an unwritable parent (CPython returns early on `exist_ok and
+self.is_dir()`), so a mid-run break has to chmod the day **file**, not the
+directory. That is why the two helpers in `test_durability.py` inject the failure
+differently on purpose — do not unify them.
+
+⚠ **CG-74 and CG-76 remain open and neither is closed by this.** CG-76 in
+particular was measured *not* to be rescued: post-CG-75 the dead-man alert's drop
+arrives from `enqueue`'s journal `open`, which is unguarded by design.
 
 **Measured on `696a8cd`, suite 324, before anything was designed.** One enqueued
 notification, one successful send, then a full disk:
