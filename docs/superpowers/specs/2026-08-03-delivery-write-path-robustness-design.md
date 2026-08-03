@@ -417,9 +417,62 @@ Two supporting observations rather than one argument:
   scan failure are disk conditions that already set `journal_write_errors`,
   which already degrades cumulatively. What the new reason line adds is that it
   **names the dead-man switch**, which is the actionable half.
-- **The counter is not the fix.** CG-76 is. Until CG-76 lands, this counter is
-  the only thing standing between a silently-dropped aitrader alert and a green
-  `/healthz`.
+- **The counter is not the fix.** CG-76 is. ⚠ **The sentence that followed this
+  one was FALSE. See the correction immediately below — do not read the struck
+  text as this spec's position.**
+
+  > ~~Until CG-76 lands, this counter is the only thing standing between a
+  > silently-dropped aitrader alert and a green `/healthz`.~~
+
+#### ⚠ CORRECTION, 2026-08-03 — that absolute was false, and it shipped
+
+**What it said** is struck above, verbatim rather than deleted: *"this counter is
+the only thing standing between a silently-dropped aitrader alert and a green
+`/healthz`."*
+
+**Why it is wrong.** `scan_failures` is the only `/healthz` signal for a scan
+that **RAISES**. It is not a signal for *"a dropped dead-man alert"*, and the gap
+is not marginal — **three separate doors drop the alert without raising
+anything**, leaving `scan_failures` at `0` and `/healthz` at `ok`:
+
+| Door | Where | Raises? |
+|---|---|---|
+| a notify **refused for want of a route** — `_monitor_notify` catches `HTTPException` and only logs it | `service.py:294–300` | no |
+| the **retry ladder exhausts** — `_finish(job, "failed")` writes a log line and no counter moves | `delivery.py:351` | no |
+| the alert is **deduped** against a previous outage's alert, and `_monitor_notify` discards the return value | `service.py:285–289`, `heartbeat.py:231` | no |
+
+**How it was found**, recorded because the *how* is the reusable part. The first
+door was measured by **CG-74's Builder during that row's UAT**, and then found
+**independently** by that PR's pre-merge reviewer, reading `_monitor_notify`
+rather than running anything — logged as CG-74's finding **M2**. Neither found it
+by reviewing a diff: **the diff never contained the sentence it broke.** The
+Builder narrowed the claim where it lived in `heartbeat.py`, pinned it with
+`test_a_routeless_alert_is_dropped_without_raising_or_counting`, and deliberately
+did **not** edit this Planner artifact — correct on lanes. The remaining two
+doors were found by CG-76's Planner sweeping the path on purpose, and are
+measured in
+[`2026-08-03-dead-man-alert-loss-design.md`](2026-08-03-dead-man-alert-loss-design.md)
+§2.3 and §2.4.
+
+**What is true instead:**
+
+> `scan_failures` is the only `/healthz` signal for a scan that **raises**. A
+> scan can drop a dead-man alert without raising, and until CG-76 lands there is
+> **no** `/healthz` signal for those three paths at all.
+
+**What does NOT change.** The decision this section records — `scan_failures`
+cumulative **and** degrading — is unaffected, and CG-74's Builder validated it on
+a real server: at the moment of a real drop `consecutive_scan_failures` read `0`,
+so the cumulative counter was the only thing holding `degraded`. The rejected
+body-only alternative would have gone green on that run. **The counter was right;
+the sentence claiming it was sufficient was wrong.**
+
+⚠ Corrected in place rather than rewritten, per this repo's standing discipline
+for its own stale claims (`CLAUDE.md` passim). A silently-edited absolute teaches
+a reader that this repo's absolutes are safe to trust — which is the belief that
+produced this one. ⚠ This is the **fifth** merged claim to go false this week and
+be caught only because somebody independently went looking; it is logged as
+evidence on **CG-69**, the published-promise inventory, which still has no plan.
 
 ⚠ **This is the one item in this spec the user may want to overrule at
 checkpoint.** The conservative alternative is body-only until CG-76 lands. It is

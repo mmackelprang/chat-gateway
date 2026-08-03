@@ -1,8 +1,42 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-03 (Builder — **CG-74 shipped ([#60](https://github.com/mmackelprang/chat-gateway/pull/60)):
+**Last updated:** 2026-08-03 (Planner — **CG-76 specced + planned, and it is
+SIX doors, not the one it was filed as or the two the user widened it to**).
+Suite **345** on `main` at `d09a07c`, measured with `python3 -m pytest -q`, not
+copied from the row below.
+
+⚠ **The count moved four times, and that is the finding worth more than the
+number.** Door 1 was found by accident sweeping unguarded *writes* for CG-75.
+Door 2 by accident during CG-74's UAT, then independently by its reviewer.
+Doors 3 + 4 by this row's first deliberate sweep. **Doors 5 + 6 by an
+INDEPENDENT SECOND SWEEP of the same path, commissioned only because the brief
+asked whether two was the complete count** — and door 6 is the worst of the six.
+**Five of the six drop the alert without raising anything**, and on door 6 **not
+one field in the entire `/healthz` body moves.** Enumeration and measurements
+have one home: [spec](superpowers/specs/2026-08-03-dead-man-alert-loss-design.md)
+§2. Do not re-summarize it — link it.
+
+⚠ **A merged claim was false and is CORRECTED, not rewritten.** The delivery
+write-path spec §5 said `scan_failures` was *"the only thing standing between a
+silently-dropped aitrader alert and a green `/healthz`."* It is the only signal
+for a scan that **RAISES**; five of six doors raise nothing. The original wording
+is struck in place with how it was found and what is true instead. ⚠ **Fifth
+instance this week** — logged on **CG-69**, which still has no plan.
+
+⚠ **CG-77 filed** (clock skew silently disarms the dead-man switch) — measured,
+deliberately **not** folded in: it is a different defect class, preventing an
+alert from *becoming* due rather than dropping one that did.
+
+⚠ **CG-55 gains CG-76 as a dependency — and it was NOT there.** The user's
+2026-08-02 decision makes CG-76 a pre-deploy blocker on CG-55's list; measured
+2026-08-03, **no CG-55 row in this file named CG-76 at all** (`grep -n "CG-76"`
+returned nothing under either CG-55 entry). Added now, with the gap recorded
+rather than quietly closed — a decision that exists but is written down nowhere
+is the same failure mode CG-69 exists to catch.
+
+**Previously (Builder, same day): CG-74 shipped ([#60](https://github.com/mmackelprang/chat-gateway/pull/60)):
 `/healthz` can tell a WEDGED loop from a RAISING one, and a dropped dead-man
-alert no longer reads green**). Suite **333 → 345**, both ends re-measured with
+alert no longer reads green.** Suite **333 → 345**, both ends re-measured with
 `python3 -m pytest -q`, neither copied from a row.
 
 **Demonstrated on a real server against a real kernel `PermissionError`, not a
@@ -1002,7 +1036,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | 📋 queued | ⏸ **merge gate** — secret-handling path. Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
 | **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | ✅ done (#46) | Filed by CG-54's Builder. Shipped 2026-07-31 after CG-60 (#44) cleared the way. Item 4's "four fields degrade" was **five** — measured, and the row records both |
-| **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, **CG-75** (⚠ **added 2026-08-03, user decision** — this gateway has never run on a box with a real disk that can fill, so CG-75's *"low likelihood"* is an artifact of never having been deployed, and **CG-55 is the event that changes it**; a first deploy that can turn a full disk into an unbounded send storm against Google is a first deploy that should not happen), and ~~⚠ an **external homelab-repo prerequisite (D2)**~~ — ⏸ **D2's tailnet ACL is DEFERRED by the user, 2026-08-03. It no longer gates this row; the dependency is recorded, not deleted.** ⚠ **Paired with a second decision the same day that this row must BUILD: bind the published port to the LAN interface, not `0.0.0.0`** (both, with reasoning and residual, in the row). Part C |
+| **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, **CG-75**, **CG-76** (⚠ **the CG-76 dependency was NOT recorded on this row until 2026-08-03** — the user's 2026-08-02 pre-deploy-blocker decision existed, and `grep` found it named nowhere under either CG-55 entry. A first deploy whose dead-man switch has six ways to drop an alert with `/healthz` green is a first deploy that should not happen, and aitrader's contract surface is exactly that switch), **CG-75** (⚠ **added 2026-08-03, user decision** — this gateway has never run on a box with a real disk that can fill, so CG-75's *"low likelihood"* is an artifact of never having been deployed, and **CG-55 is the event that changes it**; a first deploy that can turn a full disk into an unbounded send storm against Google is a first deploy that should not happen), and ~~⚠ an **external homelab-repo prerequisite (D2)**~~ — ⏸ **D2's tailnet ACL is DEFERRED by the user, 2026-08-03. It no longer gates this row; the dependency is recorded, not deleted.** ⚠ **Paired with a second decision the same day that this row must BUILD: bind the published port to the LAN interface, not `0.0.0.0`** (both, with reasoning and residual, in the row). Part C |
 | **CG-56** · inbox delivery semantics: at-most-once → ack | 📋 queued | ✅ **APPROVED (D3)** — opt-in per request; default path unchanged. Part D |
 | **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
@@ -1010,12 +1044,13 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
 | **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | ✅ done (#52) | Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. Pre-merge review found a **data-loss race** in compact-on-drain — both producers journal the `open` before taking the queue lock, so `compact([])` could erase a record already on disk; fixed by recomputing survivors under the journal's own lock. Suite **247 → 268**. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
 | **CG-68** · time-bounded pruning of the inbound audit trail | ✅ done (#54) | **The first row that DELETES a tenant's content.** 30/7/0 via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`; the filename is the retention key, so pruning never opens a file holding message bodies. Amends `integration-guide.md:366`'s published *"never pruned"* (A4). ⚠ **New user decision A5** — the boot guard **refuses** rather than warns, and is stricter than the non-recursive glob requires (decision 4 below). Review found **0 HIGH, 6 MEDIUM, 6 LOW**; the sharpest was **M2** — the sweeper would have pruned `state/deliveries/` (ADR D7, permanent by decision), because the guard only fenced the quarantine and `state/deliveries` is its *sibling*. Suite **268 → 314**. Plan Tasks **10–14** |
-| **CG-69** · published-promise inventory (process control) | 📋 queued | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. No plan yet |
+| **CG-69** · published-promise inventory (process control) | 📋 queued · ⚠ **evidence list now at FIVE** | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. ⚠ **Instances 4 and 5 added 2026-08-03** — #4 CG-74 falsifying its own spec's `/healthz` strings, #5 CG-76 finding the delivery write-path spec §5's *"the only thing standing between a silently-dropped aitrader alert and a green `/healthz`"* to be false. **Every one was caught only because somebody independently went looking**, and #5 took two independent sweeps of the same code path to find its last two doors. **Still no plan** — deliberately not written by CG-76's Planner, which was told not to |
 | **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued · **decided** | Filed by CG-65's Builder (LOW). ✅ **Planner call made 2026-08-02: option (a), and the row's own argument against it was measurably wrong.** `strace` shows every append already issues the stat and the kernel already returns the mode in it — (a) costs **zero** extra syscalls in the steady state. (b) goes to CG-53 for the files (a) provably cannot reach; (c) rejected. Severity unchanged; the reason changed from *"defer, it is low"* to *"do it, it is free"*. Spec §6 |
 | **CG-72** · `/healthz` cannot see two of the four threads (rule #5) | ✅ done (#56) | `dispatcher` and `monitor` now publish `thread_alive`/`thread_started` + staleness and **degrade**. Proven by killing both threads in a **real** server through the documented hole — an exception raised inside `_run`'s own handler, not `.stop()`: on `main` `/healthz` answered `status: ok`, `reasons: []`; on the branch, `degraded` with one reason each. Suite **314 → 324**. Review found **0 HIGH, 3 MEDIUM, 6 LOW** — the sharpest, **M1**, was a reason string asserting *"neither completing nor raising"* on two blocks that **count no failures**, copied from siblings where a counter branch made it true; reworded, and the counters filed as **CG-74**. **M2**: `last_pass_at` stamped the pass **start** while three places defined it as completion — the plan's own "do not call `self._now()` twice" had silently changed the field's meaning. [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §2.6/§4 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part A |
 | **CG-75** · a raising `_finish` re-sends the same job every second, unbounded | ✅ done (#58) | **Pre-existing; surfaced by CG-72's review, not caused by it.** `_finish` calls `self._log.record(...)` **before** the job leaves `_jobs`, and the delivered path never advances `next_attempt_at`. `DeliveryLog.record` does raw `mkdir`/`open`/`write` with **no guard** — so an `OSError` there propagates out of `process_due` with the job still due, and the next pass **sends it again**, once a second, forever. **Measured 2026-08-03, not reasoned about: one message, one successful send, then 60 passes → 60 SENDS TO GOOGLE in 60 seconds.** Exactly the failure `_journal_write`'s docstring exists to prevent for the journal, on the one write path that never got it. Severity **HIGH on impact**; the *"low likelihood"* half is now recorded as **an artifact of never having been deployed** — hence the CG-55 dependency (user decision 2026-08-02). [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §3 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part A** |
 | **CG-74** · `Dispatcher` and `HeartbeatMonitor` count no failures — CG-68's F3, counter half | ✅ done ([#60](https://github.com/mmackelprang/chat-gateway/pull/60)) | **Filed by CG-72's Builder from its own pre-merge review (M1).** The liveness half shipped; the counter half did not. `retention.py` and `pubsub.py` both carry `*_failures` / `consecutive_*_failures` and a reason branch **above** their staleness branch — which is the only reason their *"wedged rather than erroring"* wording is true. ⚠ **Two `/healthz` strings now point at this row's absence in words**; building it means correcting them. ⚠ **The row's own claim is NARROWED by measurement (2026-08-03):** *"the staleness branch never fires at all"* holds for the **whole 72.5-minute backoff ladder** (measured worst staleness **1.0s** against a 600s budget over 400 passes) and then **stops holding** — at t=4350s the ladder exhausts, `_finish(job, "failed")` raises, and the retry path degenerates into CG-75's 1/second storm, which *does* trip staleness. The blindness is bounded and long, and what ends it is the failure getting worse. ⚠ Ships **after CG-75**, never concurrently — same two functions, same two strings. [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §5 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part B** |
-| **CG-76** · a failed heartbeat scan silently drops the dead-man alert | 📋 queued | **Filed by CG-74/CG-75's Planner, 2026-08-03, from the sibling sweep — and it is worse in kind than either.** `HeartbeatStore.due_alerts` marks the check (`status="missed"`, `last_alerted=now`) **under its lock, before** `_save()`, and `scan_once` only notifies what `due_alerts` returned. A raise anywhere downstream leaves the check marked alerted and the alert **never sent** — suppressed for the 24h repeat window, after which the next idle scan re-stamps `last_scan_at` and `/healthz` goes **green**. Measured, both variants; in the second `_save()` lands first, so the suppression is **on disk and survives a restart**. ⚠ **CG-75's fix does NOT rescue it** — measured separately: post-CG-75 the raise arrives from `enqueue`'s journal `open`, which is unguarded **by design**. Fixing it means reordering `due_alerts`/`scan_once` so persist and notify cannot succeed independently — a different design question, on a different class, with its own compensating-action decision. **The dead-man switch is aitrader's contract surface.** No plan yet. [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §2.4 |
+| **CG-76** · the dead-man switch's SIX doors to a silently-dropped alert | 📋 queued · ✅ **specced + planned 2026-08-03** · ⚠ **WIDENED by user decision** | **Filed as ONE ordering defect. The user widened it to TWO. It is SIX**, and the count moving four times is the finding worth more than the number — doors 5 and 6 were found only by an **independent second sweep** commissioned because the brief asked whether two was complete. **Five of the six raise nothing**, so `scan_failures` stays `0` and `/healthz` answers `ok`; on **door 6** — a failed 24h REPEAT alert — **not one field in the whole body moves**, because `heartbeats.missed` was already `1` from the first fire. ⚠ **`missed` is not a signal and never was:** measured as a control, it moves *identically* on a DELIVERED alert and a dropped one. **Three of the six need no fault at all** — no disk error, no misconfiguration, no exception. Shared cause: `due_alerts` records *"I have alerted"* before anything is alerted — a promise about the future persisted as a statement about the past. Fix moves the mark to `mark_alerted`, **after** the alert is accepted into the durable queue, taking this path from at-most-once to **at-least-once** — the posture `_finish`, `_journal_write` and `Inbox._audit` each already took, quoted rather than re-decided. ⚠ **CG-74's `scan_failures` keeps degrading but its ORIGINAL justification EXPIRES** (the weaker surviving one is stated, not the strong one re-quoted) and **its UAT scenario now produces a better result on purpose** — the alert gets delivered. ⚠ **Four new degrade inputs on an endpoint consumers alarm on** — flagged for the user, not slipped in. **CG-55 depends on this** (pre-deploy blocker, user decision 2026-08-02 — ⚠ which no CG-55 row actually recorded until now). [spec](superpowers/specs/2026-08-03-dead-man-alert-loss-design.md) · [plan](superpowers/plans/2026-08-03-dead-man-alert-loss.md) **Part A** |
+| **CG-77** · clock skew silently disarms the dead-man switch | 📋 queued | **Filed by CG-76's Planner, 2026-08-03**, from that row's independent second sweep. Every timestamp `Check` reasons about is **persisted**, so a clock that was wrong once stays wrong forever: a host whose clock ran ahead when `refresh()` wrote, then corrected back, leaves a check that **never becomes due** — measured, `is_missed=False` a full day past the real deadline; and a future `last_alerted` suppresses the alert on a check that IS missed. ⚠ **`/healthz` publishes no deadline at all**, so nothing says so — the only view is the authenticated `GET /v1/heartbeat/{source}`. ⚠ **Deliberately NOT folded into CG-76**: those six doors drop an alert that became due, this stops it **becoming** due, and CG-76's fix does nothing for it. Needs a design decision (clamp / reject / re-stamp / degrade-and-leave) before a plan. No plan yet. [spec](superpowers/specs/2026-08-03-dead-man-alert-loss-design.md) §2.9 A |
 | **CG-71** · four `.start()`, zero `.stop()` — the runtime has no shutdown path | 📋 queued | CG-68's deferred L4, **measured and found broader**: not the retention row's missing cleanup but four threads with no shutdown path at all. ⚠ **`uvicorn.run()` does not return on SIGTERM** — a `try/finally` is a measured no-op. Depends on **CG-72** (same two classes; must not run concurrently). [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §5 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part B |
 | **CG-73** · ~~five~~ **three** print/persist sites bypass CG-29's allowlist | 📋 queued · ⚠ **narrowed 2026-08-03** | Filed by CG-71's Planner, **not folded in**. `retention.py` uses `describe_exception`; `delivery.py` and `heartbeat.py` interpolate a raw `{exc}`. **Drift in a hard-rule-#2 control, not a proven leak** — stated at that confidence. `test_error_surfaces.py` cannot see it: it reads construction sites of *marked* classes; these are print sites of unmarked ones. ⚠ **CG-74 closes TWO of the five as a side effect** — it rewrites both `_run` handlers to render `last_pass_error` / `last_scan_error` through `describe_exception`, and those handlers' prints are two of this row's sites. **The residue is three, all in `delivery.py`:** `_journal_write`'s print, and the **two that persist into the delivery log** (`process_due`'s `"attempt {n}: {exc}"` and `_finish`'s `"gave up after {n} attempts: {exc}"`) — which are the sharper two anyway, because they reach disk rather than a console. Counted down here rather than left at five: a count with two homes is this repo's own recorded failure mode. ⚠ **The *"not a proven leak"* above is now scoped to these three.** For the **two CG-74 closed** it was settled the other way on 2026-08-03 — measured, `main` vs branch, one home for the measurement and it is CG-74's row. No plan yet. CG-71 spec §7 |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
@@ -1049,6 +1084,20 @@ priority; Planner appends), so the dependency is recorded in three places instea
 CG-55's own row, CG-75's row, and here. **CG-74 must follow CG-75** — same two
 functions, same two `/healthz` strings, never concurrently, the same constraint
 CG-71/CG-72 carried.
+
+⚠ **A third, added 2026-08-03: CG-76 must precede CG-55**, for the same
+filed-after-the-row-it-blocks reason, and the rows are again **not reshuffled**.
+This one is worse than the other two, because **the dependency was decided by the
+user on 2026-08-02 and then written down nowhere** — measured 2026-08-03,
+`grep -n "CG-76"` named it under neither CG-55 entry. Now recorded in CG-55's
+row, CG-76's row, and here. **CG-76 must also follow CG-74** — same class, same
+two counters, same `/healthz` strings, and CG-76 *rewrites* what CG-74's
+`scan_failures` reason claims. CG-74 is done, so this is satisfied.
+
+⚠ **CG-77 does NOT gate anything** and is explicitly **not** a CG-55 blocker.
+It is a real measured defect in the same file, filed rather than folded in, and
+the user may well want it before a deploy — but that is a decision to take, not
+one Planner has taken.
 
 - **CG-60 first.** Docs-only, no dependencies — and
   `docs/consumers/aitrader.md` currently tells that tenant's operator something
@@ -2160,6 +2209,24 @@ carelessness — each change was correct in its own file:
 | 1 | **#45 / CG-54** — journalled bodies | *"no body text of yours is ever written anywhere"* | `docs/consumers/aitrader.md:217` |
 | 2 | **#45 / CG-67** — bodies moved into `state/` | `.gitignore`'s coverage: the ignore rule tracked where bodies **used to be** | `.gitignore` |
 | 3 | **CG-68's prune** — *would have* | *"never pruned"* / *"the only copy"* | `integration-guide.md:366`, `:382`, **and a `/healthz` string** |
+| 4 | **CG-74** — the counters it added | two `/healthz` reason strings that hedged *"neither completing nor raising"* on blocks that counted nothing | `service.py`, its own spec |
+| 5 | **CG-74 again**, found by **CG-76** | *"this counter is **the only thing** standing between a silently-dropped aitrader alert and a green `/healthz`"* | `2026-08-03-delivery-write-path-robustness-design.md:421` |
+
+⚠ **Instances 4 and 5 added 2026-08-03 by CG-76's Planner.** Instance 5 is the
+sharpest yet and extends this row's thesis in a direction the original three did
+not reach:
+
+- The false absolute was **written by a Planner in a spec**, then **measured false
+  by that row's own Builder during UAT**, then found **independently again** by
+  that PR's reviewer reading the code — and **still shipped**, because the
+  Builder correctly stayed in its lane and did not edit a Planner artifact. **The
+  process worked and the claim still went out false.** An inventory is what
+  routes that finding back to the artifact.
+- **Five of the six doors CG-76 then found raise nothing at all**, so the very
+  counter the sentence was defending could not have seen them.
+- ⚠ **It took TWO independent sweeps of the same code path to find the last two
+  doors.** The first deliberate sweep confidently enumerated four. That is the
+  strongest available argument that *"someone will notice"* is not a control.
 
 **None was caught by reviewing the diff, because the diff never contained the
 sentence it broke.** Instance 3 was caught only because ADR-0002 went looking —
@@ -2621,69 +2688,215 @@ which is the lossy-on-purpose half of spec §5.
 
 ---
 
-### CG-76 · A failed heartbeat scan silently drops the dead-man alert  📋 queued
+### CG-76 · The dead-man switch's SIX doors to a silently-dropped alert  📋 queued · ✅ **specced + planned 2026-08-03**
 
 | | |
 |---|---|
-| **Origin** | filed by CG-74/CG-75's Planner, 2026-08-03, from the sibling-write sweep the brief asked for |
-| **Depends on** | nothing. **Not fixed by CG-75** — measured, see below |
-| **Touches** | `heartbeat.py::HeartbeatStore.due_alerts` + `HeartbeatMonitor.scan_once` (ordering), probably `service.py` |
-| **Merge gate** | no plan yet — **and it needs a design decision before one is written** |
-| **Docs** | [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §2.4 |
+| **Origin** | filed as **one ordering defect** by CG-74/CG-75's Planner, 2026-08-03. ⚠ **WIDENED by the user to "both doors"**, then found by this row's own sweeps to be **six** |
+| **Depends on** | nothing. **Not fixed by CG-75** — measured. **CG-55 depends on THIS** |
+| **Touches** | `heartbeat.py` (`due_alerts` split, `scan_once`, counters, `list_all`), `service.py` (`_monitor_notify`, `refresh_heartbeat`, `/healthz` body + reasons), `delivery.py` (`_finish` counter) |
+| **Merge gate** | no — ⚠ **but it adds FOUR degrade inputs to an endpoint consumers alarm on**, which CG-72's own comment calls *"a decision, not a wording fix"*. Flagged for the user at checkpoint, not slipped in |
+| **Pre-deploy blocker** | **yes** (user decision 2026-08-02) |
+| **Docs** | [spec](superpowers/specs/2026-08-03-dead-man-alert-loss-design.md) · [plan](superpowers/plans/2026-08-03-dead-man-alert-loss.md) **Part A** |
 
-**The sweep found four unguarded write sites outside `journal.py`. One is
-CG-75, one is deliberate, and this is the third.**
+#### ⚠ The count moved four times, and that is worth more than the number
 
-| Site | Guarded? | Verdict |
+| Sweep | Found | How |
 |---|---|---|
-| `delivery.py:95` — `DeliveryLog.record` | ❌ | **CG-75** |
-| `inbox.py:297` — `Inbox._quarantine` | ✅ counts `quarantine_write_errors` | fine |
-| `inbox.py:317` — `Inbox._audit` | ❌ | **deliberate — do not "fix"** |
-| `heartbeat.py:121` — `HeartbeatStore._save` | ❌ | **this row** |
+| accident, week 1 | **door 1** | CG-76's filing Planner, sweeping unguarded **writes** for CG-75 — looking at something else |
+| accident, week 2 | **door 2** | CG-74's Builder during UAT, then **independently** by its pre-merge reviewer reading the code |
+| deliberate sweep #1 | **doors 3, 4** + the batch amplifier | this row's Planner, looking on purpose |
+| **deliberate sweep #2** | **doors 5, 6** + 2 adjacent findings | an **independent** re-sweep of the same path, commissioned *only* because the brief asked whether two was the complete count |
 
-`Inbox._audit` is unguarded on purpose: it is the first statement of `put()`,
-whose own comment states the posture — a reply the gateway cannot persist must
-**not** be acked, so the raise travels back up the Pub/Sub dispatch path, the
-message is left unacked, and **Google redelivers it**. Raising is honest there
-because there is a retry channel.
+**Four rounds of looking produced four different answers.** The row would have
+shipped a four-door fix and left door 6 — the worst of them — standing. This is
+**CG-69's thesis as evidence rather than argument**.
 
-**Here there is none, and the ordering is what does the damage.**
-`HeartbeatStore.due_alerts` sets `status = "missed"` and `last_alerted = now`
-**under its lock, before** calling `_save()`; `HeartbeatMonitor.scan_once` only
-notifies what `due_alerts` **returned**. So a raise anywhere downstream leaves
-the check marked alerted and the alert never sent. Measured:
+#### The six doors — every one measured, none reasoned about
+
+All six produce the identical outcome: **a registered dead-man alert is never
+delivered and `GET /healthz` answers `status: ok`, `reasons: []`.**
+
+| # | Door | file:line | Raises? | Any `/healthz` field? |
+|---|---|---|---|---|
+| 1 | the **mark lands before the alert** — `status="missed"` + `last_alerted` set, then `_save()`, all before `scan_once` notifies | `heartbeat.py:159–165` | yes | `scan_failures` — **the only visible door** |
+| 2 | **route refusal never re-raises** — `except HTTPException` logs and falls through | `service.py:299–300` | **no** | none |
+| 3 | **retry ladder exhausts** — `_finish(job,"failed")` records and counts nothing | `delivery.py:351`, `:389` | **no** | none |
+| 4 | **deduped** against the previous outage's alert; return value discarded | `service.py:285–289`, `heartbeat.py:231` | **no** | none |
+| 5 | **source left the registry** — check vanishes from the `/healthz` census while still scanned and still failing | `service.py:443` | **no** | `checks: 1 → 0` (worse than none) |
+| 6 | **the 24h REPEAT alert** — `missed` was already `1`, so nothing moves | `service.py:512` | **no** | ⚠ **NOTHING AT ALL** |
+
+⚠ **Three of the six need no fault of any kind** — no disk error, no
+misconfiguration, no exception, healthy disk, default config. Doors 3, 4 and 6.
+
+⚠ **Door 4 is not the exotic one it sounds like.** `DEFAULT_DEDUPE_WINDOW_S` is
+3600s; it bites any check whose `schedule + grace < 1h` — e.g. an
+`every:5m`/`5m` check. Measured: a source died, was alerted on, **recovered and
+refreshed** (which correctly clears `last_alerted`), then died **again** inside
+the hour. **Two distinct outages, one alert.** The second death — the one a
+real-money system most needs — was never announced.
+
+⚠ **Door 6 is the worst and was invisible to the first deliberate sweep.**
+```
+repeat scan -> 1 fired; adapter.attempts=6; sent still 1
+delivery log tail: {..."status":"failed","detail":"gave up after 5 attempts"}
+FIELDS THAT CHANGED (excluding clock-driven timestamps):
+  (NONE — literally nothing moved)
+```
+
+#### ⚠ `heartbeats.missed` is not a signal, and never was — the control that proves it
+
+A **successfully delivered** alert produces the *identical* `/healthz` diff to a
+dropped one: `missed: 0 → 1` plus liveness timestamps. It reports check *state*,
+never whether anyone was told; it is inert; and on door 6 it does not move at
+all. **No fix in this row leans on it, and it must stay inert** — promoting it
+would alarm on the dead-man switch working correctly, the mistake
+`suppressed_opt_out` stands as precedent against.
+
+#### Two amplifiers, and they are not doors
+
+- **Cross-tenant stranding.** `scan_once`'s loop has no `try` inside it, so one
+  app's failing notify abandons every later check — all already marked. Measured
+  with three tenants: a routeless `job-hunter` check **suppressed
+  `aiteam-harness`'s alert entirely** for 24h, and the next scan fired **zero**.
+  Fixed by marking **per check**, an isolation argument of the kind hard rules
+  #4 and #6 already apply to inbound.
+- **`scan_failures` counts per SCAN, not per ALERT.** Three lost alerts, **one**
+  increment. The existing reason's *"at least one"* is accurate and materially
+  understates it.
+
+#### The shared cause, and the fix shape
+
+> **`due_alerts` records *"I have alerted"* at a moment when nothing has been
+> alerted** — a promise about the future persisted as a statement about the past.
+
+Every door is a different way for the future not to arrive; doors 5 and 6 are two
+ways for `/healthz` not to notice even so. The same defect class CG-65 named in
+its own title — *replace the promise before deleting it* — which is why six doors
+are one row.
+
+**D1: the mark moves to `mark_alerted`, after the alert is ACCEPTED into the
+durable queue** (`emit_notification` returned `enqueued`, i.e. the journal `open`
+landed). That is **the same seam `POST /v1/notify` already gives an external
+consumer with its 202** — the anomaly was the internal caller getting a weaker
+contract than a paying one.
+
+⚠ **This moves the dead-man path from at-most-once to AT-LEAST-ONCE, and that
+was checked against precedent rather than decided fresh** — `_finish`'s
+mid-flight window (*"losing an alert is the worse failure"*), `_journal_write`
+(*"at most one duplicate on the next boot"*), and `Inbox._audit` (unacked, so
+Google redelivers). A duplicate *"heartbeat missed"* costs one redundant phone
+notification; a dropped one costs the whole feature, silently, for 24h.
+
+**D2** refuses at **registration** (422 — not "at boot": checks arrive at
+runtime, so registration is this object's boot) **and** counts at runtime, since
+a route can be removed *after* a check is registered. ⚠ `aiteam-harness` and
+`job-hunter` have **no `routes:` block at all** in `registry.example.yaml`, so
+door 2 is live for two of three consumers. **D3** counts terminal delivery
+failures. **D4** drops the dead-man `dedupe_key` entirely — since 86400s > 3600s,
+the deduper could *never* suppress a real duplicate there, so every suppression
+it performed was a false positive.
+
+#### ⚠ What this does to CG-74, stated loudly because the brief asked
+
+- **`scan_failures` KEEPS degrading — but its original justification EXPIRES.**
+  It read *"a raise leaves the check marked alerted and the alert never sent."*
+  D1 falsifies exactly that: the check is no longer marked, so the next scan
+  re-fires it and a failed scan becomes **recoverable** — the very property that
+  makes `pass_failures` inert. It stays degrading **on the weaker reason, which
+  is stated rather than the strong one being re-quoted** (`CLAUDE.md`'s
+  `__cg_action__` discipline). Flipping it to inert is defensible and is
+  **deliberately left as a separate user decision.**
+- ⚠ **CG-74's own UAT scenario now produces a different, better result** —
+  `chmod a-w` on the state dir with a check going missed **delivers the alert**,
+  `scan_failures` still reaches 1, and the residual risk is a duplicate at next
+  boot rather than a loss. **Not a regression.** Any test asserting *"zero
+  notifications sent"* under that fault asserts the old behaviour and is listed
+  for update.
+- **`test_a_routeless_alert_is_dropped_without_raising_or_counting` is SUPPOSED
+  to go red.** Its own docstring says so. The plan rewrites it into the positive
+  assertion and keeps the history; it must not be loosened.
+
+#### Rule #5 — every new counter is a deliberate degrade input, or deliberately not
+
+| Counter | Shape | Degrades? |
+|---|---|---|
+| `heartbeats.alerts_undeliverable` | cumulative | **yes** — names a guarantee BREAKING, the opposite of `suppressed_opt_out` |
+| `heartbeats.checks_undeliverable` | gauge | **yes** — the live, self-healing signal |
+| `heartbeats.checks_orphaned` | gauge | **yes** — ⚠ the one to **demote to body-only** if the user wants fewer than four |
+| `delivery.delivery_failures` | cumulative | **yes** — same family as `expired_at_boot` / `unroutable_at_boot` |
+| `heartbeats.missed` | gauge | **NO — unchanged, and must stay so** |
+
+⚠ **All bare integers.** `/healthz` is unauthenticated and CG-12 rejected
+metadata-only records on exactly that ground; the identifying detail is on the
+authenticated `GET /v1/deliveries`, which `_monitor_notify` already writes to.
+
+⚠ **`alerts_undeliverable` counts per ALERT ATTEMPT and never reads
+`check.status`.** That shape is what closes door 6 and is load-bearing —
+"simplifying" it into a derivation from check state looks like tidying and
+silently reopens it. Pinned by a test.
+
+#### Deliberately scoped OUT
+
+- **Clock skew** — persisted future timestamps mean a check that never becomes
+  due (`heartbeat.py:92–100`; `/healthz` publishes no deadline at all). Measured,
+  filed as **CG-77**. A different defect class: it prevents an alert *becoming*
+  due rather than dropping one that did.
+- **`thread_started` gating every `delivery` reason** (`service.py:882–906`) —
+  CG-72's deliberate, documented trade-off. Residue noted there, **not reopened**.
+- **What happens to an orphaned check's persisted data** — counted, not resolved.
+  A former tenant's app id under the state dir is a lifecycle *and* privacy
+  question, and its own row.
+- **CG-73's raw `{exc}` print sites in `heartbeat.py`** — untouched.
+
+---
+
+### CG-77 · Clock skew silently disarms the dead-man switch  📋 queued
+
+| | |
+|---|---|
+| **Origin** | filed by **CG-76's Planner**, 2026-08-03, from that row's independent second sweep. **Measured, not reasoned about** |
+| **Depends on** | nothing. Independent of CG-76 — different defect class, same file |
+| **Touches** | `heartbeat.py` (`Check.next_due` / `is_missed` / `alert_due`), probably `/healthz` |
+| **Merge gate** | no plan yet — **it needs a design decision first** |
+
+**Every timestamp this class reasons about is PERSISTED, so a clock that was
+wrong once stays wrong forever.** `last_seen` is written at `refresh()`
+(`heartbeat.py:138`) and `last_alerted` inside the marking path (`:162`), both
+from `dt.datetime.now(utc)`. `is_missed` compares against
+`last_seen + period + grace` and `alert_due` against `now - last_alerted`
+(`:92–100`). A host whose clock ran **ahead** when one of those wrote — a VM
+resumed from snapshot, a pre-NTP boot, container drift — and then corrected
+backwards leaves a check that **never becomes due**:
 
 ```
-D. HeartbeatStore._save() raises inside due_alerts
-  notifications sent   : 0
-  check.status in mem  : missed
-  check.last_alerted   : '2026-08-03T12:03:20+00:00'
-  --- disk recovers, next scan ---
-  alerts fired now     : 0
-  last_scan_at         : stamps again   <- /healthz goes green
-  ==> MISSED ALERT SILENTLY DROPPED: True
+last_seen=2026-07-27T12:00 (3 days ahead)  deadline=2026-07-27T12:10  now=2026-07-24T12:00
+  at now +1h: is_missed=False  due_alerts fired=0
+  at now +1d: is_missed=False  due_alerts fired=0
+  at now +2d: is_missed=True   due_alerts fired=1
+last_alerted a month in the future, check IS missed (is_missed=True): due_alerts fired=0
 ```
 
-`alert_due` then returns `False` for the whole `DEFAULT_REPEAT_S` window — **24
-hours** — and the next idle scan re-stamps `last_scan_at`, so nothing anywhere
-says an alert was lost. The durable variant is worse: `_save()` lands, then
-`_notify` → `emit_notification` → `enqueue` raises (`_monitor_notify` catches
-`HTTPException` only), so **the suppression is on disk and survives a restart**.
+**Nothing on `/healthz` says so.** `checks` shows the check, `missed` stays `0`,
+`last_scan_at` stays fresh, `status: ok`. ⚠ **`/healthz` never publishes a
+deadline at all** — the only place one is visible is the **authenticated**
+`GET /v1/heartbeat/{source}` (`service.py:359`), so an operator cannot see the
+disarming even if they suspect it.
 
-⚠ **CG-75 does not rescue it, and that was measured rather than assumed.** With
-the audit write guarded and only the journal failing, the raise arrives from
-`Dispatcher.enqueue`'s journal `open` — unguarded **by design**, because a job we
-cannot persist must be refused. Same drop, different door.
+⚠ **Deliberately NOT folded into CG-76**, and the reason is the defect class, not
+the size. CG-76's six doors all **drop an alert that became due**; this one stops
+it **becoming due**. CG-76's fix — moving the mark to after acceptance — does
+nothing here, because `due_alerts` never selects the check in the first place.
+Folding it in would have been the scope creep this queue keeps correcting.
 
-**Why it is a row and not a fold-in.** Fixing it means reordering `due_alerts` /
-`scan_once` so the persist and the notify cannot succeed independently — a
-compensating-action decision (roll `last_alerted` back? notify first and persist
-after? accept a duplicate alert over a dropped one?) on a different class from
-`_finish`'s. **The dead-man switch is aitrader's contract surface**, and one that
-dies quietly is the worst available failure of that feature —
-`HeartbeatMonitor.is_alive`'s own docstring says so about the neighbouring hole.
-Until this lands, CG-74's `scan_failures` counter is the only thing between a
-dropped alert and a green `/healthz`.
+**The design decision this needs before a plan:** a bounded-future sanity check
+on load or on write (clamp? reject? re-stamp? degrade `/healthz` and leave the
+data alone?), and whether the same treatment is owed to the delivery journal's
+`next_attempt_at`, which `_parse_ts` (`delivery.py:70`) already handles the
+other way — it falls back to `now` on a bad timestamp, erring toward *replaying*,
+which is the safe direction and may be the precedent to copy.
+
+No plan yet. [spec](superpowers/specs/2026-08-03-dead-man-alert-loss-design.md) §2.9 A
 
 ---
 
@@ -2965,7 +3178,7 @@ as unnoticed:
 
 | | |
 |---|---|
-| **Depends on** | **CG-53** (artifacts), **CG-54** (durability), **CG-75** (the storming write path), **CG-61** (in the LIVE registry — D1), and ~~⚠ an **external prerequisite in the homelab repo: the drafted tailnet ACL, applied (D2)**~~ — ⏸ **DEFERRED by the user 2026-08-03, paired with a bind-to-LAN design decision this row must honour: see *"Two user decisions, 2026-08-03"* below.** No external prerequisite remains |
+| **Depends on** | **CG-53** (artifacts), **CG-54** (durability), **CG-75** (the storming write path), **CG-76** (⚠ **added 2026-08-03 — the dependency was NOT recorded here.** The user's 2026-08-02 pre-deploy-blocker decision existed; measured the same day, `grep -n "CG-76"` named it nowhere under either CG-55 entry. aitrader's whole gateway relationship is the dead-man switch, and that switch has **six** measured ways to drop an alert while `/healthz` answers `ok` — three of them needing no fault at all. A first deploy should not ship that), **CG-61** (in the LIVE registry — D1), and ~~⚠ an **external prerequisite in the homelab repo: the drafted tailnet ACL, applied (D2)**~~ — ⏸ **DEFERRED by the user 2026-08-03, paired with a bind-to-LAN design decision this row must honour: see *"Two user decisions, 2026-08-03"* below.** No external prerequisite remains |
 | **Touches** | `docs/deploy/nas.md` § *Executed* only. The homelab-side artifacts land in **that** repo |
 | **Merge gate** | ⏸ **YES — deploy + secret-handling path** |
 | **Spec / plan** | [spec §4.3 + §4.3.1](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part C + standing rules](superpowers/plans/2026-07-31-production-readiness-arc.md) |
