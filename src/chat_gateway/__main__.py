@@ -4,10 +4,10 @@
     python3 -m chat_gateway mint-key    # generate a new per-app API key
     python3 -m chat_gateway check       # load registry, print healthz material
 
-Env (see .env.example): CHAT_GATEWAY_REGISTRY, CHAT_GATEWAY_PORT,
-CHAT_GATEWAY_INBOX_DIR, CHAT_GATEWAY_INBOX_RETENTION_DAYS,
-GATEWAY_ENABLE_PUBSUB, CHAT_GATEWAY_PUBSUB_SUBSCRIPTION,
-GOOGLE_APPLICATION_CREDENTIALS.
+Env (see .env.example): CHAT_GATEWAY_ENV_FILE, CHAT_GATEWAY_REGISTRY,
+CHAT_GATEWAY_PORT, CHAT_GATEWAY_INBOX_DIR, CHAT_GATEWAY_INBOX_RETENTION_DAYS,
+CHAT_GATEWAY_STATE_DIR, GATEWAY_ENABLE_PUBSUB,
+CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, GOOGLE_APPLICATION_CREDENTIALS.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from .auth import mint_key
+from .env_file import EnvFileError
 from .inbox import Inbox
 from .journal import Journal
 from .log_redaction import install_url_redaction
@@ -35,6 +36,18 @@ def build_runtime():
     # through the same logger. Idempotent, and it redacts rather than silencing;
     # `log_redaction` has the reasoning.
     install_url_redaction()
+
+    # Deployment seam (hard rule #2). On the NAS every secret lives in an
+    # off-repo file mode 600 that the compose document only NAMES, so nothing
+    # secret is ever in the compose — see env_file.py for the capture-script
+    # suffix gap that makes this structural rather than stylistic. Before
+    # load_registry, which resolves env-indirected names. Unset on the dev box
+    # and in tests, where this is a no-op.
+    env_file = os.environ.get("CHAT_GATEWAY_ENV_FILE", "")
+    if env_file:
+        from .env_file import load_env_file
+
+        print(f"env: loaded {load_env_file(env_file)} key(s) from {env_file}", flush=True)
 
     registry = load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml"))
     state_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
@@ -125,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         registry, inbox, adapters, subscriber, state_dir, sweeper = build_runtime()
-    except RegistryError as exc:
+    except (RegistryError, EnvFileError) as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
 

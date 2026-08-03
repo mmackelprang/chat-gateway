@@ -1744,7 +1744,8 @@ shapes, so the assurance is worth exactly nothing here. Read the file. (Running
 > not restate them here.
 > ⚠ **Read that section before building Part C regardless** — it carries a second
 > decision of the same day that this Part must BUILD: **the published port binds
-> the LAN interface, not `0.0.0.0`.** The custom-app JSON below still says
+> the LAN interface, not `0.0.0.0`.** The custom-app JSON **above** — in Part A,
+> under §A6's *§5 The compose document*, not in this Part — still says
 > `"ports": ["8085:8085"]`; that is the `0.0.0.0` form and it is what changes.
 > **(b) is untouched and still a STOP.**
 
