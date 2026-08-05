@@ -532,7 +532,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         }
 
     @app.get("/healthz")
-    def healthz():
+    def healthz(strict: bool = False):
         """Honest health: real resolvability + real liveness — never a
         hardcoded OK (claude-mem pilot lesson; aiteam plan F18 gate 2).
 
@@ -540,6 +540,38 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         make this endpoint degraded must be able to say so in words, because an
         operator seeing "degraded" and no reason has to diff the body against a
         known-good copy to learn anything.
+
+        **`?strict=1` returns 503 when `reasons` is non-empty, 200 otherwise —
+        with a BYTE-IDENTICAL body** (CG-59). The plain form always answered
+        200, which is correct for a hand-run gateway (a human reads the JSON)
+        and a real gap for a deployed one: a Homepage `siteMonitor` tile and a
+        container health check both judge by STATUS CODE, so the tile reads
+        green while inbound is dead. That is the claude-mem failure rule #5
+        exists because of, occurring one layer up — against an endpoint that is
+        itself scrupulously honest. `/healthz` is not lying; the thing reading
+        it cannot hear it.
+
+        **Additive, and NOT the default**, for two reasons that point the same
+        way: the plain form is a published contract with existing readers, and
+        a 503 from a *container* health check would make Docker restart a
+        gateway that is degraded but WORKING — one unresolved env var on a
+        tier-1-only host. Opt-in puts the choice with the reader.
+
+        The trigger is `reasons` being non-empty, not `status` — `status` is
+        derived from `reasons` two lines below the only return in this
+        function, so the two cannot disagree, and keying on the source rather
+        than on the rendering keeps it that way if a third status word is ever
+        added. This adds a status code and no data: rules #2 and #6 are
+        untouched because nothing new is emitted at all.
+
+        ⚠ **`strict` is a BOOL, so `?strict=1` is the URL a probe must use.** A
+        bare `?strict`, an empty `?strict=`, or anything unparseable is a 422
+        with a validation body — the one input class where "identical body
+        either way" does not hold, and a probe misconfigured that way reads
+        DOWN on a healthy gateway. Recorded rather than widened: that is the
+        LOUD direction, and this endpoint's whole subject is the silent one.
+        Pinned by
+        `test_an_unparseable_strict_value_is_a_422_and_NOT_a_health_verdict`.
 
         Inbound is judged three independent ways, because each one is blind to
         the others' failure mode: whether polls have ever SUCCEEDED, whether
@@ -1288,7 +1320,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # Names, never values: identity names and app ids are non-secret (they
         # live in the committed registry); the poll error is a type and a status.
         # Load-bearing, because this endpoint is UNAUTHENTICATED.
-        return JSONResponse(status_code=200,
+        #
+        # CG-59: the code is the ONLY thing `strict` changes. The content dict
+        # is built once and handed to both paths, so a reader diffing the two
+        # forms cannot find a difference — if it could, an operator comparing
+        # them would learn something false.
+        return JSONResponse(status_code=503 if (strict and reasons) else 200,
                             content={"status": "degraded" if reasons else "ok",
                                      "reasons": reasons, **body})
 

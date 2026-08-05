@@ -428,7 +428,39 @@ it instead of pointing elsewhere.
 ```bash
 curl -s $GW/v1/identities -H "$AUTH"    # what you may send as, with readiness
 curl -s $GW/healthz                     # honest health — no auth required
+curl -s $GW/healthz?strict=1            # same body, but 503 when degraded
 ```
+
+### `?strict=1` — for readers that judge by status code (CG-59, 2026-08-05)
+
+`GET /healthz` returns **200 whatever it says** — including `"status":
+"degraded"` with a full list of reasons. That is right for a human reading the
+JSON and wrong for a **dashboard tile or a container health check**, which look
+at the status code and never open the body. One of those went green over a dead
+inbound path, which is what this parameter exists for.
+
+**`?strict=1` returns 503 when `reasons` is non-empty, 200 otherwise — with a
+byte-identical body.** Nothing else changes: same fields, same values, same key
+order. If you diff the two responses you will find no difference, which is
+deliberate; an operator comparing them must not learn anything false.
+
+**Which one to point at:**
+
+| Reader | Form | Why |
+|---|---|---|
+| a human, or anything that parses the body | plain `/healthz` | you are already reading `status` and `reasons` — the code adds nothing |
+| a dashboard uptime probe (Homepage `siteMonitor`, Uptime Kuma, …) | **`?strict=1`** | it judges by code, so plain `/healthz` is green while inbound is dead |
+| a **container** health check / orchestrator restart probe | plain `/healthz` | ⚠ deliberately. A 503 here makes the runtime restart a gateway that is *degraded but working* — one unresolved env var on a tier-1-only host is not a reason to kill a process that is delivering |
+
+**The plain form's contract is unchanged and will stay unchanged** — it is opt-in
+precisely so no existing reader has to move.
+
+⚠ **The URL is `?strict=1`, and the exact spelling matters.** `strict` is a
+boolean query parameter, so a bare `?strict`, an empty `?strict=`, or anything
+unparseable is a **422 with a validation body** — not a health verdict, and a
+probe misconfigured that way reads DOWN on a healthy gateway. `1`, `true`, `yes`
+and `on` all work; `0`, `false`, `no`, `off` and omitting it entirely are all
+non-strict.
 
 ### Durability counters at `/healthz`
 

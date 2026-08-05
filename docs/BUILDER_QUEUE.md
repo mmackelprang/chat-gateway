@@ -1,6 +1,64 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-05 (Planner — **CG-59 REFRESHED + CG-79's routed list
+**Last updated:** 2026-08-05 (Builder — **CG-59 half 1 SHIPPED, half 2 RUNNING.**
+`GET /healthz?strict=1` returns **503 when `reasons` is non-empty**, 200
+otherwise, **byte-identical body**. The plain form is untouched — still 200 while
+degraded, by decision, because it is a published contract and because a 503 from
+a *container* health check would make Docker restart a gateway that is degraded
+but working.
+
+⚠ **Driven, not asserted.** A real uvicorn process, real `curl`, three
+configurations, bodies compared by **sha256 over the raw bytes**: healthy →
+`200`/`200`, identical (`355df58b…`, 1238 B); an unresolvable identity env var →
+`200`/**`503`**, identical (`1cf2548b…`, 1296 B); and a subscriber that has
+genuinely never polled → `200`/**`503`**, identical (`de2a0824…`, 2126 B) on the
+**exact reason string this box emitted eight seconds after boot**. That third
+case is the whole row: it is the reading the Homepage tile would have called
+green.
+
+⚠ **A SEQUENCING HAZARD found by measuring the deployed box rather than reasoning
+about it — and it is the same failure shape one turn later.** The running
+container answers **`200` to `?strict=1`** today (and to bare `?strict`), because
+FastAPI ignores a query parameter the deployed handler does not declare.
+**Repointing the Homepage tile before the image is rebuilt changes nothing while
+looking exactly like the fix.** Order — rebuild, verify 503 on a degraded boot,
+*then* repoint. ⚠ **And the redeploy is deliberately NOT scheduled by this row:**
+a rebuild restarts the container, and the container's unbroken uptime **is** the
+evidence the soak is accruing. `docs/deploy/nas.md` §9 carries all three
+handoff conditions.
+
+⚠ **One input class where "identical body" does NOT hold, measured and pinned
+rather than smoothed:** `strict` is a bool, so bare `?strict`, `?strict=` and
+`?strict=banana` are **422 with a validation body**. A probe misconfigured that
+way reads DOWN on a healthy gateway. Recorded, not widened — that is the **loud**
+direction, and this endpoint's entire subject is the silent one.
+
+**`reasons` and `status` CANNOT disagree, and the trigger keys on the source
+anyway.** `status` is computed as `"degraded" if reasons else "ok"` **at the sole
+return**, from the same list — one fact rendered twice. `reasons` is authoritative;
+`strict` reads it rather than the rendering, so a third status word could never
+silently decouple the code from the body. Pinned across three independent
+degradation causes by
+`test_status_and_reasons_cannot_disagree_so_the_trigger_is_the_source`.
+
+**Half 2 — the memory capture is RUNNING on the box** (10 min: cgroup
+`memory.current`/`peak`, VmRSS, fds, threads, `restart_count`, `du` per state
+dir, host swap), appending JSONL outside the container, out of `git`, 72 h
+ceiling, its own session id. ⚠ **It does NOT survive a reboot of the NAS** — no
+systemd unit, no cron, because both are writes outside the gateway's path and
+therefore on the standing rules' 🛑 list; that limit is stated in
+`docs/deploy/nas.md` §11 rather than implied. ⚠ Gotcha recorded there too:
+**`setsid --fork` fails on this box** with `Function not implemented`.
+
+⚠ **The row stays 🚀, not ✅.** The soak has ~72 h to run and its analysis, the
+disk-growth calibration (§G3′) and the ledger **proposal** are what close it.
+⚠ **No ⚠ verification-ledger flag cleared, added or reworded** —
+`git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"` → **0**, and
+**no ledger claim of any kind is made here**: `events_seen` was `0` at deploy and
+may still be `0` at the end. Suite **383 → 390**, both ends re-measured. Previous
+entry follows.)
+
+**Previously:** 2026-08-05 (Planner — **CG-59 REFRESHED + CG-79's routed list
 cleared, and it was NOT the whole set.** Three jobs, one PR, bundled because all
 three edit the production-readiness arc plan.
 **(1)** The six falsified facts are corrected across `docs/superpowers/` — the
@@ -39,7 +97,7 @@ homelab handoff and is recorded in three places.
 **CG-59 plans the EVIDENCE; clearing the `SubscriberLoop` row stays a hard-rule-#3
 question for the user.** Suite **383**, measured. Previous entry follows.)
 
-**Previously:** 2026-08-05 (Builder — **CG-79 SHIPPED**: CG-55's recorded
+**And before that:** 2026-08-05 (Builder — **CG-79 SHIPPED**: CG-55's recorded
 status reconciled across this file, `CLAUDE.md`, `docs/deploy/nas.md`,
 `docs/google-cloud-setup.md`, both consumer contracts and one `src/` comment.
 **PR #66 merged as `4ddd6f5`**; the banner two entries below still said *"PR open
@@ -87,7 +145,7 @@ false claim anyway. ⚠ **Logged as CG-69 evidence instance 6** — a merge goin
 this file's own banner within hours. Suite **383**, re-measured. Previous entry
 follows.)
 
-**And before that:** 2026-08-05 (Builder — **CG-78 SHIPPED**: the LAN address
+**Before that:** 2026-08-05 (Builder — **CG-78 SHIPPED**: the LAN address
 literals CG-55's planning prose left in this file are placeholdered, and
 `DOC_PRIVATE_IP` guards the return path. The sweep was far wider than the three
 hits it was handed — private + CGNAT quads, any dotted quad, `*.ts.net`, MACs,
@@ -99,7 +157,7 @@ by the user**, because it would invalidate every merge record this project uses
 as its audit trail. Read the row's *"What this row does NOT do"* before
 believing the checkbox. Suite **382 → 383**. Previous entry follows.)
 
-**Before that:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
+**Earlier:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
 running on the NAS and serving. Five facts observed, three of §5's open
 verification points answered on the box, seven deviations recorded. The record
 has one home — `docs/deploy/nas.md` §10 *Executed*. ~~⏸ **PR open and HELD for
@@ -115,7 +173,7 @@ and not reproduced here). ⏸ homelab §9 artifacts outstanding, tailnet ACL sti
 not applied — **both still true.** Suite **382**, re-measured on the
 branch. Previous entry follows.)
 
-**Earlier:** 2026-08-03 (Builder — **CG-53 SHIPPED (#65)**: the deployment
+**Earlier still:** 2026-08-03 (Builder — **CG-53 SHIPPED (#65)**: the deployment
 artifacts, the runbook, and the loader that makes hard rule #2 hold on the NAS.
 **Ships no deploy.** Suite **382** on the CG-53 branch, measured with
 `python3 -m pytest -q`, not copied from any row.
@@ -1249,7 +1307,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-56** · inbox delivery semantics: at-most-once → ack | 📋 queued | ✅ **APPROVED (D3)** — opt-in per request; default path unchanged. Part D |
 | **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
-| **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued · ✅ **UNBLOCKED — the clock is running** | ~~Depends on **CG-55** — the soak clock starts when it lands.~~ ✅ **CG-55 landed 2026-08-05 and the soak clock started with it** — corrected 2026-08-05 (CG-79); the future tense here survived the event it was waiting for. This row is now the **only** thing standing between the `SubscriberLoop` long-run ⚠ flag and a decision about it, and it is the one row that gets *more* valuable the longer it waits. Part G |
+| **CG-59** · long-run observation + a deployed `/healthz` | 🚀 **in flight** (2026-08-05) · ✅ **half 1 SHIPPED** ([PR #70](https://github.com/mmackelprang/chat-gateway/pull/70)) · ⏳ **half 2 RUNNING** | ~~Depends on **CG-55** — the soak clock starts when it lands.~~ ✅ **CG-55 landed 2026-08-05 and the soak clock started with it** — corrected 2026-08-05 (CG-79); the future tense here survived the event it was waiting for. ✅ **`GET /healthz?strict=1` shipped 2026-08-05** — 503 when `reasons` is non-empty, byte-identical body, plain form untouched; driven against a real server and compared by sha256, not asserted. ⏳ **The soak is running on the box** (both streams; §11 of the runbook) and the row stays 🚀 until its analysis, the disk-growth calibration and the ledger **proposal** land. This row is still the **only** thing standing between the `SubscriberLoop` long-run ⚠ flag and a decision about it — ⚠ **and shipping half 1 moved that flag not at all**, which is the point. Part G |
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
 | **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | ✅ done (#52) | Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. Pre-merge review found a **data-loss race** in compact-on-drain — both producers journal the `open` before taking the queue lock, so `compact([])` could erase a record already on disk; fixed by recomputing survivors under the journal's own lock. Suite **247 → 268**. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
 | **CG-68** · time-bounded pruning of the inbound audit trail | ✅ done (#54) | **The first row that DELETES a tenant's content.** 30/7/0 via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`; the filename is the retention key, so pruning never opens a file holding message bodies. Amends `integration-guide.md:366`'s published *"never pruned"* (A4). ⚠ **New user decision A5** — the boot guard **refuses** rather than warns, and is stricter than the non-recursive glob requires (decision 4 below). Review found **0 HIGH, 6 MEDIUM, 6 LOW**; the sharpest was **M2** — the sweeper would have pruned `state/deliveries/` (ADR D7, permanent by decision), because the guard only fenced the quarantine and `state/deliveries` is its *sibling*. Suite **268 → 314**. Plan Tasks **10–14** |
@@ -4484,7 +4542,86 @@ residue, **link `CLAUDE.md`'s verification ledger — do not restate it.**
 
 ---
 
-### CG-59 · Long-run observation, and what a **deployed** `/healthz` needs  📋 queued · ✅ **UNBLOCKED 2026-08-05 — the clock is running**
+### CG-59 · Long-run observation, and what a **deployed** `/healthz` needs  🚀 in flight · ✅ **half 1 SHIPPED 2026-08-05** · ⏳ **half 2 running**
+
+> ## ✅ Half 1 shipped 2026-08-05 — [PR #70](https://github.com/mmackelprang/chat-gateway/pull/70). ⏳ Half 2 started the same evening.
+>
+> **What landed:** `GET /healthz?strict=1` → **503 when `reasons` is non-empty**,
+> 200 otherwise, **byte-identical body**. The plain form is unchanged and still
+> answers 200 while degraded, by decision. Suite **383 → 390**, both ends
+> re-measured. Pre-merge review: **no HIGH, no MEDIUM, no LOW.**
+>
+> **Evidence, not assertion.** A real uvicorn process, real `curl`, bodies
+> compared by **sha256 over raw bytes** in three configurations:
+>
+> | Configuration | plain | `?strict=1` | body |
+> |---|---|---|---|
+> | healthy | `200` | `200` | identical — `355df58b…`, 1238 B |
+> | an identity whose webhook env var does not resolve | `200` | **`503`** | identical — `1cf2548b…`, 1296 B |
+> | a real `SubscriberLoop` that has genuinely never polled | `200` | **`503`** | identical — `de2a0824…`, 2126 B |
+>
+> ⚠ **The third row is the whole point.** Its reason string is *"subscriber is
+> enabled but has never completed a poll — inbound has never worked on this
+> process"* — **the literal text this box emitted eight seconds after boot**
+> (`nas.md` §10 fact 1), and the reading the Homepage tile would have called
+> green.
+>
+> ⚠ **A SEQUENCING HAZARD, found by measuring the deployed box instead of
+> reasoning about it — and it is this row's own failure shape, one turn later.**
+> The **running container answers `200` to `?strict=1`** (and to bare `?strict`),
+> because FastAPI ignores a query parameter the deployed handler does not
+> declare. **So repointing the Homepage tile before the image is rebuilt changes
+> nothing while looking exactly like the fix** — silent green, now wearing a URL
+> that reads as remediated. Order: rebuild → verify 503 on a degraded boot →
+> repoint. ⚠ **The redeploy is deliberately NOT scheduled here:** a rebuild
+> restarts the container, and the container's unbroken uptime **is** the evidence
+> half 2 is accruing. All three conditions live in `docs/deploy/nas.md` §9.
+>
+> ⚠ **One input class where "identical body" does NOT hold — measured, pinned,
+> and deliberately not widened.** `strict` is a bool query parameter, so bare
+> `?strict`, `?strict=` and `?strict=banana` are **422 with a validation body**,
+> and a probe misconfigured that way reads **DOWN on a healthy gateway**. Left as
+> a 422 rather than made permissive because that is the **loud** direction — wrong
+> in the way that gets investigated within the hour — and this endpoint's entire
+> subject is the **silent** one. Widening the parameter is a design change; this
+> row consumed a design rather than making one. The 422 echoes only the caller's
+> own query value, so nothing of this gateway's state reaches an unauthenticated
+> reader.
+>
+> **Can `reasons` and `status` disagree? No — and the trigger keys on the source
+> anyway.** `status` is computed as `"degraded" if reasons else "ok"` **at the
+> sole `return` in the handler**, from the same list. They are one fact rendered
+> twice, so `reasons` is authoritative and `status` is its rendering. `strict`
+> reads `reasons`, which is what keeps a future third status word from silently
+> decoupling the status code from the body. Pinned across three independent
+> degradation causes by
+> `test_status_and_reasons_cannot_disagree_so_the_trigger_is_the_source`.
+>
+> **Rules #2/#6:** the change adds a **status code and no data** — not one new
+> field, so there is nothing new for an unauthenticated reader to learn.
+>
+> ⏳ **Half 2 — the memory stream is RUNNING on the box.** Ten-minute samples of
+> cgroup `memory.current`/`peak`, `VmRSS`, open fds, thread count,
+> `restart_count`, `du` of every state directory and host swap, appended as JSONL
+> **outside the container**, out of `git`, with a **72 h ceiling**. It matters
+> because the NAS has **zero swap** and the container's cap is **512 MiB**, so a
+> leak ends in an **OOM kill** — which, under `restart: unless-stopped`, is
+> indistinguishable from uptime in the `/healthz` body alone. The `/healthz`
+> stream (whole body + status code, 30 s) is captured separately from the dev box
+> and was **not** touched by this row. Both streams, their paths, and the two
+> honest limits — **it does not survive a reboot of the NAS**, and `setsid --fork`
+> fails on this box — are recorded in `docs/deploy/nas.md` §11.
+>
+> ⚠ **NO ⚠ verification-ledger flag was cleared, added or reworded, and no ledger
+> claim of any kind is made.** `git diff main -- src/ | grep -c
+> "LIVE-UNVERIFIED\|SHAPE-VERIFIED"` → **0**. `events_seen` was `0` at deploy and
+> may legitimately still be `0` when the soak ends; §4.7's struck *"the
+> subscription is no longer quiet"* was **not** revived, quoted or leaned on.
+>
+> **What closes this row:** the soak's analysis against §G2.5's pass/fail, the
+> disk-growth calibration of §G3′, and a **proposal** to the user about the
+> `SubscriberLoop` long-run flag — which is a hard-rule-#3 decision that is the
+> user's to make, on CG-35's precedent.
 
 | | |
 |---|---|

@@ -683,6 +683,34 @@ operator can see, and the repoint without the endpoint probes a URL that behaves
 identically. ⚠ **Recorded as an owned follow-up, not a defect in PR #21** — the
 tile is correct against the endpoint that exists today.
 
+✅ **The endpoint half SHIPPED 2026-08-05 (CG-59).** It is in `main`; the plain
+form is untouched and still answers 200 while degraded, by decision.
+
+⚠ **THREE things about the handoff, and the first is a SEQUENCING HAZARD that was
+measured on this box rather than reasoned about.** Read all three before
+repointing anything:
+
+1. **The running container does not have it yet, and it answers 200 to
+   `?strict=1` today.** Measured 2026-08-05 against the deployed instance: plain
+   → `200`, `?strict=1` → `200`, bare `?strict` → `200`. FastAPI ignores a query
+   parameter the deployed handler does not declare, so the strict URL is
+   **inert** on the image now serving. **Repointing the tile before the image is
+   rebuilt therefore changes nothing while looking exactly like the fix** — the
+   same silent-green shape, now wearing a URL that reads as remediated. **Order:
+   rebuild + redeploy (§4, §7), verify `?strict=1` returns 503 on a degraded
+   boot, and only then repoint the tile.**
+2. ⚠ **The redeploy is NOT scheduled by this row, deliberately.** A rebuild
+   restarts the container, and the container's uninterrupted uptime **is** the
+   evidence CG-59's soak is accruing (§11). Restarting the gateway to install a
+   dashboard fix would spend the thing the same row is measuring. The endpoint
+   waits for the next redeploy that happens for its own reasons.
+3. **The URL is `?strict=1` exactly.** `strict` is a boolean query parameter: a
+   bare `?strict` or an empty `?strict=` is a **422** once the new image is
+   running — non-200, so the tile would read DOWN on a healthy gateway. That is
+   the loud failure rather than the silent one and is recorded rather than
+   widened (`docs/integration-guide.md`, *"`?strict=1` — for readers that judge
+   by status code"*), but it is a real way to get the handoff wrong.
+
 ---
 
 ## §10 · Executed
@@ -942,3 +970,109 @@ tailnet subnet route re-opens the question (CG-55's row, decision 1's contingenc
   reconfigured**; no `docker system prune`; no daemon restart; no pool or TrueNAS
   write outside `/mnt/datapool/apps/chat-gateway/**`. Verified after the fact:
   every other container's uptime is unchanged.
+
+---
+
+## §11 · Observation — the CG-59 soak
+
+**Started 2026-08-05 by Builder over SSH (CG-59). RUNNING; results are NOT in
+this section yet, and this section says so rather than being written ahead of
+them.** The design — why ≥24 h is the floor, what a pass is, and how a quiet
+network is told apart from a wedged loop — has **one home**, plan Part G §G2. Do
+not restate it here.
+
+### What is being captured, and by whom
+
+Two streams, two cadences, because the fields have two shapes. They are captured
+by **different processes on different hosts**, deliberately: a sampler sharing
+the machine it measures cannot tell *"the gateway is wedged"* from *"the sampler
+is wedged"*.
+
+| Stream | Cadence | Where it is written | Host |
+|---|---|---|---|
+| the whole `/healthz` body + its HTTP status code | 30 s | `~/cg59-soak/healthz.jsonl` | the **dev box**, over the LAN |
+| container RSS, cgroup memory, open fds, thread count, restart count, `du` of each state directory, host swap | 10 min | `/mnt/datapool/apps/chat-gateway/soak/memory.jsonl` | the **NAS**, outside the container |
+
+**The whole body per sample, one JSON object per line, appended.** The field list
+in this arc has been wrong three times; a soak that captures a selected subset
+cannot be re-read three days later for the field it dropped, and the run is
+unrepeatable in a way the analysis is not.
+
+**Neither artifact is committed.** They are inputs to a summary, not
+deliverables, and the summary is what lands here. ⚠ Note that `state/` is
+gitignored for this class of accident (CG-67) and **the soak files are not under
+`state/`** — that guard does not cover them; they are outside the repo entirely
+instead.
+
+### Why the memory half exists at all
+
+**The NAS has zero swap** (measured, and re-measured in every sample:
+`swap_total_bytes: 0`) and the container's `memory.max` is **512 MiB**. A leak
+over 72 h therefore ends in an **OOM kill**, not a slowdown — and under
+`restart: unless-stopped` an OOM kill looks *identical to uptime* from `/healthz`
+alone, because every counter in the body comes back at a plausible zero. That is
+why `restart_count` is read from `docker inspect` rather than inferred from the
+body, and why a liveness-only soak would miss the failure mode most likely to
+actually occur.
+
+`memory.peak` is sampled alongside `memory.current` for the same reason: it is a
+monotonic high-water mark, so a 10-minute cadence cannot step over a spike.
+
+### The sampler, and what it is allowed to touch
+
+`soak/mem_sampler.py` on the box (`0750 root:root`; output `0640`). It is
+**read-only against everything it measures** — `docker stats`, `docker inspect`
+and `/proc` are reads, and `du` walks directory metadata and never opens a file,
+which is what makes it safe over `inbox-data/`: that tree holds tenant message
+bodies and this process reads their **sizes**, never their bytes. Numbers and
+paths only reach the artifact; no tenant content can, by construction.
+
+It refuses to start if its own pidfile names a live process — two appenders on
+one JSONL produce duplicate rows indistinguishable from real readings.
+
+### Durability — what it survives, and what it does not
+
+Launched with `sudo setsid sh -c '…' &`, so it holds **its own session id** and
+is not a child of the SSH session. Verified: it kept running across several
+subsequent connections.
+
+⚠ **Two limits, stated plainly rather than implied:**
+
+- **It does NOT survive a reboot of the NAS**, or a `kill`. There is no systemd
+  unit and no cron entry — installing either is a write to system configuration
+  outside `/mnt/datapool/apps/chat-gateway/**`, which the standing rules put on
+  the 🛑 list. If the box reboots, the memory stream restarts from zero and the
+  run's duration claim resets with it; check `soak_elapsed_s` in the last line
+  before trusting any span.
+- **It stops on its own after 72 h.** The ceiling is in the script, not in a
+  scheduler, so nothing has to remember to stop it.
+
+⚠ **Gotcha for whoever runs the next one: `setsid --fork` does not work on this
+box.** It fails with `Function not implemented` (ENOSYS on the child's `execve`),
+as does anything launched through it — measured, twice, with two different target
+binaries. Plain `setsid` without `--fork` works and is what is used. `nohup … &`
+also works. This cost a launch attempt.
+
+### What is already known before the run finishes
+
+- container start **2026-08-05T16:34:10Z**, `RestartCount: 0` — the soak clock
+  and the deployment clock are the same clock, and it has not been reset.
+- the memory stream's first sample is **2026-08-05T21:15:58Z**, so it starts
+  ~4.7 h into the deployment's uptime. **The gap is recorded rather than
+  smoothed:** the `/healthz` stream and the container's own uptime both cover
+  that window; the memory stream does not, and a trend line drawn through it must
+  not be extended backwards.
+- at first sample: cgroup `memory.current` **52 539 392 B**, `memory.peak`
+  **54 362 112 B** against a **536 870 912 B** limit — ~9.8 % of the cap, 6
+  threads, 9 open fds.
+
+⚠ **Nothing above clears, adds or rewords a ⚠ verification-ledger flag, and this
+section must not be read as doing so.** The ledger's `SubscriberLoop` *long-run
+thread behaviour* row is what this run produces **evidence** for; retiring it is
+a hard-rule-#3 decision that needs the user's explicit sign-off, on CG-35's
+precedent. ⚠ **And say what the evidence will reach:** `events_seen` was `0` at
+deploy and may legitimately still be `0` at the end. A quiet subscription running
+for three days proves the thread survives; it proves little about behaviour under
+load. The full what-a-quiet-space-cannot-prove table is plan §G2.6 — **do not
+summarize it, and do not argue a sign-off on the premise that the subscription is
+busy.** It was not.
