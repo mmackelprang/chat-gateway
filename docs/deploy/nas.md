@@ -1,8 +1,11 @@
 # Deploying chat-gateway to the NAS — runbook
 
-**Status: PLANNED, not run.** Nothing in this document has been executed. §10
-*Executed* is empty on purpose and is filled by the deploy row (CG-55); until it
-carries entries, every command below is a plan.
+**Status: EXECUTED 2026-08-05 (CG-55).** This header read *"PLANNED, not run.
+Nothing in this document has been executed"* until then, and the sentence is
+quoted rather than deleted because the distinction it drew is the useful one: a
+reader tells plan from fact by looking at **§10**, not by guessing. §10 now
+carries entries, so the commands above are a record — **with the deviations §10
+names.** Nothing here is retroactively true; §10 says what actually ran.
 
 ---
 
@@ -173,10 +176,15 @@ sites — which is deliberately not folded into this merge-gated secret-handling
 change. The two cover **disjoint sets**: the code half only ever reopens today's
 file, this sweep only ever fixes what already exists.
 
-⚠ **And today it fixes nothing, because nothing exists.** The gateway has never
-been deployed, so no such file exists anywhere. The line above is
-**prophylactic** — it earns its place at the moment of the first restore, not
-now.
+⚠ **And on the first run it fixed nothing — but the reason changed on
+2026-08-05, so the sentence did too.** This read *"The gateway has never been
+deployed, so no such file exists anywhere"*; that was true when written and was
+**falsified by §10**, which is exactly the stale-second-copy trap this repo keeps
+recording. What is true now: the sweep **was** run immediately after creating the
+directories (§10), and it printed nothing — because the gateway's own writers
+create every file `0600`, and because no file was yet old enough to be
+*historical*. It stays **prophylactic**: it earns its place at the first restore
+from a pre-CG-65 backup, not on a fresh deploy.
 
 ---
 
@@ -586,13 +594,225 @@ so they are named here for the user to pick up:
 
 ## §10 · Executed
 
-**Empty. Nothing here has been run.**
+**Run 2026-08-05 by Builder over SSH (CG-55). The gateway is deployed and
+serving.** This section read *"Empty. Nothing here has been run"* until then.
 
-This section is filled by the deploy row (CG-55) — one dated entry per step
-actually executed, including whether the tailnet ACL (§8) was applied at deploy
-time. Until it has entries, everything above is **planned**, and a reader can
-tell the two apart by looking here rather than by guessing.
+Public-repo discipline (top of this file) applies to this section too: the LAN
+address, the tailnet address and the SSH destination are **measured values that
+are not written here**. `<LAN-IP>` and `<tailnet-IP>` stand for them; their one
+home is the homelab repo's `network/reservations.md`.
+
+### The steps
 
 | Date | Step | Result | Notes |
 |---|---|---|---|
-| _(none yet)_ | | | |
+| 2026-08-05 | §2 pre-flight — C0(b), CG-61 in the **live** registry | **PASS** | `{aiteam-harness: False, job-hunter: True, aitrader: False}` from the real `load_registry` against the gitignored file. Fail-closed script, not a memory test |
+| 2026-08-05 | §2 fail-closed `app.query` for `chat-gateway` | **`[]`** | Run twice — once at the start, once in the same shell as `app.create`, so the check and the create could not be separated by anything |
+| 2026-08-05 | LAN address resolved **on the box** | matches the static reservation | `ip -4 addr` and `ip route get` agree on one global interface. ⚠ Resolved, not read from a doc — `reservations.md` also carries an unconfirmed contradicting reading, and the bind makes this load-bearing. **The measurement backs the static reservation, not the contradiction** |
+| 2026-08-05 | port 8085 free | **free** | The in-use list matched §1's 2026-07-31 measurement exactly, port for port |
+| 2026-08-05 | §3 layout created | 0750 root:root ×5 | `install -d`, restrictive on creation |
+| 2026-08-05 | §4 source at a pinned commit + local build | `chat-gateway:local`, 174 MB | Cloned the public repo, `git checkout 52710df`, `docker build` |
+| 2026-08-05 | §6 secrets over stdin | **3/3 sha256 match**, modes `600` / `600` / `640` | `install -m 0600 /dev/null` then `tee` from stdin. Verified by hash + `stat`. **Nothing was `cat`-ed** |
+| 2026-08-05 | §6 `CREDS-OK` check | **CREDS-OK** | The credential path resolves *in the container*, before `app.create` — the silent failure §6 exists to catch |
+| 2026-08-05 | §7 `app.create` | **RUNNING** | Published on `<LAN-IP>:8085` only. Two failed attempts first — see *Deviations* |
+| 2026-08-05 | §3 historical-mode sweep | **nothing to fix** | The gateway's own writers created every file `0600`; the `! -perm 600` probe printed nothing. As §3 predicted, prophylactic today |
+| 2026-08-05 | §8 tailnet ACL (D2) applied? | **NO — not applied** | Recorded as a **fact of the deploy**, per C0(a) as amended. `network/tailscale-acl.hujson` exists only on the unmerged local branch `feat/remote-access`; it is **absent from that repo's `main`**. The live policy could not be read from here — that needs `docker exec` into another stack, which is a 🛑 |
+
+### The five facts
+
+**1 · `/healthz` — `status` and `reasons`, verbatim.** Read on `<LAN-IP>:8085`:
+
+```
+"status": "ok"
+"reasons": []
+```
+
+⚠ **Not the first value it returned, and the first one is the more useful
+record.** Sampled ~8 s after a restart, it was:
+
+```
+"status": "degraded"
+"reasons": ["subscriber is enabled but has never completed a poll — inbound has never worked on this process"]
+```
+
+That is **rule #5 working**, not a fault: the gateway refuses to call itself
+healthy on a promise it has not yet kept once. It cleared to `ok` on the first
+completed poll. An operator watching a boot will see `degraded` for a few
+seconds every time — **expect it.**
+
+**2 · Tier 1 — one webhook send through the deployed instance.**
+`POST /v1/messages` → **HTTP 200, `"status": "delivered"`**, identity
+**`aitrader-reports`**, mode `webhook`. Driven from the dev box against the
+deployed socket, so the whole published path was exercised, not a local run. The
+API key travelled in an HTTP header — never argv (rule #2).
+`aitrader-reports` was chosen because the registry marks it the *quiet reports*
+space: a real space, least disruptive.
+
+**3 · Tier 2 — the subscriber, and the thing this proves.** `last_poll_at`
+advanced across every sample; `poll_failures: 0`, `consecutive_poll_failures: 0`,
+`last_poll_error: null`, `thread_alive: true`.
+
+⚠ **This is the first evidence that any host but the dev box reaches Pub/Sub** —
+egress, service-account token mint, and subscription pull, all from the NAS.
+
+⚠ **`seconds_since_last_poll` oscillates to ~24 s, not to ~5 s, and an operator
+alarming on it needs to know that before it pages them.** `poll_interval_seconds`
+is 5, but `PubSubPuller.pull()` posts `{"maxMessages": N}` with **no
+`returnImmediately`**, so Pub/Sub holds the connection open when the subscription
+is empty; the observed period is that hold plus the interval. Far inside
+`stale_after_seconds: 300`. Measured, and matched to the request shape in
+`adapters/pubsub.py` — not inferred from the number alone.
+
+**4 · Restart — CG-54's replay, on real hardware, against a POPULATED journal.**
+An empty-journal restart proves the replay path *runs*; it does not prove it
+*restores*. So a job was enqueued through the deployed instance and the gateway's
+own container killed inside the dispatcher's 1 s pass window, leaving one `open`
+entry with no `close` in `state/queue/delivery.jsonl` — confirmed by reading the
+journal's **bookkeeping fields only** while the process was down (`{"op": "open",
+"id": 2, "kind": "notify"}`; the payload holds a tenant body and was not read).
+On the next boot:
+
+```
+queue: restored 1 outbound job(s), 0 expired or unroutable; 0 inbound reply(ies)
+```
+
+and `/healthz` `delivery.replayed_at_boot: 1`, settling to `pending_jobs: 0` —
+replayed **and then delivered**.
+
+⚠ **`docker kill` did NOT trigger `restart: unless-stopped`, and that is Docker,
+not a defect here.** An explicit `kill`/`stop` counts as a manual stop, so the
+container stayed `exited` (code 137) until `app.start`. The policy **is** set —
+`docker inspect` reports `unless-stopped`. **So this run does not test §8's
+crash-loop claim**, which is about a process exiting 2 on its own; that stays
+unobserved rather than being read as confirmed.
+
+**5 · The capture — requested, NOT run, and read anyway.** `capture.sh` is a 🛑
+(cross-repo write across all ten stacks) and **was not run**. ⏸ **It is an
+outstanding request to whoever holds that working tree**;
+`nas/compose/chat-gateway.config.json` does not exist yet, and appears
+automatically on the first capture after the app exists.
+
+**What was read instead is the same bytes from the same source.** `capture.sh`
+captures each custom app via `midclt call app.config <name>` — so
+`app.config chat-gateway` was pulled read-only and scanned directly:
+
+- **substring** against the real values of all 7 credential env vars loaded from
+  the dev `.env` — **zero hits**. That is stronger than any name- or
+  shape-based rule: it cannot be fooled by naming.
+- **shape** greps for `cgw_`, `chat.googleapis.com`, `token=`, `key=`,
+  `private_key`, PEM blocks, `spaces/…` — **zero hits**.
+
+The document carries **paths and env-var names only**, exactly as §5 designed. ⚠
+**No `clean. safe to commit.` line was relied on** — per §7, that gate cannot see
+this project's shapes.
+
+### C1a · The first drain — `events_seen: 0`
+
+The most valuable observation in the arc returned **nothing**, and the honest
+reading matters more than the number. `events_seen: 0`, `unparseable_seen: 0`,
+`suppressed_opt_out: 0`, `suppressed_not_authorized: 0`, `inbox.pending: {}`,
+`inbox.dropped: 0`, across a sampled soak with `poll_failures: 0` throughout.
+
+⚠ **This does NOT establish that the four spaces are quiet.** The subscription's
+retention is 24 h and it was drained by an ad-hoc client on 2026-07-30, so
+anything older is simply gone; `0` means *nothing was retained at this moment*,
+not *nothing happened*. The capacity-and-shape questions C1a asks — which event
+types arrive, whether the 1000-item cap is reachable — are **still unanswered**
+and now belong to **CG-59's soak**, which is the row with a clock long enough to
+answer them.
+
+### §5's three verification points — all three answered on the box
+
+1. **Does the middleware accept a compose referencing a locally-built image with
+   `pull_policy: missing`?** ✅ **Yes.** First of its kind on that box; §9's
+   registry path is not needed.
+2. **Does `CHAT_GATEWAY_REGISTRY` resolve in the container?** ✅ **Yes** — the
+   `.env`-on-its-own-mount correction holds; `/healthz` reports all 4 identities
+   and all 3 apps resolved.
+3. **Does the renderer honour `mem_limit` in a custom app?** ✅ **Yes, measured
+   rather than assumed** — `docker inspect` reports `Memory=536870912` (512 MiB).
+   §5 asked for this to be *said either way* because a limit believed present but
+   absent is the one that stops anybody looking. It is present.
+
+### Decision 1 (bind the LAN interface) — demonstrated, not asserted
+
+| Probe | Result |
+|---|---|
+| `ss -tlnp` | one listener, on `<LAN-IP>:8085` |
+| `curl <LAN-IP>:8085/healthz` | **200** |
+| `curl 127.0.0.1:8085/healthz` **on the box** | **refused** (curl exit 7) — the consequence §5/CG-55 predicted |
+| `curl <tailnet-IP>:8085/healthz` **on the box** | **refused** (curl exit 7) |
+
+The tailnet interface is real and up on that host, and the port is not on it.
+**"LAN-only" is a property of the socket here, not a convention** — which is the
+whole reason the ACL could be deferred. ⚠ **The residual §8 states is unchanged:
+anyone on the home LAN still reaches `/healthz` unauthenticated**, and a future
+tailnet subnet route re-opens the question (CG-55's row, decision 1's contingency).
+
+### Deviations from this runbook — the point of this section
+
+1. ⚠ **`app.create` was NOT submitted over stdin, and it cannot be.** §7 says
+   *"the JSON from §5, over stdin"*. `midclt` has **no stdin argument mode** —
+   measured in `truenas_api_client/__init__.py`'s `from_json`, which reads
+   **argv only**. The JSON was streamed to the box by `tee` over stdin and then
+   passed as `"$(sudo cat …)"`. **Safe precisely because §5's compose carries
+   zero secret values** — that is the design earning out. Recorded because
+   "over stdin" is not what happened, and the next person will hit the same wall.
+2. ⚠ **Two `app.create` attempts failed first, and the middleware's error names
+   the wrong cause.** Both returned
+   `[EINVAL] Error handling job lock. This is most likely caused by invalid call
+   arguments.` The real cause: `$(cat /root/…)` runs in the **unprivileged**
+   shell against a **root-only** file, so `cat` failed and midclt received an
+   **empty string** — and `from_json` swallows the JSON error and passes the raw
+   string through, so `app.create`'s lock lambda did `"".get("app_name")`.
+   **Nothing was created** (`app.query` re-checked `[]`, no container). Fixed with
+   `sudo cat`. **A silently-degraded argument is exactly the failure mode this
+   repo keeps finding** — the parser that returns something plausible rather than
+   raising.
+3. **The box `.env` was built key by key — 13 keys — not copied.** §6 already
+   requires this; what it does not say is that **three keys were deliberately
+   OMITTED**: `CHAT_GATEWAY_REGISTRY`, `CHAT_GATEWAY_STATE_DIR` and
+   `CHAT_GATEWAY_INBOX_DIR`. §6 notes the compose overrides them, so copying them
+   is harmless — but a dev-relative path sitting in a file where it is silently
+   overridden is dead text that misleads the next reader. Omitted rather than
+   copied-and-overridden. `CHAT_GATEWAY_INBOX_RETENTION_DAYS` was omitted too, so
+   the window keeps the **one home** §3 gives it (`retention.py`); the boot line
+   confirms the code default applied.
+4. ⚠ **§6's third row understates itself: `CHAT_GATEWAY_INTERACTION_ROUTING_TARGET`
+   is not "empty in `.env.example`" on the dev box — it is ABSENT ENTIRELY.**
+   Same outcome, but a reader diffing the two files looks for a key that is not
+   there. Set to a constant (classic — ADR-0001 D3), **not** the topic path the
+   `/healthz` reason text still recommends. Confirmed working: `reasons` is empty
+   with the subscriber enabled, and `/v1/identities` for the one opted-out app
+   returns `interaction.enabled: false` with the **hard-rule-#6** reason rather
+   than the unset-target one — the precedence is right.
+5. **`env: loaded 12 key(s)`, from a 13-key file — and the missing one is the
+   fail-closed lever working.** `GATEWAY_ENABLE_PUBSUB` is set in the compose, so
+   *environment wins* and the file's copy is skipped. §5 put it there so a stale
+   `.env` could not leave inbound off; the count is the proof it did.
+6. **Restart used `docker kill` + `midclt app.start`, not §4's `app.redeploy`** —
+   because fact 4 needed a **crash**, not a tidy restart. `app.redeploy` remains
+   the documented upgrade step and is untested by this run.
+7. ⚠ **`iac/chat-gateway-sa.json` — the dead key — is STILL PRESENT in the repo.**
+   §8's warning is therefore still current and must not be removed. It was **not**
+   used; `chat-gateway-sa-gw.json` was, and both files' `project_id` fields were
+   read to confirm which is which before anything was copied.
+
+### What this run did NOT do
+
+- **`capture.sh`** — 🛑, requested, outstanding.
+- **Every homelab-side artifact in §9** — `nas/services/chat-gateway.md`, the
+  `SECRETS.template.md` rows (§6), `restore-chat-gateway.sh`, `DASHBOARDS.md`,
+  the Homepage tile. Deploy-then-document: they are written **now**, from the
+  facts above, in **that** repo.
+- **The tailnet ACL** — deferred (D2), and recorded above as not applied.
+- **No ⚠ verification-ledger flag was cleared, added or reworded.** A live deploy
+  is a tempting moment to move one and this run moved none; flag movement needs
+  the user's explicit hard-rule-#3 sign-off. ⚠ **One CANDIDATE is worth naming
+  rather than acting on:** `SubscriberLoop`'s *long-run thread behaviour* row is
+  the flag this deployment is now in a position to retire — but by **soak**, which
+  is **CG-59's** job, not by a smoke test measured in minutes.
+- **No other `ix-*` container was stopped, restarted, exec-ed into or
+  reconfigured**; no `docker system prune`; no daemon restart; no pool or TrueNAS
+  write outside `/mnt/datapool/apps/chat-gateway/**`. Verified after the fact:
+  every other container's uptime is unchanged.
