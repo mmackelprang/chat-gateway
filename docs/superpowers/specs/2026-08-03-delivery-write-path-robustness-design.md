@@ -568,3 +568,15 @@ has never run on a box with a real disk that can fill, so *"low likelihood"* is
 an artifact of never having been deployed. CG-55 is precisely the event that
 changes it. A first deploy that can turn a full disk into an unbounded send
 storm against Google is a first deploy that should not happen.
+
+⚠ **The premise is spent — corrected 2026-08-05, and the dependency was
+honoured.** CG-75 shipped ([#58](https://github.com/mmackelprang/chat-gateway/pull/58))
+**before** CG-55 deployed on 2026-08-05, which is the sequencing this paragraph
+argued for. **The gateway now runs on `datapool` — 13 TB, 1% used at the last
+measurement** — so *"has never run on a box with a real disk that can fill"* is
+false in the present tense, and the reasoning it supports has moved from
+prospective to live. ⚠ **Read the low headroom-pressure figure as one dated
+measurement, not as a standing property**: the audit JSONL and the journals are
+the files that grow, and how fast they grow on real volume is one of the things
+**CG-59's soak** is there to find out. The argument did not weaken; it stopped
+being hypothetical.

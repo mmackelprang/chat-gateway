@@ -515,8 +515,15 @@ def test_every_default_tenant_data_directory_is_gitignored():
 
     The promise this keeps is not a sentence anybody wrote — it is `.gitignore`
     itself, whose comment says these patterns "are the whole guard, not a
-    backstop to one" because nothing is deployed yet. A guard whose coverage is
-    stated in a comment and checked by nobody is how the first one failed.
+    backstop to one". A guard whose coverage is stated in a comment and checked
+    by nobody is how the first one failed.
+
+    That comment's stated REASON was "nothing is deployed yet", and that reason
+    expired on 2026-08-05 when the gateway went onto the NAS. The guard did not
+    expire with it — it got MORE load-bearing, not less. The hazard it names is a
+    developer checkout running `serve`, and every deployed instance is one more
+    place a body can be produced before somebody clones the repo to reproduce
+    something. Do not let a dead justification retire a live guard.
     """
     defaults = _env_dir_defaults()
     assert set(defaults) == set(TENANT_DIR_ENVS), (

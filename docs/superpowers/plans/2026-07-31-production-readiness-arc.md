@@ -39,7 +39,22 @@ command in this plan.
 | 🛑 | another stack | never stop / restart / exec / reconfigure any other `ix-*` container — **including** `sudo docker exec ix-tailscale-tailscale-1 tailscale …` |
 | 🛑 | Docker global state | **never** `system prune`, `network prune`, `volume prune`, daemon restart, image cleanup |
 | 🛑 | pools / TrueNAS | no dataset work outside the gateway's path, no pool ops, no `midclt` **write** against another app |
-| 🛑 | `capture.sh` | it rewrites `nas/compose/*.json` for **all ten** stacks — a cross-repo write, owned by whoever holds that working tree |
+| 🛑 | `capture.sh` | it rewrites `nas/compose/*.json` for **every stack on the box** — a cross-repo write, owned by whoever holds that working tree |
+
+⚠ **The row above said *"all ten"* until 2026-08-05, and so did three more places
+in this file** (Part A §7, Part C's header, Part C's *What must NOT happen*).
+**The count was wrong when written and is wronger now.** Ten was the *pre-existing*
+stack count measured 2026-07-31; the gateway makes **eleven**, and the live
+`app.query` confirms it. This is **CG-69 category (b)** — wrong when written, not
+gone stale — and it propagated by quotation into `nas.md` §1's heading, a briefing,
+and a sibling agent's task before anybody counted (CG-79, queue § CG-79 *"Fact 6"*).
+
+**The fix is not to write eleven.** The number changes every time this runbook
+succeeds, which is precisely what makes it the wrong thing to pin in a rule. All
+four sites now state the scope — *every stack on the box* — and `nas.md` §7 makes
+the same correction in the same words, for the same reason. A rule keyed on a
+count invites a reader to check the count; a rule keyed on the scope does not need
+checking.
 
 **A stop means stop and report — never work around.** If the gateway cannot be
 created without touching something on the 🛑 list, that is a finding for the
@@ -429,8 +444,13 @@ services:
       # GOOGLE_APPLICATION_CREDENTIALS at it in .env. The FILENAME is deliberately
       # not written here: CG-51 made the setup scripts DERIVE it from PROJECT_ID,
       # and a filename pinned in a comment is what CG-19 found stale. The live one
-      # is recorded in docs/google-cloud-setup.md. Note `iac/chat-gateway-sa.json`
-      # is DEAD — it belongs to the deleted `chat-gateway-prod` project.
+      # is recorded in docs/google-cloud-setup.md. Note that any
+      # `chat-gateway-sa*.json` OTHER than `chat-gateway-sa-gw.json` is DEAD — it
+      # belongs to the deleted `chat-gateway-prod` project. (This named the path
+      # `iac/chat-gateway-sa.json` until 2026-08-05; the user deleted that file,
+      # so the warning is keyed on the SHAPE now — copies outlive the path, and
+      # the setup scripts still default KEY_FILE to that name. Confirm by the
+      # key's own project_id, not by its filename.)
       # - ./secrets:/secrets:ro
 ```
 
@@ -475,7 +495,15 @@ than an omission.
 
 Required sections and their load-bearing content:
 
-**§1 What this is — the tenth stack.** ⚠ **Not a role change.** An earlier draft
+**§1 What this is — the ELEVENTH stack.** ⚠ **Said *"the tenth stack"* until
+2026-08-05, and it was wrong when written, not gone stale.** The **10 app stacks**
+measured below are the ones already there; the gateway is an addition, so it is
+the eleventh — and the live `app.query` now lists 11. The right number sat three
+lines under the wrong one for five days, in this file and in the `nas.md` §1
+heading this paragraph specifies, and survived because **a heading reads as a
+title and a paragraph reads as data, so nobody compares them** (CG-79 fact 6;
+CG-69 category (b), which that spec §8 says no guard in this repo can reach).
+⚠ **Not a role change.** An earlier draft
 called the NAS *backup target only*; that came from another project's
 pipeline-scoped table and is withdrawn. Measured 2026-07-31: the box already runs
 **10 app stacks / 15 containers** (beszel ×2, calibre, calibre-web, claude-mem
@@ -564,6 +592,18 @@ row stays open for the `src/` half and is deliberately **not** folded into this
 one — a four-file code change does not belong in a merge-gated secret-handling
 PR. State the dependency direction plainly: **no such file exists anywhere today**
 (the gateway has never been deployed), so this line is prophylactic.
+
+⚠ **The parenthetical is FALSE since 2026-08-05 — the gateway is deployed and
+serving** (CG-55, PR [#66](https://github.com/mmackelprang/chat-gateway/pull/66),
+`4ddd6f5`). ✅ **The prediction it was supporting held anyway, and that is the
+part worth keeping:** §3's historical-mode sweep ran on the box and printed
+nothing — *"the gateway's own writers created every file `0600`"*
+(`nas.md:653`), so the line really was prophylactic on this deploy. **It stays
+prophylactic rather than becoming unnecessary**, because CG-70's `src/` half is
+still open: the `0600` chmod is create-only, so a pre-existing `0644` file keeps
+its mode, and a *restored* directory is exactly where that arises. Corrected
+rather than deleted, because a claim that quietly flips is how this arc has gone
+stale before.
 
 **§4 Build the image on the box** — ✅ **DECIDED (D4)**; §9 keeps the registry
 alternative as the upgrade path. No registry, no credentials, no external
@@ -705,20 +745,34 @@ rediscovery.
 `SECRETS.md` is gitignored and holds real values. Its rows are three columns,
 `| Secret | Where it lives on the box | How to regenerate / rotate |`, and the
 model to copy is the existing Chroma row, which names the **env var and the
-service** rather than a value. Two rows, structure only:
+service** rather than a value. **THREE rows**, structure only:
 
 - the per-app API keys — regenerate with `python3 -m chat_gateway mint-key`, then
   update the consumer;
 - the tier-1 webhook URLs — ⚠ **no rotate-in-place exists.** Recovery is
   delete-and-recreate by hand per `docs/google-cloud-setup.md` §8a. Say so in the
   rotate column; this project burned every webhook it owns once, on 2026-07-29.
+- the **service-account key JSON** — never its filename; the directory and
+  `docs/google-cloud-setup.md`.
+
+⚠ **This said "two rows" until 2026-08-05, and the spec was the defect, not the
+artifact.** The homelab Builder wrote exactly the two rows asked for, then
+surfaced that a rebuild driven from `SECRETS.md` would silently omit the one
+credential **tier 2 cannot work without**. A wrong or missing key is **silent**: the
+gateway boots clean, reports the Chat API adapter present at `/healthz` (which
+never `stat`s the file), fails every Google call, and keeps delivering tier-1
+webhooks the whole time — half-healthy, which hides. **The third row is also
+different in kind: the env var holds a PATH, so restoring it means restoring a
+FILE and the `.env` alone is not enough.** The full reasoning has one home,
+`docs/deploy/nas.md` §6; the user approved it and it landed in homelab PR #21.
 
 **§7 Verify — the gate.**
 
 ⚠ **CORRECTED 2026-08-03: do NOT run `capture.sh`.** This Part said *"Run
 `capture.sh`"*, which **contradicts this plan's own standing rules**, where it is
-a 🛑 — it rewrites `nas/compose/*.json` for **all ten** stacks, a cross-repo write
-owned by whoever holds that working tree. Part C already has this right
+a 🛑 — it rewrites `nas/compose/*.json` for **every stack on the box**, a
+cross-repo write owned by whoever holds that working tree (*"all ten"* until
+2026-08-05 — see the standing-rules table's correction note). Part C already has this right
 (*"request it, then read what it produced"*). **Request the run; then read the
 output.** A stop means stop.
 
@@ -799,8 +853,19 @@ Our design does not need that rule, and this row must not be justified by it.
   is claude-mem's Postgres. See `mem_limit` in §5.
 - **No public ingress is needed or wanted.** Pub/Sub is an outbound pull. Never
   put this behind the public reverse proxy.
-- **`iac/chat-gateway-sa.json` is DEAD** — deleted project. Do not authenticate
-  with it; its presence is not configuration.
+- **Any `chat-gateway-sa*.json` that is NOT `chat-gateway-sa-gw.json` is DEAD** —
+  deleted project. Do not authenticate with it, and **confirm which key you hold
+  by its own `project_id`, never by its filename.**
+  ⚠ **REWORDED 2026-08-05, not dropped.** This said *"`iac/chat-gateway-sa.json`
+  is DEAD … its **presence** is not configuration"*, and the user **deleted that
+  file on 2026-08-05** — so a warning keyed on its presence now describes nothing,
+  which is worse than silence: a reader who does not find it concludes the hazard
+  is gone. It is not. Copies survive in old checkouts, backups and clones, and
+  **`iac/gcloud-setup.sh` and its `.ps1` sibling still default `KEY_FILE` to that
+  exact filename**, so re-running setup writes it back. **The path is gone; the
+  hazard is not.** This is the fourth of five sites CG-55's row required to be
+  reworded rather than dropped — a warning that simply vanishes is
+  indistinguishable from one nobody thought about.
 - **Restarting drops nothing.** ⚠ **REFRESHED 2026-08-03 — this said *"once Part
   B lands, and drops everything before it,"* and Part B LANDED** (CG-54, #45,
   2026-07-31). There is no interim build to warn about: both queues are durable
@@ -1712,8 +1777,11 @@ including anything that differed from plan. Homelab-side artifacts
 (`nas/services/chat-gateway.md`, the `SECRETS.template.md` row, the Homepage
 tile, `DASHBOARDS.md`, `restore-chat-gateway.sh`, the captured config) land in
 **that** repo, after the box is running, from observed facts — deploy-then-document
-is its convention. ⚠ **`capture.sh` is a 🛑**: it rewrites captured state for all
-ten stacks. Report that it needs running; do not run it.
+is its convention. ⚠ **`capture.sh` is a 🛑**: it rewrites captured state for
+**every stack on the box** (*"all ten"* until 2026-08-05 — see the standing-rules
+table). Report that it needs running; do not run it. ✅ **It was reported, and the
+user ran it on 2026-08-05; the output was read and is clean.** `nas.md` §10 fact 5
+carries what it showed and deliberately does not reproduce it.
 
 ## C1 · Observation checklist — facts to record, not boxes to tick
 
@@ -1748,6 +1816,26 @@ shapes, so the assurance is worth exactly nothing here. Read the file. (Running
 > under §A6's *§5 The compose document*, not in this Part — still says
 > `"ports": ["8085:8085"]`; that is the `0.0.0.0` form and it is what changes.
 > **(b) is untouched and still a STOP.**
+>
+> ⚠ **RE-DATED 2026-08-05. Part C RAN — everything in this note is now past
+> tense, and two of its clauses have resolved.** (a) was observed and recorded:
+> the ACL was **not** applied (`docs/deploy/nas.md:654`), which is exactly the
+> "stated fact rather than an assumption" this note asked for. The LAN bind was
+> built and **demonstrated** — `curl` against both loopback and the tailnet
+> address on the box is refused (`nas.md:787`). **(b) is satisfied for that run**
+> — see the note under (b) below.
+>
+> ⚠ **This note called itself *"the currency pointer"*, and that is the shape
+> CG-79 named as the one that ages worst.** Two sentences in this repo aged worse
+> than any other and both certified their own currency; this is a third of the
+> same family, and it survived CG-79's sweep for a reason worth recording: the
+> phrase is **wrapped across a line break** (`currency` / `pointer`), so a
+> line-oriented `grep` for the string found the queue's copy and not this one.
+> **A self-certifying sentence is read as verified rather than as merely
+> current** — it gets examined less — and this one additionally could not be
+> found by the tool that was looking for exactly it. The label is left in place
+> with this attached, because deleting it would remove the only warning that the
+> shape recurs.
 
 **(a) The homelab tailnet ACL must already be applied (D2).** The endpoint is
 fenced from the start, never afterwards. ⚠ **This is homelab-repo work a
@@ -1761,6 +1849,40 @@ enforces on save.
 deployed gateway runs `allow_inbound: true` and the first drain writes
 FamilyWorkspace content to disk — the exact outcome D1 exists to prevent. **Make
 it fail-closed, not a memory test:**
+
+> ✅ **SATISFIED, and the sentence above is now FALSE about production — corrected
+> 2026-08-05 (CG-59's Planner; routed here by CG-79).** The operator edit landed
+> **2026-08-03** (`config/registry.yaml` mtime `2026-08-03T20:34:06Z`), the
+> pre-flight below **ran on the box on 2026-08-05 and PASSED**
+> (`{aiteam-harness: False, job-hunter: True, aitrader: False}`,
+> `docs/deploy/nas.md:644`), and the gateway has been serving since. **The
+> deployed gateway runs `allow_inbound: false` for `aiteam-harness`.**
+>
+> ⚠ **Why this line is the one to fix first: it is security-shaped and it is
+> written in the present tense about a gateway that now exists.** When this was
+> drafted, *"the deployed gateway"* named a hypothetical. It names a real host
+> now, and a reader who drops the conditional — which is what a reader of a
+> two-line antecedent does — reads a live claim that a production gateway is open
+> inbound on a hard-rule-#6 path. That is a claim about the posture of a running
+> system, and it is wrong.
+>
+> ⚠ **It is wrong in the SAFE direction, and that is luck, not design — say so
+> rather than let it read as a near-miss that was handled.** Nothing about this
+> sentence made the outcome safe. Its truth value gated nothing: had the operator
+> edit *not* landed, the prose here would read **identically**, and the deploy
+> would still have aborted — because the thing that stopped it is the script below,
+> which re-derives the map from the file every time and cannot go stale. The
+> sentence is the part that could rot; the executable check one paragraph down is
+> the part that could not. **That asymmetry is the whole finding**, and it is the
+> same one CG-79 recorded from the other end: the CG-61 row survived four days of
+> a false status line only because somebody had written *"re-measure rather than
+> trusting this line"* into it.
+>
+> **The paragraph is kept, not rewritten,** because it is still the correct
+> instruction for the *next* deploy — a fresh box, a restored `.env`, a second
+> project. The prerequisite is satisfied **for the 2026-08-05 run**, not
+> permanently: `config/registry.yaml` is gitignored, so nothing in this repo can
+> hold it satisfied.
 
 ```bash
 python - <<'PY'
@@ -1805,9 +1927,22 @@ reason, and this write-up lands in a public repo.
   whole network namespace.
 - No change to any existing NAS app's config, and **no restart of any other
   `ix-*` container** — one of them is claude-mem's Postgres.
-- Do not reach for `iac/chat-gateway-sa.json` — deleted project, authenticates to
-  nothing.
-- **Do not run `capture.sh`.** Cross-repo write covering all ten stacks.
+- Do not reach for **any `chat-gateway-sa*.json` that is not
+  `chat-gateway-sa-gw.json`** — those belong to the deleted `chat-gateway-prod`
+  and authenticate to nothing.
+  ⚠ **REWORDED 2026-08-05, not dropped.** This named the path
+  `iac/chat-gateway-sa.json`, and **that file was deleted by the user on
+  2026-08-05**, so a warning phrased around it now describes nothing. The hazard
+  outlived the path: copies sit in old checkouts, backups and clones, and
+  `iac/gcloud-setup.sh` and its `.ps1` sibling still default `KEY_FILE` to that
+  exact filename, so re-running setup writes it back. **Confirm by the key's own
+  `project_id`, never by its name** — which is what the deploy actually did
+  (`nas.md` §10 deviation 7). CG-55's row set the rewording-not-dropping condition
+  in advance; CG-79 carried it out across the rest of the repo and routed this
+  file here.
+- **Do not run `capture.sh`.** Cross-repo write covering **every stack on the box**
+  (*"all ten"* until 2026-08-05 — see the standing-rules table). ✅ Requested and
+  run by the user 2026-08-05; output clean.
 
 ---
 
@@ -2272,13 +2407,54 @@ ledger — **do not restate it.**
 
 # Part G — CG-59 · Long-run observation and a deployed `/healthz`
 
-Depends on Part C. The soak clock starts when C lands.
+~~Depends on Part C. The soak clock starts when C lands.~~
+✅ **Part C landed 2026-08-05 (`4ddd6f5`) and the gateway has been serving since.
+Nothing blocks this Part; the clock is already running.**
+
+> ## G0 · ⚠ REFRESHED 2026-08-05 — this Part was written 2026-07-31, before eight PRs and the deploy
+>
+> **Refreshed the way Part A was refreshed for CG-53** (#64 found ten drifts
+> across nine merged PRs, two of which would have failed at runtime). **Twelve
+> drifts here.** They are listed rather than silently fixed, because the point of
+> the Part A precedent is that a plan written before the code it plans against
+> *ages*, and the count is the evidence.
+>
+> | # | Part G said | Measured 2026-08-05 | Bite |
+> |---|---|---|---|
+> | 1 | the return is at `service.py:469-471` | **`service.py:1291-1293`.** Lines 469-471 are now the **`GET /v1/heartbeat/{source}` handler** — a different endpoint entirely | ⚠ **runtime.** A line-anchored edit lands in the wrong route. Exactly CG-69's finding: **8 of 14** line citations in the live contracts point at the wrong code, while name-anchored ones are 0 of 8 wrong. **Anchor on `@app.get("/healthz")`, never on a number** |
+> | 2 | `inbox.pending` is a number to record | **`inbox.pending_counts()` — a `dict[str, int]`, per app** | ⚠ **runtime.** A sampler that treats it as a scalar (a CSV column, a `max()`) breaks or silently coerces `{}` to something plausible |
+> | 3 | record `thread_alive` / `thread_started` | there are **four** such pairs now — `subscriber`, `delivery`, `heartbeats`, `retention` | ⚠ **defeats the soak.** Sampling only the subscriber's reproduces the exact blindness **CG-72** was filed to fix |
+> | 4 | G3: both audit trails are *"never pruned"* | **`inbox-data/` IS pruned** since **CG-68** (2026-08-02) — 30 days, 7 for `_unrouted`, `0` disables. `state/deliveries/` is unpruned **by decision** (ADR-0002 **D7**) | ⚠ **would have shipped a wrong conclusion.** A Builder measuring "growth of an unpruned trail" measures a trail that is being swept |
+> | 5 | G3: *"propose a retention rule; do not implement one"* | the rule **exists and ships**. D5's *"decide at CG-59"* was decided earlier, as CG-68's sign-offs A2/A3/A5 | the row would propose what already exists |
+> | 6 | — | `/healthz` has a whole **`retention`** block (`files_deleted`, `delete_errors`, `sweep_failures`, `consecutive_sweep_failures`, `audit_dir_configured`, `last_sweep_at`, `thread_alive`) that answers G3 directly | absent from G2's list |
+> | 7 | — | **CG-74/75/76** added `pass_failures`, `consecutive_pass_failures`, `delivery_failures`, `audit_write_errors`, `journal_write_errors`, `journal_skipped_lines`, `scan_failures`, `alerts_undeliverable`, `checks_undeliverable`, `checks_orphaned` | absent from G2's list. `audit_write_errors` is the **disk-full** counter, on the row whose other half is disk growth |
+> | 8 | `seconds_since_last_poll` implicitly tracks the 5 s interval | **it sawtooths to ~24 s** — `pull()` sends no `returnImmediately`, so Pub/Sub long-polls an empty subscription (`nas.md:693`) | ⚠ **runtime.** A soak alarming on "max ≫ interval" fires on **every** sample. The budget is `stale_after_seconds`, measured **300** |
+> | 9 | the spec's §4.7: *"the subscription is no longer quiet … a materially stronger claim than a quiet loop staying alive"* | **`events_seen: 0`, `suppressed_opt_out: 0`, `suppressed_not_authorized: 0` at deploy** (`nas.md:759`). It was quiet | ⚠ **the sign-off would have overclaimed** — see G2's pass/fail |
+> | 10 | §4.7: *"two spaces generating suppression traffic and two enqueueing"* | after **D1**, **three** spaces are opted out and **one** enqueues | wrong on its own terms, independent of drift 9 |
+> | 11 | §4.7: *"the observation half is user-executed"* | CG-55 ran **Builder-executed over SSH**, and a soak is `curl`-and-record — squarely ✅ *"read-only probing, unattended"* on §4.3.1's table | see G2's *Who runs it* |
+> | 12 | — | the homelab **Homepage tile now exists** and its `siteMonitor` probes **plain `/healthz`** (PR #21) | ⚠ **G1 is now urgent, not preventative** — see G1 |
+>
+> ⚠ **Drifts 9 and 10 are the ones to read twice.** They are not stale prose; they
+> are a **plan instructing its executor to make a claim the deploy has already
+> falsified.** §4.7 tells this row to say the soak is stronger than a quiet-loop
+> result *because* the subscription is busy — and the first measurement from the
+> box says it is not busy. **A ledger sign-off argued on that basis would be
+> asking the user to retire a ⚠ flag on a premise this repo can already disprove.**
+> G2 replaces the claim with the evidence.
 
 ## G1 · `?strict=1` — the deployed-only finding
 
 ```
-src/chat_gateway/service.py:469-471   return JSONResponse(status_code=200, ...)
+src/chat_gateway/service.py   the sole `return JSONResponse(...)` inside the
+                              `@app.get("/healthz")` handler — status_code=200,
+                              hardcoded, always
 ```
+
+⚠ **Anchored on the decorator, not on a line number.** This block read
+`service.py:469-471` from 2026-07-31 until 2026-08-05; those lines are now the
+`GET /v1/heartbeat/{source}` handler. Locate it with
+`grep -n 'JSONResponse' src/chat_gateway/service.py` — there is exactly **one**
+match in the file, which is why the anchor is safe and the number was not.
 
 Hardcoded 200, always — including when `status` is `degraded`. Correct for a
 hand-run gateway (you read the JSON); a real gap for a deployed one, because
@@ -2286,6 +2462,29 @@ Homepage's `siteMonitor` and container health checks judge by **status code**.
 The tile is **green while inbound is dead** — the claude-mem hardcoded-health-check
 failure, one layer up, against an endpoint that is itself scrupulously honest.
 `/healthz` is not lying; the dashboard reading it cannot hear it.
+
+> ⚠ **THE TILE NOW EXISTS, so this stopped being preventative on 2026-08-05.**
+> Homelab **PR #21** (`feat/chat-gateway-service-artifacts`, open) adds a Homepage
+> row for the gateway whose `siteMonitor` is
+> `http://<LAN-IP>:8085/healthz` — **the plain form.** Against the code as it
+> stands, that probe returns **200 for every reason string `/healthz` can
+> produce**, including *"subscriber is enabled but has never completed a poll —
+> inbound has never worked on this process"*, which is the literal text the box
+> emitted eight seconds after boot (`nas.md:665`).
+>
+> **So the tile reads green while inbound is dead.** That is the claude-mem
+> failure — the one hard rule #5 exists because of, the one that hid **11 days**
+> of silent capture failure — **reproduced at the dashboard**, in this project,
+> against the endpoint that was written to prevent it. It is not a hypothetical in
+> a spec any more; it is a live monitoring surface with a known-wrong verdict.
+>
+> ⚠ **This Part must therefore ship a second deliverable it did not previously
+> have: the tile has to be REPOINTED at `?strict=1`.** That is a homelab-repo
+> change, so **a chat-gateway Builder does not make it** — it is a handoff, named
+> here and in `nas.md` §9 so it is an owned action rather than an omission. **The
+> `?strict=1` endpoint landing without the tile moving changes nothing an operator
+> can see**, and shipping only the half in this repo would be the more dangerous
+> outcome of the two, because it retires the finding without fixing it.
 
 ```python
     @app.get("/healthz")
@@ -2326,35 +2525,256 @@ def test_the_plain_form_still_returns_200_when_degraded():
     ...
 ```
 
-## G2 · The soak
+## G2 · The soak — designed, not assumed
 
-Sample `/healthz` on an interval for **≥24h, targeting ≥72h**. Record:
-`seconds_since_last_poll` (**max, not mean** — a mean hides a wedge),
-`poll_failures` / `consecutive_poll_failures`, `thread_alive` / `thread_started`,
-`events_seen`, `dispatch_errors`, container RSS, journal size **across at least
-one compaction**, and `inbox.pending` / `inbox.dropped`.
+**The original G2 was four lines: a duration, a field list, and a deliverable.**
+It did not say what makes a duration long *enough*, how observations get captured
+without somebody watching a terminal, what a **pass** is, or — the one that
+matters most — what a **failure** looks like as distinct from a quiet network.
+Those are the parts the ledger sign-off turns on, so they are established here
+against measured periods rather than chosen as round numbers.
 
-Deliverable: a dated observation section in `docs/deploy/nas.md` — measured, in
-this queue's house style.
+### G2.1 · Duration — derived from real periods, not from a round number
+
+**The ledger row is `SubscriberLoop`'s *long-run thread behaviour*.** So the
+question is not "how many hours feels serious" but **which failure modes need
+wall-clock time to appear at all**, and what period each one is keyed to. Every
+figure below is read out of this repo's own code:
+
+| Failure mode a short run cannot reach | Keyed to | Measured period | Soak must span |
+|---|---|---|---|
+| **SA access-token expiry on the PULL path** | Google's token lifetime (~1 h) | `PubSubPuller.__init__` takes the **same `token_provider`** as `ChatApiAdapter` (`adapters/pubsub.py:255`), and `GoogleServiceAccountTokens.__call__` refreshes on google-auth's own transport | ⚠ **the single most important one.** A short smoke test runs entirely inside one token. **≥3 refreshes** so a refresh is not a coincidence |
+| **Audit-file date rollover** | local midnight | the audit trail is `<app>-<date>.jsonl` — **the filename is the retention key** (`retention.py:15`) | **≥1 local-midnight crossing**; ≥2 to see a second file open |
+| **A retention sweep actually running** | `SWEEP_INTERVAL_S` | **6 h** (`retention.py:106`) — four sweeps a day | **≥2 sweeps**, i.e. ≥12 h, or `last_sweep_at` never moves and proves nothing |
+| **Sweep staleness detection** | `SWEEP_STALE_INTERVAL_MULTIPLE` × interval | **2 × 6 h = 12 h** (`retention.py:116`) | ≥12 h before `/healthz` could even complain |
+| **A wedge, as distinct from a blip** | `POLL_STALE_AFTER_SECONDS` | **300 s**, `max(300, 6 × interval)` (`service.py:87`) | minutes — cheap, and the only one a short run reaches |
+| **Slow leaks** (RSS, fds, journal, audit bytes) | none — a rate | — | long enough for a **trend line**, not two points |
+
+**Floor: ≥24 h. Target: ≥72 h.** The original numbers survive — but they are now
+*derived* rather than asserted, and the derivation changes what a short soak
+means. ⚠ **24 h is the floor because of the 12 h sweep interval and the midnight
+rollover, not because a day sounds respectable.** A 12 h soak crosses at most one
+sweep and possibly no midnight, so it cannot speak to the sweeper at all.
+**72 h buys the thing a floor cannot: three midnights, ~12 sweeps and ~70 token
+refreshes — enough that "it worked once" and "it works repeatedly" separate.**
+
+### G2.2 · Cadence — two rates, because the fields have two shapes
+
+**One sample rate is wrong for both halves.** `seconds_since_last_poll` is a
+sawtooth that must be caught near its peak; `files_deleted` is a step function
+that moves four times a day.
+
+| Stream | Rate | Why that rate |
+|---|---|---|
+| **`/healthz`, whole body** | **every 30 s** | The sawtooth peaks at **~24 s** (G0 drift 8), so 30 s is just above one period: samples land at unaligned phases and the observed **max converges on the true max** rather than on whatever phase a slower poll happened to hit. 60 s would alias against a ~24 s wave and systematically under-report the peak — which is the number the wedge detector is judged against |
+| **container RSS + disk** (`docker stats --no-stream`, `du -sb`) | **every 10 min** | A memory *leak* is a slope over days; sampling it at 30 s buys nothing and multiplies the artifact size ~20×. `du` walks the tree, so it is the one probe with a cost |
+
+⚠ **Do not derive the poll cadence from `poll_interval_seconds` (5 s).** That is
+the loop's own interval and it is **not** the period of the field being observed —
+conflating them is the same mistake as reading the sawtooth as a fault.
+
+### G2.3 · What is captured — the whole body, appended, on the box
+
+**Record the entire `/healthz` JSON per sample, one object per line, not a
+selected subset.** The field list has been wrong three times in this arc already
+(G0 drifts 3, 6, 7 are all *"a counter that exists and was not in the list"*), and
+**a soak that discards a field cannot be re-read for it three days later.** The
+run is unrepeatable in a way the analysis is not.
+
+```
+# on the box, detached; no human watches a terminal for three days
+#   - append-only JSONL, one whole /healthz body per line, plus a sample clock
+#   - a SEPARATE file for the 10-minute RSS/disk stream
+#   - systemd timer, cron, or `nohup` + a loop — any of the three; the choice is
+#     the operator's and the runbook records which was used
+#   - the gateway's own container is NOT modified: this is `curl` from outside it
+```
+
+⚠ **Three constraints on the artifact, all load-bearing:**
+
+1. **It lands in this PUBLIC repo, so it obeys `/healthz`'s own discipline** —
+   counts and app ids only. `/healthz` already emits no space id, no sender and
+   no content by construction (CG-12), so capturing the **whole body** is safe
+   *because of* that design, not in spite of it. ⚠ **`inbox.pending` is a
+   per-app map** (G0 drift 2) — app ids are non-secret (they are in the committed
+   registry), so it stays; nothing else in the body needs a decision.
+2. **Sample it from a host that is not the gateway's container.** A sampler
+   sharing the process it measures cannot distinguish "the gateway is wedged"
+   from "the sampler is wedged".
+3. **Keep the raw JSONL out of `git`.** Summarize into `nas.md`; the run's
+   artifact is an input, not a deliverable. ⚠ `state/` is gitignored for exactly
+   this class of accident (CG-67) — **the soak artifact is not under `state/`**,
+   so that guard does not cover it. Write it somewhere ignored, deliberately.
+
+### G2.4 · What is observed — the current field set, not 2026-07-31's
+
+The original list named 9 fields. **`/healthz` now publishes four subsystems.**
+Capturing the whole body (G2.3) means this table is an *analysis* checklist, not
+a collection one — which is the point.
+
+| Subsystem | Fields that carry the long-run signal |
+|---|---|
+| `subscriber` | `seconds_since_last_poll` (**max, not mean** — a mean hides a wedge), `poll_failures`, `consecutive_poll_failures`, `last_poll_error`, `thread_alive`, `thread_started`, `events_seen`, `unparseable_seen`, `dispatch_errors`, `interactions_without_action_id`, `suppressed_opt_out`, `suppressed_not_authorized`, `stale_after_seconds` |
+| `delivery` (**CG-72/74/75/76**) | `thread_alive`, `thread_started`, `seconds_since_last_pass`, `pass_failures`, `consecutive_pass_failures`, `last_pass_error`, `delivery_failures`, `pending_jobs`, `journal_skipped_lines`, `journal_write_errors`, **`audit_write_errors`** |
+| `heartbeats` (**CG-72/74/76**) | `thread_alive`, `thread_started`, `seconds_since_last_scan`, `scan_failures`, `consecutive_scan_failures`, `alerts_undeliverable`, `checks_undeliverable`, `checks_orphaned` |
+| `retention` (**CG-68**) | `thread_alive`, `last_sweep_at`, `files_deleted`, `delete_errors`, `sweep_failures`, `consecutive_sweep_failures`, `audit_dir_configured` |
+| `inbox` | `pending` (**a map**), `dropped`, `replayed_at_boot`, `unrevivable_at_boot`, `quarantined_at_boot`, `quarantine_write_errors` |
+| off-body | container **RSS**, journal size **across ≥1 compaction**, `du` of each state directory, container restart count |
+
+⚠ **All four `thread_alive` flags, not just the subscriber's.** CG-72 exists
+because `/healthz` could not see two of these four at all, and a soak that
+re-narrows to one re-creates the blindness that row closed.
+
+### G2.5 · Pass, fail, and the difference between a failure and a quiet network
+
+**This is the section the original G2 did not have, and it is the one the
+sign-off turns on.** Every threshold is a measured constant from this repo, cited.
+
+**PASS — all of:**
+
+| # | Condition | Why this and not something stricter |
+|---|---|---|
+| 1 | all four `thread_alive` **true** in every sample; no `thread_started` flips false | thread death is the ledger row's literal subject |
+| 2 | `max(seconds_since_last_poll)` **< `stale_after_seconds`** (300 at a 5 s interval) | ⚠ **judged against the budget the code publishes, NOT against `poll_interval_seconds`.** The observed ceiling is ~24 s (G0 drift 8); a max in the 20-30 s band is **healthy long-polling** |
+| 3 | `consecutive_poll_failures` returns to **0** after any excursion | the cumulative counter is history; the consecutive one is the live condition |
+| 4 | `status: "ok"` and `reasons: []` in every sample **after** the first completed poll | ⚠ **the boot window is EXPECTED to be `degraded`** — `nas.md:665` records ~8 s of *"has never completed a poll"*, and that is rule #5 working. A soak that counts it as a failure has misread its own instrument |
+| 5 | `last_sweep_at` advances **≥2 times**; `sweep_failures`, `delete_errors`, `consecutive_sweep_failures` all **0** | ≥2 is what distinguishes a running sweeper from one that ran once at boot |
+| 6 | RSS **flat or converged** across the run — a slope, not two endpoints | a leak is a rate; a single before/after pair cannot see one |
+| 7 | container restart count **unchanged** | ⚠ `restart: unless-stopped` makes a silent restart look identical to uptime from `/healthz` alone, because every counter resets to a plausible zero. **This is the one check that must come from `docker`, not from the body** |
+| 8 | `journal_write_errors`, `audit_write_errors`, `delete_errors`, `quarantine_write_errors` all **0** | the write-path counters CG-75/CG-65 added precisely so a silent failure has a number |
+
+**FAIL — any of:** a `thread_alive` false; `seconds_since_last_poll` over
+`stale_after_seconds`; `consecutive_poll_failures` that never returns to 0; a
+non-null `last_poll_error` that repeats; monotonically rising RSS; any non-zero
+write-error counter; an unexplained restart.
+
+⚠ **The distinction that is easy to get backwards.** A **quiet network** and a
+**wedged loop** look nearly identical in the fields an operator watches first —
+`events_seen` flat, `poll_failures` 0, `status: ok`. They are told apart by
+exactly one field, and it is the reason that field was added:
+
+> **`seconds_since_last_poll` keeps SAWTOOTHING when the subscription is empty,
+> and FREEZES when the loop is wedged.** A quiet network still completes polls —
+> Pub/Sub returns empty after its long-poll hold and `last_poll_at` advances. A
+> wedged loop stops advancing it, and the number climbs monotonically. **Quiet is
+> a sawtooth; wedged is a ramp.** The *shape* is the signal, not the value, which
+> is why every sample is kept and why the cadence sits just above one period.
+
+**This is also the answer to "what if nothing ever arrives".** A three-day soak
+over four silent spaces still fully exercises the pull loop, the token refresh,
+the sweeper and all four threads — because **polling is unconditional.** The
+evidence does not depend on traffic.
+
+### G2.6 · ⚠ What a quiet space CANNOT prove — state this, do not smooth it
+
+**`events_seen` was `0` at deploy** across a sampled window with `poll_failures: 0`
+throughout (`nas.md:759`), and **a 72 h soak may legitimately return `0` again.**
+Zero is a real reading, not a broken sampler. What it does and does not license:
+
+| A `0`-event soak **does** establish | It does **not** establish |
+|---|---|
+| the pull loop survives days, across dozens of token refreshes | anything about **dispatch under inbound load** — `dispatch()` may not run once |
+| all four threads stay alive and keep completing passes | `inbox.dropped` / the 1000-item cap — **unreachable at zero volume** |
+| the sweeper runs on schedule and errs zero times | that **30 days is the right window** — the row's own remaining question needs volume |
+| `status`/`reasons` stay honest over days | which **event types** the four spaces actually send — still open from `nas.md` C1a |
+| RSS and fd behaviour at idle | RSS under load |
+| the ~24 s long-poll period is stable, not a one-off | queue depth or backlog behaviour |
+
+⚠ **And `0` does not mean the spaces are silent.** The subscription's retention is
+**24 h** and it was drained by an ad-hoc client on 2026-07-30, so anything older
+is simply gone: `0` means *nothing was retained at this moment*, not *nothing
+happened* (`nas.md:766`). **A soak measures the gateway, not the spaces.**
+
+⚠ **The spec's §4.7 says the opposite of all this and must not be quoted.** It
+claims the subscription *"is no longer quiet"* and that the soak therefore
+exercises *"real, continuous, multi-space traffic"* — **written 2026-07-31 as a
+prediction, and falsified by the first measurement from the box.** G0 drift 9.
+**The PR must state what the evidence reaches and nothing beyond it.**
+
+### G2.7 · Who runs it
+
+**Builder, over SSH, under the standing rules at the top of this plan.** Sampling
+`/healthz` is `curl` and append — squarely ✅ *"read-only probing, unattended"* on
+§4.3.1's table, which is the row that names this exact capability. ⚠ **The spec
+still says the observation half is *"user-executed"*** (§4.7); that framing
+predates CG-55, which superseded it for the deploy itself and proved the
+connection works unattended. **Recorded as a drift rather than silently
+inverted** — G0 drift 11 — because it is the kind of scope change that should be
+visible, and because CG-79 examined that same line and reasonably left it alone.
+
+### G2.8 · Deliverable
+
+A dated observation section in `docs/deploy/nas.md` — measured, in this queue's
+house style, **with the raw artifact summarized rather than committed.**
 
 ⚠ **Whether this clears the ledger's `SubscriberLoop` long-run row is a hard rule
 #3 question needing the user's explicit sign-off** (CG-35's precedent: the flag
 word dropped, the explanation kept, and the PR says in those words what is being
-removed). The row **presents evidence and proposes**; it does not clear a flag on
-its own authority. A quiet subscription running three days proves the thread
-survives; it proves little about behaviour under load, and the PR must say which
-of those it has.
+removed). **This Part plans the EVIDENCE. It does not plan the clearing, and it
+must not be written as though the two are the same step.** The row **presents and
+proposes**; it does not move a flag on its own authority, and a clean 72 h result
+is an argument for the user to consider, not a clearance that follows from it.
+
+**The proposal must name its own limit in the same breath as its result** — the
+G2.6 table is that limit. *"The loop survived 72 hours, ~70 token refreshes and
+three midnights over a subscription that delivered zero events"* is a true and
+useful sentence. *"The loop is proven under load"* is not, and no amount of
+uptime makes it one.
 
 ## G3 · Disk growth — measure, propose, do not implement
 
-The audit JSONL files (`inbox-data/`, `state/deliveries/`) are per-app-per-day and
+~~The audit JSONL files (`inbox-data/`, `state/deliveries/`) are per-app-per-day and
 **never pruned** — invisible on the dev box, a slow leak on a host meant to run
-for years. Report measured growth per day and **propose** a retention rule.
+for years. Report measured growth per day and **propose** a retention rule.~~
 
-**Do not implement one.** A retention policy on an audit trail whose stated
+~~**Do not implement one.** A retention policy on an audit trail whose stated
 purpose is that *"nothing is ever silently lost"* is a rule-#5-flavoured decision
 and belongs to the user — ✅ **decided (D5): measure first, propose here with real
-numbers.** With `aiteam-harness` closed (D1) only `job-hunter` accumulates.
+numbers.** With `aiteam-harness` closed (D1) only `job-hunter` accumulates.~~
+
+> ⚠ **STRUCK 2026-08-05: `never pruned` is FALSE, and D5's *"decide at CG-59"*
+> was decided three days early — by CG-68 on 2026-08-02.** G0 drifts 4 and 5.
+> Struck rather than deleted because the *shape* of the reasoning is what CG-68
+> went on to adopt, and a Builder who finds only the conclusion will not know the
+> premise moved. The two directories now differ, and **collapsing them is exactly
+> what the struck text did**:
+>
+> | Directory | Pruned? | By what |
+> |---|---|---|
+> | `inbox-data/` | ✅ **YES**, since CG-68 | `DEFAULT_RETENTION_DAYS = 30`; `UNROUTED_RETENTION_DAYS = 7` for the gateway's own `_unrouted` bucket; `0` disables — via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`. **The filename is the retention key**, so pruning is a directory listing and an `unlink`; nothing opens a file holding bodies to decide whether to delete it |
+> | `state/deliveries/` | 🚫 **NO — by decision**, not omission | titles-only and permanent, **ADR-0002 D7**. CG-68 made it a code property too: the sweeper **refuses to boot** if its directory overlaps the state dir |
+> | `state/quarantine/` | 🚫 **NO — deliberately** | it is what makes the sweep safe; skipped by name even when the overlap guard would allow it |
+>
+> **The window's numbers have ONE home — `retention.py`'s constants, quoted to
+> consumers at `docs/integration-guide.md:366`.** They are named above only to
+> mark which of three directories each rule applies to; do not treat this table as
+> a second home for the values.
+
+### G3′ · What is ACTUALLY left for this row
+
+**The retention *mechanism* is not this row's question any more. Its *calibration*
+is** — and that is a question only volume can answer, which is why it survived
+into a soak.
+
+| Question | Why the sweep did not settle it |
+|---|---|
+| **Is 30 days the right window?** | CG-68 picked a number **before any real volume existed**. The soak is the first opportunity to price it against measured bytes/day per app |
+| **Is `state/deliveries/` growing forever acceptable on a host meant to run for years?** | ⚠ **D7 decided this on CONTENT grounds — titles only, no bodies — and never on SIZE.** That is a different argument, and it has never been tested against a rate. Measure the rate; if it is negligible, D7 is confirmed **for a reason it did not originally have** |
+| **Does the sweeper's own bookkeeping stay clean over ≥2 sweeps?** | `files_deleted`, `delete_errors`, `sweep_failures` have never been read from a long-running deployment |
+
+⚠ **`files_deleted: 0` across a 72 h soak is the EXPECTED result and proves
+nothing about the sweeper working.** The window is **30 days** and the deployment
+is days old, so **there is nothing old enough to delete.** A soak that reports
+*"`files_deleted: 0` — retention verified"* would have inverted its own evidence.
+**What a 72 h soak can establish is that the sweeper RUNS** — `last_sweep_at`
+advancing ≥2 times with zero errors — which is a liveness claim, not a deletion
+claim. Say which one the run has.
+
+**Still: measure and propose, do not implement.** Unchanged and still right —
+a retention decision belongs to the user (CG-68's own A2/A3/A5 sign-offs are the
+precedent, not a counterexample). ⚠ **And do not "fix" `files_deleted: 0` by
+shortening the window to make the soak produce a deletion.** Tuning an instrument
+until it reports what an experiment wanted is not evidence.
 
 ---
 
@@ -2510,6 +2930,24 @@ Reasoning lives in spec §7 D1 and §4.0b. This Part is only the mechanics.
 ⚠ **`config/registry.yaml` is gitignored; a PR cannot change it.** Verified
 2026-07-31 that it still reads `allow_inbound=True` for this app, so this is a
 real edit and not a no-op. Make the same change on the dev box, then confirm:
+
+> ✅ **DONE — the operator made this edit on 2026-08-03** (`config/registry.yaml`
+> mtime `2026-08-03T20:34:06Z`), and `allow_inbound: false` is now **written
+> explicitly** at line 38 rather than arriving as the loader default, which was
+> D1's whole point. Re-measured through the real `load_registry` on 2026-08-05:
+> `aiteam-harness allow_inbound=False`. Independently confirmed on the box by
+> CG-55's fail-closed pre-flight (`nas.md:644`).
+>
+> ⚠ **The interesting part is the four days in between.** This step's *"Verified
+> 2026-07-31"* measurement was superseded 78 minutes after a **later** measurement
+> — taken 2026-08-03 at 19:15:56Z and quoted as current in the queue — and both
+> went on describing the file as unedited until 2026-08-05. **So the correct fact
+> was written down in this repo, in `nas.md`, on the day of the deploy, while
+> three other files still called the edit outstanding.** That is not staleness; it
+> is two homes for a moving fact, and this arc's most-repeated lesson.
+>
+> **The measurement above is left as written** — it was true on 2026-07-31 and a
+> dated measurement is a record. Only the tense is corrected, here, once.
 
 ```bash
 python - <<'PY'

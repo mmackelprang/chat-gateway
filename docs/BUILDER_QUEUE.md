@@ -1,6 +1,45 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-05 (Builder — **CG-79 SHIPPED**: CG-55's recorded
+**Last updated:** 2026-08-05 (Planner — **CG-59 REFRESHED + CG-79's routed list
+cleared, and it was NOT the whole set.** Three jobs, one PR, bundled because all
+three edit the production-readiness arc plan.
+**(1)** The six falsified facts are corrected across `docs/superpowers/` — the
+artifacts CG-79 deliberately did not touch. ⚠ **Its routed list was accurate and
+incomplete**, which is what a routing list is: every coordinate it published was
+right, and **the sweep found five more sites it did not have**, including
+**both spec twins of the security-shaped `allow_inbound: true` claim** it flagged
+in the plan, and a **third self-certifying sentence** — *"this note is the
+currency pointer"*, at `plans/…-arc.md:1738` — which its `grep` could not see
+**because the phrase wraps across a line break.**
+**(2)** `docs/deploy/nas.md` §6 specified **two** `SECRETS.template.md` rows and
+**the two-row spec was the defect**: a rebuild would silently omit
+`GOOGLE_APPLICATION_CREDENTIALS`, the one credential tier 2 cannot work without,
+whose absence produces a gateway that boots clean, reports the adapter present at
+`/healthz`, and fails every Google call while tier 1 keeps working. Corrected to
+**three**, with the reasoning and the different-in-kind note: it names a **path**,
+so restoring it means restoring a **file**. The user approved it; homelab PR #21
+carries the artifact.
+**(3)** **CG-59's Part G refreshed on the CG-53/Part A precedent — TWELVE drifts**,
+three of them runtime-shaped (the `service.py:469-471` citation now points at a
+different endpoint; `inbox.pending` became a per-app **map**; a soak alarming on
+`seconds_since_last_poll` ≫ interval fires on **every** sample, because it
+sawtooths to **~24 s** by design). ⚠ **The sharpest is not a code drift**: §4.7
+instructs the row to argue its ledger sign-off on *"the subscription is no longer
+quiet"*, and the deploy measured **`events_seen: 0`**. **The plan told its
+executor to make a claim this repo can already disprove.** The soak is now
+designed rather than assumed — duration derived from measured periods (6 h sweep
+interval, ~1 h token, local-midnight audit rollover), two capture cadences, an
+explicit pass/fail, and a table of what a quiet space **cannot** prove. ⚠ **Also
+newly urgent:** homelab PR #21's Homepage tile probes **plain `/healthz`**, which
+answers 200 while degraded — **the tile reads green while inbound is dead**, the
+claude-mem failure reproduced at the dashboard. Repointing it at `?strict=1` is a
+homelab handoff and is recorded in three places.
+⚠ **No ⚠ verification-ledger flag cleared, added or reworded** —
+`git diff main -- src/` is **empty**; this PR touches no `src/` and no `tests/`.
+**CG-59 plans the EVIDENCE; clearing the `SubscriberLoop` row stays a hard-rule-#3
+question for the user.** Suite **383**, measured. Previous entry follows.)
+
+**Previously:** 2026-08-05 (Builder — **CG-79 SHIPPED**: CG-55's recorded
 status reconciled across this file, `CLAUDE.md`, `docs/deploy/nas.md`,
 `docs/google-cloud-setup.md`, both consumer contracts and one `src/` comment.
 **PR #66 merged as `4ddd6f5`**; the banner two entries below still said *"PR open
@@ -48,7 +87,7 @@ false claim anyway. ⚠ **Logged as CG-69 evidence instance 6** — a merge goin
 this file's own banner within hours. Suite **383**, re-measured. Previous entry
 follows.)
 
-**Previously:** 2026-08-05 (Builder — **CG-78 SHIPPED**: the LAN address
+**And before that:** 2026-08-05 (Builder — **CG-78 SHIPPED**: the LAN address
 literals CG-55's planning prose left in this file are placeholdered, and
 `DOC_PRIVATE_IP` guards the return path. The sweep was far wider than the three
 hits it was handed — private + CGNAT quads, any dotted quad, `*.ts.net`, MACs,
@@ -60,7 +99,7 @@ by the user**, because it would invalidate every merge record this project uses
 as its audit trail. Read the row's *"What this row does NOT do"* before
 believing the checkbox. Suite **382 → 383**. Previous entry follows.)
 
-**And before that:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
+**Before that:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
 running on the NAS and serving. Five facts observed, three of §5's open
 verification points answered on the box, seven deviations recorded. The record
 has one home — `docs/deploy/nas.md` §10 *Executed*. ~~⏸ **PR open and HELD for
@@ -4452,13 +4491,17 @@ residue, **link `CLAUDE.md`'s verification ledger — do not restate it.**
 | **Depends on** | ~~**CG-55** — the soak clock starts when it lands~~ ✅ **CG-55 landed 2026-08-05** (`4ddd6f5`); the soak clock started with it and has been running ever since. **Nothing blocks this row.** *(Corrected 2026-08-05 by CG-79 — the future tense outlived the event it was waiting for, which is the one way a dependency line goes wrong without ever looking wrong.)* |
 | **Touches** | `service.py` (`?strict=1`), `docs/deploy/nas.md` (the observation section) |
 | **Merge gate** | no for the code; **any ledger change needs explicit hard-rule-#3 sign-off** |
-| **Spec / plan** | [spec §4.7](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part G](superpowers/plans/2026-07-31-production-readiness-arc.md) |
+| **Spec / plan** | [spec §4.7](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part G](superpowers/plans/2026-07-31-production-readiness-arc.md) — ✅ **REFRESHED 2026-08-05, twelve drifts; the audit is Part G §G0 and the soak is now designed (§G2), not asserted** |
 
 `CLAUDE.md`'s verification ledger records that **no multi-hour live run has
 happened** for `SubscriberLoop`. This row is that run.
 
-**The deployed-only finding.** `service.py:469-471` returns
-`status_code=200` **hardcoded**, including when `status` is `degraded`. Correct
+**The deployed-only finding.** The sole `return JSONResponse(...)` in
+`service.py`'s `@app.get("/healthz")` handler returns `status_code=200`
+**hardcoded**, including when `status` is `degraded`. *(This row cited
+`service.py:469-471` until 2026-08-05; those lines are now
+`GET /v1/heartbeat/{source}` — a different endpoint. Anchor on the decorator.)*
+Correct
 for a hand-run gateway — you read the JSON. A real gap for a deployed one,
 because Homepage's `siteMonitor` and container health checks judge by **status
 code**: the tile is **green while inbound is dead**. That is the claude-mem
@@ -4466,6 +4509,25 @@ hardcoded-health-check failure — the one hard rule #5 exists because of, which
 11 days of silent capture failure — occurring **one layer up**, at the dashboard,
 against an endpoint that is itself scrupulously honest. `/healthz` is not lying;
 the dashboard reading it cannot hear it.
+
+⚠ **THE TILE NOW EXISTS, and this row's framing above was written before it did.**
+Homelab **PR #21** (`feat/chat-gateway-service-artifacts`, open 2026-08-05) adds a
+Homepage row for the gateway whose **`siteMonitor` points at plain `/healthz`**.
+So *"the tile is green while inbound is dead"* stopped being an argument about a
+hypothetical dashboard and became a **statement about a monitoring surface that
+exists**, probing a live host, with a known-wrong verdict. It would answer **200**
+for the exact reason string this box emitted eight seconds after boot
+(`nas.md:665`).
+
+**Two consequences this row must carry:**
+
+1. **The `?strict=1` half is now remedial, not preventative** — the priority
+   argument changed even though the design did not.
+2. ⚠ **Repointing the tile is a HOMELAB-repo change, so this row cannot do it** —
+   it is a **handoff**, recorded in `nas.md` §9, plan §G1 and here. **The endpoint
+   without the repoint changes nothing an operator can see**, and shipping only
+   the half that lives in this repo would retire the finding without fixing it.
+   That is the failure shape this row was filed against, one level up again.
 
 **Recommended: add `GET /healthz?strict=1`**, returning **503** when `reasons` is
 non-empty and 200 otherwise, with an **identical body**. Additive — no existing
@@ -4475,11 +4537,41 @@ with existing readers, and because a 503 from a *container* health check would
 make Docker restart a gateway that is degraded but **working** (one unresolved env
 var on a tier-1-only host). Opt-in puts the choice with the reader.
 
-**The soak:** sample `/healthz` for **≥24h, targeting ≥72h**, recording
-`seconds_since_last_poll` (**max, not mean** — a mean hides a wedge),
-`poll_failures` / `consecutive_poll_failures`, `thread_alive` / `thread_started`,
-`events_seen`, `dispatch_errors`, container RSS, journal size **across at least one
-compaction**, and `inbox.pending` / `inbox.dropped`.
+**The soak — ✅ DESIGNED 2026-08-05, plan §G2.** The four-line sketch this row
+carried (`≥24h, targeting ≥72h`, nine fields) is superseded rather than restated,
+because the design is long and **a second home for it is how this project has been
+burned three times.** What changed, in one line each:
+
+- **Duration is now DERIVED, not chosen.** ≥24 h / target ≥72 h survive — but
+  against measured periods: the retention sweep interval is **6 h**
+  (`retention.py:106`) and its staleness budget **12 h**, the audit trail rolls
+  over at **local midnight** (the filename *is* the retention key), and the SA
+  access token — used by `PubSubPuller` too, not just the Chat API — refreshes
+  roughly hourly. 72 h buys three midnights, ~12 sweeps and ~70 refreshes, which
+  is where *"it worked once"* and *"it works repeatedly"* separate.
+- **Two cadences, because the fields have two shapes**: the whole `/healthz` body
+  every **30 s** (just above the ~24 s sawtooth, so the observed max converges on
+  the true one instead of aliasing), RSS and `du` every **10 min**.
+- **Capture the WHOLE body, appended as JSONL, sampled from outside the
+  container, kept out of `git`.** The field list in this arc has been wrong three
+  times; a soak that discards a field cannot be re-read for it, and the run is
+  unrepeatable in a way the analysis is not.
+- **Nine fields became four subsystems.** ⚠ **All four `thread_alive` flags** —
+  `subscriber`, `delivery`, `heartbeats`, `retention` — because **CG-72 exists
+  because `/healthz` could not see two of them**, and a soak that re-narrows to
+  the subscriber re-creates the blindness that row closed.
+- **An explicit pass/fail**, every threshold cited to a constant in this repo.
+- ⚠ **How a quiet network differs from a wedge, which the sketch never said:**
+  **quiet is a sawtooth, wedged is a ramp.** A quiet subscription still completes
+  polls — Pub/Sub returns empty after its long-poll hold — so
+  `seconds_since_last_poll` keeps oscillating; a wedged loop freezes
+  `last_poll_at` and the number climbs monotonically. **The shape is the signal,
+  not the value.**
+
+⚠ **`seconds_since_last_poll` sawtooths to ~24 s, not ~5 s** — `pull()` sends no
+`returnImmediately`, so Pub/Sub long-polls an empty subscription (`nas.md:693`).
+The budget is `stale_after_seconds`, measured **300**. **A soak alarming on
+"max ≫ `poll_interval_seconds`" fires on every single sample.**
 
 ⚠ **Whether this clears the ledger's `SubscriberLoop` long-run row is a hard rule
 #3 question and needs the user's explicit sign-off**, on CG-35's precedent. The row
@@ -4487,6 +4579,23 @@ compaction**, and `inbox.pending` / `inbox.dropped`.
 **A quiet subscription running for three days proves the thread survives; it
 proves little about behaviour under load** — say which of those the evidence
 reaches.
+
+⚠ **That caveat was WITHDRAWN by the spec and is hereby restored — it was right,
+and the thing that withdrew it was a prediction.** Spec §4.7 struck it on the
+grounds that *"the subscription is no longer quiet — four spaces feed it"*, and
+instructed this row to argue a *"materially stronger claim"* on that basis.
+**The first measurement from the box was `events_seen: 0`, `suppressed_opt_out: 0`,
+`suppressed_not_authorized: 0`** (`nas.md:759`). **So the plan told its executor to
+make a claim the deploy had already falsified** — the sharpest of the twelve
+drifts, and the only one that would have reached the user as an over-claimed
+request to retire a ⚠ flag. ⚠ **A `0`-event soak is a legitimate result, not a
+broken sampler**, and it establishes real things — the loop survives days across
+dozens of token refreshes, all four threads stay alive, the sweeper runs, `status`
+stays honest. It establishes **nothing** about dispatch under load, the
+1000-item cap, or whether 30 days is the right window. **And `0` does not mean the
+spaces are silent**: the subscription's retention is 24 h and it was drained
+2026-07-30, so `0` means *nothing was retained at this moment*. Full table:
+plan §G2.6.
 
 **Disk growth: measure and propose, do not implement.** The audit JSONL files are
 per-app-per-day — invisible on the dev box, a slow leak on a host meant to run
@@ -4511,6 +4620,17 @@ pruned"*, and named the decision as one the user had not taken. Now:
 days is the right number against real volume, and whether `state/deliveries/`
 growing forever is acceptable on a host meant to run for years — which D7
 decided on content grounds, never on size.
+
+⚠ **One trap in measuring that, added 2026-08-05: `files_deleted: 0` across a 72 h
+soak is the EXPECTED result and proves nothing about deletion.** The window is
+**30 days** and the deployment is days old, so there is nothing old enough to
+delete. A run that reports *"`files_deleted: 0` — retention verified"* has
+inverted its own evidence. What a 72 h soak **can** establish is that the sweeper
+**runs** — `last_sweep_at` advancing ≥2 times (the interval is 6 h) with
+`sweep_failures`, `delete_errors` and `consecutive_sweep_failures` all zero. That
+is a **liveness** claim, not a deletion claim; say which one the run has. ⚠ **And
+do not shorten the window to make the soak produce a deletion** — tuning an
+instrument until it reports what the experiment wanted is not evidence.
 
 ---
 
