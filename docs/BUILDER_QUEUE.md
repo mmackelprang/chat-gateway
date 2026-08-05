@@ -1,6 +1,14 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-03 (Builder — **CG-53 SHIPPED (#65)**: the deployment
+**Last updated:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
+running on the NAS and serving. Five facts observed, three of §5's open
+verification points answered on the box, seven deviations recorded. The record
+has one home — `docs/deploy/nas.md` §10 *Executed*. ⏸ **PR open and HELD for the
+user's review; not merged.** ⏸ `capture.sh` outstanding, homelab §9 artifacts
+outstanding, tailnet ACL still not applied. Suite **382**, re-measured on the
+branch. Previous entry follows.)
+
+**Previously:** 2026-08-03 (Builder — **CG-53 SHIPPED (#65)**: the deployment
 artifacts, the runbook, and the loader that makes hard rule #2 hold on the NAS.
 **Ships no deploy.** Suite **382** on the CG-53 branch, measured with
 `python3 -m pytest -q`, not copied from any row.
@@ -1098,7 +1106,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | ✅ done (#65) | ⏸ **merge gate** — secret-handling path; **held, the user's to release**, and the row now states exactly what releasing it approves (four things, **none of them a deploy**). ✅ **The premise was RE-MEASURED, not re-quoted** — it is the one load-bearing fact here and it lives in a repo this one does not control: through the homelab redactor's **real** `is_secret_key`, all seven credential vars still miss, and end to end through the **real** scan gate a payload keeping a live-shaped API key and webhook URL **exited 0**. ⚠ One correction: *"the `__<SUFFIX>` convention defeats it"* is only half right — bare `GOOGLE_CHAT_WEBHOOK_URL` is missed **anyway** (no `URL` suffix), so **renaming would not fix the webhook family**, the one secret with no rotate-in-place. ⚠ **Ten drifts found and corrected in Part A** across NINE merged PRs — **two would have failed at runtime**: A2's `build_runtime()` unpack is now a **6**-tuple (CG-68's `sweeper`), and §5's compose mounted the registry where its own env var did not point. Also folded in: **CG-70's owed runbook line** (that row stays **open**), the real state tree (**four** directories hold tenant bodies; `quarantine/` is never swept), **D2's deferral** replacing an *"ACL lands BEFORE deploy"* claim, and `202`→345→**359** (CG-76 landed mid-refresh and moved it a second time). Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
 | **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | ✅ done (#46) | Filed by CG-54's Builder. Shipped 2026-07-31 after CG-60 (#44) cleared the way. Item 4's "four fields degrade" was **five** — measured, and the row records both |
-| **CG-55** · first NAS deploy + live smoke | 📋 queued | ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, **CG-75**, **CG-76** (⚠ **the CG-76 dependency was NOT recorded on this row until 2026-08-03** — the user's 2026-08-02 pre-deploy-blocker decision existed, and `grep` found it named nowhere under either CG-55 entry. A first deploy whose dead-man switch has six ways to drop an alert with `/healthz` green is a first deploy that should not happen, and aitrader's contract surface is exactly that switch), **CG-75** (⚠ **added 2026-08-03, user decision** — this gateway has never run on a box with a real disk that can fill, so CG-75's *"low likelihood"* is an artifact of never having been deployed, and **CG-55 is the event that changes it**; a first deploy that can turn a full disk into an unbounded send storm against Google is a first deploy that should not happen), and ~~⚠ an **external homelab-repo prerequisite (D2)**~~ — ⏸ **D2's tailnet ACL is DEFERRED by the user, 2026-08-03. It no longer gates this row; the dependency is recorded, not deleted.** ⚠ **Paired with a second decision the same day that this row must BUILD: bind the published port to the LAN interface, not `0.0.0.0`** (both, with reasoning and residual, in the row). Part C |
+| **CG-55** · first NAS deploy + live smoke | 🚀 **DEPLOYED and serving** (2026-08-05) · PR open, ⏸ **HELD for the user's review before merge** | ✅ **The gateway runs on the NAS. All five facts observed, §5's three open verification points answered on the box, seven deviations recorded — and the record has exactly ONE home: `docs/deploy/nas.md` §10 *Executed*.** Deliberately not summarized here; the interesting numbers are the ones that will move, and this file is where a second copy of a moving fact has burned this project three times. The row's detail section carries only what is still **open** and who owns it. ⚠ **`capture.sh` NOT run — 🛑, requested, outstanding.** ⚠ **No ⚠ ledger flag cleared, added or reworded** (one candidate named, left for CG-59). ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, **CG-75**, **CG-76** (⚠ **the CG-76 dependency was NOT recorded on this row until 2026-08-03** — the user's 2026-08-02 pre-deploy-blocker decision existed, and `grep` found it named nowhere under either CG-55 entry. A first deploy whose dead-man switch has six ways to drop an alert with `/healthz` green is a first deploy that should not happen, and aitrader's contract surface is exactly that switch), **CG-75** (⚠ **added 2026-08-03, user decision** — this gateway has never run on a box with a real disk that can fill, so CG-75's *"low likelihood"* is an artifact of never having been deployed, and **CG-55 is the event that changes it**; a first deploy that can turn a full disk into an unbounded send storm against Google is a first deploy that should not happen), and ~~⚠ an **external homelab-repo prerequisite (D2)**~~ — ⏸ **D2's tailnet ACL is DEFERRED by the user, 2026-08-03. It no longer gates this row; the dependency is recorded, not deleted.** ⚠ **Paired with a second decision the same day that this row must BUILD: bind the published port to the LAN interface, not `0.0.0.0`** (both, with reasoning and residual, in the row). Part C |
 | **CG-56** · inbox delivery semantics: at-most-once → ack | 📋 queued | ✅ **APPROVED (D3)** — opt-in per request; default path unchanged. Part D |
 | **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
@@ -3454,7 +3462,30 @@ as unnoticed:
 
 ---
 
-### CG-55 · First NAS deploy and live smoke  📋 queued · **BUILDER-EXECUTED over SSH**
+### CG-55 · First NAS deploy and live smoke  🚀 **DEPLOYED 2026-08-05** · PR open, ⏸ **HELD for review before merge** · **BUILDER-EXECUTED over SSH**
+
+> ✅ **Executed 2026-08-05. The gateway is deployed on the NAS and serving.** The
+> record of what actually happened — every step, all five facts, the seven
+> deviations, and what this run did **not** do — has **one home**, and it is not
+> this row: **`docs/deploy/nas.md` §10 *Executed***. Do not summarize it here;
+> that is this repo's own most-repeated lesson.
+>
+> **What is left OPEN by this row — pointers only, because each one's evidence
+> lives in §10 and a second copy of it here is the trap this row's own note
+> just warned about:**
+>
+> | Open | Owner | Evidence |
+> |---|---|---|
+> | `capture.sh` not run — 🛑 for Builder, **requested and outstanding** | whoever holds the homelab working tree | §10 fact 5 |
+> | every §9 homelab-side artifact (`nas/services/`, `SECRETS.template.md`, `restore-*.sh`, `DASHBOARDS.md`, Homepage tile) | homelab repo, deploy-then-document | §10 *What this run did NOT do* |
+> | the tailnet ACL (D2) **not applied at deploy time** | deferred by the user; re-priced by the subnet router | §10 Steps table |
+> | what the subscription actually carries, and the `SubscriberLoop` long-run ⚠ flag | **CG-59** — it needs a clock, not a smoke test | §10 *C1a* |
+>
+> ⚠ **`iac/chat-gateway-sa.json` is STILL PRESENT**, so the dead-key warnings in
+> `CLAUDE.md` and `docs/deploy/nas.md` §8 are **still current** and were left
+> standing deliberately. The deletion is the user's; when it lands, both need
+> **rewording, not dropping** — a warning that simply vanishes is
+> indistinguishable from one nobody thought about.
 
 | | |
 |---|---|

@@ -134,9 +134,12 @@ have **one home** — [`docs/deploy/nas.md`](docs/deploy/nas.md) — and are not
 restated here. `.env` stays off-repo (mode 600); no reverse-proxy exposure is
 needed or wanted on either host, because Pub/Sub is an outbound pull.
 
-⚠ **Nothing is deployed yet.** That runbook's §10 *Executed* is empty by design
-and is filled by CG-55; until it has entries, "deploy target" is an intention,
-not a fact.
+⚠ **It is deployed, since 2026-08-05 (CG-55).** This read *"Nothing is deployed
+yet. That runbook's §10 Executed is empty by design and is filled by CG-55"* —
+true when written, false now, and quoted rather than deleted because the **test**
+it gave still holds: read that runbook's §10, do not guess from here. What ran,
+what was observed and what differed from plan are recorded there and **nowhere
+else**.
 
 ## Status — honest seams
 

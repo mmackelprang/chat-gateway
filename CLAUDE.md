@@ -516,6 +516,20 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   not copy the tree into this file — four of its six state entries hold tenant
   message bodies and the set has already grown twice, which is the same
   two-homes-for-a-moving-fact trap as the test count above.
-  ⚠ **Nothing here is deployed.** That runbook's §10 *Executed* is empty by
-  design and is filled by CG-55; until it has entries, "deploy target" is an
-  intention, not a fact.
+  ⚠ **IT IS DEPLOYED, since 2026-08-05 (CG-55) — and this bullet said the
+  opposite until that day.** It read *"Nothing here is deployed. That runbook's
+  §10 Executed is empty by design and is filled by CG-55; until it has entries,
+  'deploy target' is an intention, not a fact."* Both halves are now false: §10
+  has entries, and "deploy target" is a fact. Quoted rather than deleted, because
+  the **test** it proposed is the good part and still works — *look at §10, do not
+  guess* — and because a claim that silently flips is how this file has gone
+  stale before.
+  **What the deploy established, and where it lives: `docs/deploy/nas.md` §10
+  *Executed*, which is its ONE home.** Do not summarize it here — not the five
+  facts, not the seven deviations, not the counters. They are the most
+  copy-tempting numbers this project has produced and every one of them moves.
+  ⚠ **Nothing in the verification ledger above moved.** A first live deploy is a
+  tempting moment to clear a ⚠ flag and CG-55 cleared none; §10 names the one
+  candidate (`SubscriberLoop`'s long-run row) and leaves it for CG-59's soak,
+  because retiring it needs the user's explicit hard-rule-#3 sign-off and a clock,
+  not a smoke test.
