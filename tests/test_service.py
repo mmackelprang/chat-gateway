@@ -367,6 +367,145 @@ def test_healthz_reasons_explain_a_degraded_registry(env, monkeypatch):
     assert any("does not resolve" in r for r in body["reasons"])
 
 
+# --- CG-59: `?strict=1` — the same honesty, in the status code ---------------
+#
+# The plain form answered 200 for every reason string this endpoint can
+# produce, so a Homepage `siteMonitor` tile and a container health check — both
+# of which judge by STATUS CODE — read green while inbound is dead. These tests
+# pin the three properties that make the fix safe: the code moves, the body does
+# not, and the plain form's published contract is untouched.
+
+
+def test_strict_returns_503_only_when_there_are_reasons(env, monkeypatch):
+    client, _, _ = env
+    healthy = client.get("/healthz?strict=1")
+    assert healthy.status_code == 200 and healthy.json()["reasons"] == []
+
+    monkeypatch.delenv("SVC_HOOK_FW")
+    degraded = client.get("/healthz?strict=1")
+    assert degraded.status_code == 503
+    assert degraded.json()["reasons"], "503 with nothing to explain it"
+
+
+def test_the_plain_form_still_returns_200_when_degraded(env, monkeypatch):
+    """A published contract with existing readers. Deliberately unchanged.
+
+    Flipping the default was considered and rejected: a 503 from a *container*
+    health check would make Docker restart a gateway that is degraded but
+    working — one unresolved env var on a tier-1-only host.
+    """
+    client, _, _ = env
+    monkeypatch.delenv("SVC_HOOK_FW")
+    plain = client.get("/healthz")
+    assert plain.status_code == 200
+    assert plain.json()["status"] == "degraded" and plain.json()["reasons"]
+
+
+@pytest.mark.parametrize("degrade", [False, True])
+def test_the_strict_body_is_identical_to_the_plain_body(env, monkeypatch, degrade):
+    """Same information, different envelope — or an operator comparing the two
+    learns something false.
+
+    Byte equality on `.content`, not a `==` on parsed dicts: key order and
+    separators are part of what a reader diffing two `curl` outputs sees.
+    """
+    client, _, _ = env
+    if degrade:
+        monkeypatch.delenv("SVC_HOOK_FW")
+
+    plain = client.get("/healthz")
+    strict = client.get("/healthz?strict=1")
+    control = client.get("/healthz")
+
+    # The control proves the comparison is MEANINGFUL. Without it, a body that
+    # varied between any two calls (a clock field, say) would make the equality
+    # below fail for a reason that has nothing to do with `strict` — and a body
+    # that was constant for the wrong reason would make it pass vacuously.
+    assert plain.content == control.content, (
+        "this fixture's /healthz body is not deterministic between calls, so "
+        "the identity assertion below cannot mean what it claims")
+    assert strict.content == plain.content
+    assert strict.status_code == (503 if degrade else 200)
+    assert plain.status_code == 200
+
+
+def test_strict_is_opt_in_and_a_falsey_value_is_not_strict(env, monkeypatch):
+    """`?strict=0` must not 503. The reader chooses; the query string is how."""
+    client, _, _ = env
+    monkeypatch.delenv("SVC_HOOK_FW")
+    assert client.get("/healthz").status_code == 200
+    assert client.get("/healthz?strict=0").status_code == 200
+    assert client.get("/healthz?strict=false").status_code == 200
+    assert client.get("/healthz?strict=1").status_code == 503
+    assert client.get("/healthz?strict=true").status_code == 503
+
+
+def test_an_unparseable_strict_value_is_a_422_and_NOT_a_health_verdict(env):
+    """⚠ MEASURED, and recorded rather than smoothed: the ONE input class where
+    "identical body either way" does not hold.
+
+    `strict` is a bool query parameter, so a **bare** `?strict` (and `?strict=`,
+    and `?strict=banana`) is a FastAPI validation failure: **422, with a
+    validation body, not a health body.** A probe misconfigured that way reads
+    as DOWN on a healthy gateway.
+
+    Pinned rather than fixed, deliberately. The failure this row exists against
+    is a **silent green** over a dead input — the shape that hid 11 days of
+    capture failure. A 422 is the loud direction: it is wrong, but it is wrong
+    in the way that gets investigated within the hour. Widening the parameter so
+    a bare `?strict` means strict is a design change, and the design was decided
+    with `strict: bool` — so this is surfaced as a finding, and the handoff that
+    repoints the Homepage tile names the exact URL (`?strict=1`).
+
+    The 422 body echoes only the caller's own query value — nothing of this
+    gateway's state reaches it, which is what makes an unauthenticated 422 here
+    uninteresting under rules #2 and #6.
+    """
+    client, _, _ = env
+    for q in ("?strict", "?strict=", "?strict=banana"):
+        resp = client.get("/healthz" + q)
+        assert resp.status_code == 422, q
+        assert "status" not in resp.json(), (
+            f"{q} returned something that could be mistaken for a verdict")
+
+
+def test_status_and_reasons_cannot_disagree_so_the_trigger_is_the_source(
+        env, tmp_path, monkeypatch):
+    """`strict` keys on `reasons`, not on `status`. This pins WHY that is safe.
+
+    `status` is computed FROM `reasons` at the sole return, so the two are one
+    fact rendered twice and cannot diverge. The test walks several independent
+    degradation causes — a registry env var, a subscriber that has never polled,
+    and a healthy deployment — and asserts the three-way lock in every one:
+
+        reasons non-empty  <->  status == "degraded"  <->  strict is 503
+
+    If a future change ever introduced a third status word, or a `status` set
+    beside `reasons` instead of from it, this fails rather than letting the
+    status code quietly stop meaning what the body says.
+    """
+    _, inbox, adapter = env
+
+    def probe(c):
+        plain, strict = c.get("/healthz"), c.get("/healthz?strict=1")
+        body = plain.json()
+        assert body["status"] in ("ok", "degraded"), body["status"]
+        assert (body["status"] == "degraded") == bool(body["reasons"])
+        assert (strict.status_code == 503) == bool(body["reasons"])
+        return body["status"]
+
+    client, _, _ = env
+    assert probe(client) == "ok"
+    monkeypatch.delenv("SVC_HOOK_FW")
+    assert probe(client) == "degraded"
+
+    # A different subsystem, degrading for an unrelated reason.
+    monkeypatch.setenv("SVC_HOOK_FW", "https://x.example/hook")
+    registry, loop = _loop_with(tmp_path, inbox)          # never polled
+    assert probe(TestClient(
+        create_app(registry, inbox, {"webhook": adapter}, loop))) == "degraded"
+
+
 def test_healthz_names_the_quarantine_as_the_recovery_record(tmp_path, monkeypatch):
     """Promise site 6: this reasons line told an operator to read a file the
     sweeper is about to delete. It now names an artifact the gateway keeps."""
