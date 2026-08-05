@@ -10,8 +10,9 @@ Two guards live here, and they are in ONE file on purpose (CG-26):
   1. the **fixture guard** — every `.json` under `tests/fixtures/`, walked leaf
      by leaf with its JSON path, one parametrized test per file;
   2. the **docs/tests scan** — every `docs/**/*.md`, every `tests/**/*.py`,
-     every `tests/**/*.md` and every root-level `*.md`, line by line,
-     **including this file and the README that documents it**.
+     every `tests/**/*.md`, every root-level `*.md`, and the two deploy-config
+     files named in `SCANNED_FILES`, line by line, **including this file and the
+     README that documents it**.
 
 The second exists because the first was aimed at the wrong directory. Both of
 this project's PII incidents landed outside `tests/fixtures/`: the first draft
@@ -151,6 +152,22 @@ _BAIT_PEM_BLOCK = _BAIT_PEM_HEADER + "MIIEvAIBADANBgkqINVENTED"
 # AND fail the marker check, or it proves nothing about DOC_URL_CRED.
 _BAIT_OPAQUE = "Qz7Rm2Kd9Vt4Xb1Nw6Hs3Lp8Jc5Yg0Ff2Dq7Za4Mv1Bn8Rk3Tw6Ye9Uh2Ix5Ol0Pc7Sd"
 _BAIT_URL_CRED = "https://chat.googleapis.com/v1/spaces/AAAAroom?" + "token=" + _BAIT_OPAQUE
+# Private-range bait, one per range `DOC_PRIVATE_IP` covers (CG-78). Composed
+# for the same reason as everything else here — this file is scanned, and an
+# inlined literal in the guard's own negative case is incident 2's shape exactly.
+# Composition also happens to be free here: splitting after the network part
+# leaves a `"` where the regex wants a digit, so no fragment matches on its own.
+#
+# Every value is INVENTED and none is this network's. That distinction matters
+# more for this rule than for the others: the bait for a tenant id merely has to
+# look real, whereas the bait for an address must not BE the address the row
+# exists to remove — a guard whose negative case republishes the leak is worse
+# than no guard.
+_BAIT_HOST_OCTETS = ".100.7"
+_BAIT_RFC1918 = ("192.168" + _BAIT_HOST_OCTETS,
+                 "10.0" + _BAIT_HOST_OCTETS,
+                 "172.16" + _BAIT_HOST_OCTETS)
+_BAIT_CGNAT = "100.64" + _BAIT_HOST_OCTETS
 
 
 def _walk(node, path="$"):
@@ -575,6 +592,33 @@ SCANNED_TREES = (("docs", "*.md"), ("tests", "*.py"), ("tests", "*.md"))
 # reputation that gets it disabled.
 SCANNED_ROOT_GLOB = "*.md"
 
+# Two deploy-config files, named one at a time rather than by a tree, because
+# the reason for each is specific (CG-78).
+#
+# `docker-compose.yml` is where a LAN address would land if one landed anywhere
+# outside prose: CG-55's own decision table specifies the published-port form as
+# `"<LAN-IP>:8085:8085"`, so the compose file is the documented destination of
+# the exact literal `DOC_PRIVATE_IP` hunts. A guard that covered `docs/` and not
+# this file would have been blind at precisely the spot the next one lands —
+# which is the CG-69 failure mode wearing the opposite mask: not a guard that
+# cries wolf, a guard that looks like coverage and is not.
+#
+# `.env.example` is here for a bigger reason than IPs, and it is worth stating
+# because it was found rather than intended: it is the file in this repo most
+# likely to receive a pasted **real credential** — an operator opens it first,
+# fills it in, and the copy on disk is one `git add` from the remote — and until
+# CG-78 it sat outside the credential rules entirely, not just the address one.
+#
+# NOT widened to `src/` or `iac/`, and that is a scope decision rather than a
+# measurement gap: all seven rules over both trees measured **0** findings, so
+# there is nothing there to catch today, and pulling 28 more files under six
+# credential rules buys nothing now while adding a surface that has to stay
+# green forever. Revisit if an address ever needs to live in `iac/`.
+#
+# Measured on the day it went in, the same standard the tree widenings above
+# were held to: all seven rules over both files, zero findings.
+SCANNED_FILES = ("docker-compose.yml", ".env.example")
+
 # Same shape as `PII`'s id arm, `(?!0)` lookahead included, so a document may
 # quote the synthetic `users/000…001` the fixtures use — and the docs quote it
 # constantly, in anonymization tables and scrub notes.
@@ -614,6 +658,52 @@ DOC_AVATAR = re.compile(r"https?://[\w.-]*googleusercontent\.com/", re.I)
 # carries all three spellings. It also does not fire on its own source, because
 # `[A-Z ]*` cannot match `[`.
 DOC_PEM = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
+
+# Private-range address literals — RFC1918 plus the CGNAT block Tailscale hands
+# out. CG-78, after CG-55's planning prose put this homelab's real LAN address
+# and its subnet into `docs/BUILDER_QUEUE.md` on a public repo.
+#
+# **Scoped to the private ranges, deliberately, and never "any dotted quad".**
+# That single decision is what separates this rule from a wolf-crier, because
+# this repo argues about addresses constantly and every address it argues about
+# is public or reserved:
+#
+#   - `0.0.0.0` — the bind form `docker-compose.yml` and CG-55's bind decision
+#     both discuss at length. Not private; no match.
+#   - `127.0.0.1` — the smoke-curl vantage point, in the runbook and two specs.
+#     Loopback is not RFC1918; no match.
+#   - netmasks (`255.255.255.0`) and the RFC 5737 documentation nets
+#     (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`) — reserved *for* writing
+#     examples, which is the opposite of a leak. None is in a private range.
+#     Note `192.0.2.x` in particular: one careless `192\.` prefix would flag the
+#     very range the RFCs reserve for documentation.
+#   - version strings and section numbers — `10.2.1`, `3.13.7`, "line 10.4".
+#     A full four octets are required, with `10` as its own first octet, so
+#     three-part versions cannot match however they start.
+#
+# The `(?<![\w.])` / `(?![\w.])` boundaries are what make that last one hold:
+# without the trailing one, `10.2.1.4.7` (a plausible OID or outline number)
+# would match its first four parts.
+#
+# **Measured before it was written, not after** — the CG-69 lesson. Across the
+# scanned set: **3** findings before CG-78's scrub, all three in
+# `docs/BUILDER_QUEUE.md`, and **0** after. Zero residue means no future editor
+# ever meets this rule as an obstacle to routine work, which is the only
+# condition under which a guard survives.
+#
+# ⚠ **What this rule cannot do, stated here because the queue row's checkbox
+# reads stronger than the truth:** it guards the working tree, not the published
+# history. The literals it was written for are still in this repo's commits and
+# a `git log -S` finds them; removing those needs a history rewrite, which was
+# considered and rejected (CG-78). This stops the NEXT one.
+DOC_PRIVATE_IP = re.compile(
+    r"(?<![\w.])(?:"
+    r"10(?:\.\d{1,3}){3}"
+    r"|192\.168(?:\.\d{1,3}){2}"
+    r"|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}"
+    r"|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}"
+    r")(?![\w.])"
+)
 
 # A Workspace customer id has no structure to key off — the same problem
 # `TENANT_KEY` has, and the same answer: the RFC 2606 marker. `customers/C`
@@ -726,7 +816,8 @@ def _scan_line(line):
     """Yield `(rule_name, matched_text)` for one line of prose or source."""
     for rule, rx in (("DOC_USER_ID", DOC_USER_ID),
                      ("DOC_AVATAR", DOC_AVATAR),
-                     ("DOC_PEM", DOC_PEM)):
+                     ("DOC_PEM", DOC_PEM),
+                     ("DOC_PRIVATE_IP", DOC_PRIVATE_IP)):
         for m in rx.finditer(line):
             yield rule, m.group(0)
 
@@ -769,6 +860,10 @@ def docs_and_tests_files():
          for subdir, pattern in SCANNED_TREES
          for p in (REPO_ROOT / subdir).rglob(pattern)}
         | set(REPO_ROOT.glob(SCANNED_ROOT_GLOB))
+        # `.exists()` rather than a bare join: the vacuity test below points
+        # `REPO_ROOT` at an empty tmp_path, and a non-existent path yielded here
+        # would make the walker return names it cannot read.
+        | {p for p in (REPO_ROOT / name for name in SCANNED_FILES) if p.exists()}
     )
     assert files, "no docs or tests found — this scan must never pass vacuously"
     return files
@@ -871,15 +966,68 @@ def test_docs_scan_covers_this_file_and_the_plan_that_quotes_it():
         in scanned
     ), "the docs/tests scan no longer reads the plan document that leaked"
     for widened, mechanism in (("CLAUDE.md", "the root glob"),
-                               ("tests/fixtures/README.md", "tests/**/*.md")):
+                               ("tests/fixtures/README.md", "tests/**/*.md"),
+                               ("docker-compose.yml", "SCANNED_FILES"),
+                               (".env.example", "SCANNED_FILES")):
         assert widened in scanned, (
             f"{widened} is no longer scanned — {mechanism} has been dropped, and "
             "with it the guard's coverage of a document nobody would call peripheral"
         )
 
 
+def test_docs_guard_rejects_a_private_lan_address():
+    """`DOC_PRIVATE_IP` fires on every private range, and on none of the near-misses.
+
+    Both directions in one test, on purpose. This rule's entire value proposition
+    is its **scoping** — CG-78 shipped it only because the false-positive half
+    could be measured, and a fire-only test would leave the half that decides
+    whether the guard survives contact with this repo unasserted.
+
+    The near-miss list is not hypothetical. Every entry below is a shape that
+    already appears in the scanned trees, some of them dozens of times: this repo
+    argues about `0.0.0.0` versus a LAN bind across a runbook, a spec and two
+    queue rows, quotes a `127.0.0.1` smoke curl, and carries version numbers on
+    nearly every page. `192.0.2.x` is included because it is the sharpest trap —
+    a rule written as "starts with 192" would flag the range the RFCs reserve
+    *for writing documentation*, i.e. the very thing a scrub replaces a real
+    address WITH.
+    """
+    for bait in (*_BAIT_RFC1918, _BAIT_CGNAT):
+        fired = {rule for _, _, rule, _ in
+                 scan_text_for_real_identity("published on " + bait + ":8085")}
+        assert "DOC_PRIVATE_IP" in fired, (
+            f"DOC_PRIVATE_IP did not fire on the private address {bait!r}; "
+            f"rules that did fire: {sorted(fired) or 'none'}"
+        )
+
+    for benign in (
+        "ports 8085:8085 binds 0.0.0.0, every interface",
+        "curl 127.0.0.1:8085/healthz on the NAS, over SSH",
+        "netmask 255.255.255.0",
+        "RFC 5737 reserves 192.0.2.1, 198.51.100.7 and 203.0.113.9",
+        "httpx 10.2.1 on python 3.13.7",
+        # Five dotted parts starting `10.` — an OID or an outline number. This
+        # is what the TRAILING boundary defends: without it the rule matches the
+        # first four parts and reports a leak in a section reference.
+        "see line 10.4, and object 10.2.1.4.7 of the outline",
+        "published on <LAN-IP>:8085 and routed via <LAN-subnet>",
+    ):
+        findings = scan_text_for_real_identity(benign)
+        assert not findings, (
+            f"DOC_PRIVATE_IP flagged something this repo writes on purpose "
+            f"({benign!r}) — that is how guards get disabled: {findings}"
+        )
+
+
 def test_docs_guard_rejects_each_leak_shape():
     """Seven shapes, seven rules, each proven to fire — bait invented and composed.
+
+    Seven of the scan's **eight** rules. `DOC_PRIVATE_IP` is proven in its own
+    test rather than added as an eighth tuple here, and the split is deliberate:
+    that rule's whole justification is what it does NOT match, so a fire-only
+    case would assert the half that does not decide whether it survives. It gets
+    both directions in one place — see
+    `test_docs_guard_rejects_a_private_lan_address`.
 
     These are the shapes the two incidents were made of, plus the two that would
     make a third one worse. Every value is invented; every one is assembled from
@@ -966,6 +1114,13 @@ docs/superpowers/plans/2026-07-30-classic-fixtures-cg22-cg9.md writes them:
 ...and a decision row naming both tenant fields, whose next cell is a sentence
 rather than a backticked value:
 | DEC-6 | `example`-marker guard for `domainId` / `customer` | Path allowlist for those two fields | rejected |
+
+Addresses this repo argues about on purpose, none of them in a private range:
+"8085:8085" binds 0.0.0.0; the smoke curl reads 127.0.0.1:8085/healthz; a
+netmask is 255.255.255.0; and RFC 5737 reserves 192.0.2.1, 198.51.100.7 and
+203.0.113.9 for exactly this kind of writing. Version numbers and outline
+references are not addresses either: httpx 10.2.1, python 3.13.7, object
+10.2.1.4.7. The scrubbed forms are <LAN-IP>, <tailnet-IP> and <LAN-subnet>.
 """
 
 
@@ -1018,6 +1173,17 @@ def test_docs_guard_tolerates_what_this_repo_publishes_on_purpose():
       `customers/Cexample1` on the RFC 2606 marker, `customers/C0…` on the
       `{3,}` floor. Each is a different mechanism, and each is used by real
       committed documents.
+    - **Addresses, versions and outline numbers** — added with `DOC_PRIVATE_IP`
+      (CG-78), and the largest tolerance class of the seven by raw frequency.
+      This repo argues about `0.0.0.0` versus a LAN bind across a runbook, a
+      spec and two queue rows; quotes a `127.0.0.1` smoke curl; and carries
+      version numbers on nearly every page. The RFC 5737 nets are the sharpest
+      entry — `192.0.2.x` is what a scrub replaces a real address *with*, so a
+      rule that flagged it would fire on its own remedy. All of it clears
+      structurally, on the private-range scoping, with no marker word and no
+      allowlist. The fire-and-near-miss pairs are asserted directly in
+      `test_docs_guard_rejects_a_private_lan_address`; the sample here is what
+      proves they also survive the other six rules.
     - **Markdown table rows about tenant fields** — the class `DOC_TENANT_TABLE`
       was added for, sampled in BOTH directions because the rule's precision
       lives entirely in one required backtick. The two mapping rows clear on the

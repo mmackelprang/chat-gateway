@@ -3677,10 +3677,15 @@ always on the LAN IP by homelab convention. That convention is now
 **load-bearing** rather than incidental.
 
 **Resolve the address on the box; do not hardcode it out of a document.** The
-homelab records `192.168.86.47` as static and *"load-bearing — everything
-references `.47`"*, and `reservations.md` also carries an **unconfirmed**
-router-side reading that contradicts it. Fail closed on the real interface, the
-same way this row already fails closed on the app name.
+homelab records `<LAN-IP>` as static and *"load-bearing — everything
+references `<last octet>`"*, and `reservations.md` also carries an
+**unconfirmed** router-side reading that contradicts it. Fail closed on the real
+interface, the same way this row already fails closed on the app name.
+*(The address and its octet were literals here until CG-78 replaced them with
+placeholders; the redaction inside the quotation is marked rather than
+paraphrased, so the sentence still reads as the homelab's, not ours. The address
+itself is resolved on the box — which is what the first sentence of this
+paragraph demands anyway.)*
 
 **Not built here.** If honouring this needs anything beyond the app JSON's port
 form, that is **CG-55's** work to build — a bookkeeping row records decisions, it
@@ -3688,16 +3693,20 @@ does not write config.
 
 > **Note — a caveat to revisit later, not a qualification of the decision above.**
 > The bind fences the tailnet **while no tailnet subnet route to
-> `192.168.86.0/24` exists** — which is the state measured in the homelab repo on
+> `<LAN-subnet>` exists** — which is the state measured in the homelab repo on
 > 2026-08-03: **~2 tailnet devices** (the NAS and Mark's admin device), with
 > **appserver still `(planned — Task 2)`**, that being the node whose job is to
 > advertise exactly that `/24`. **If that route goes live, a tailnet peer can
 > reach the LAN address through it, and the ACL — not the bind — is the boundary
 > again.** The drafted ACL already anticipates it: its `tests` block **denies**
-> teammates `192.168.86.47:443` and siblings *"via the LAN subnet route"*. **So
+> teammates `<LAN-IP>:443` and siblings *"via the LAN subnet route"*. **So
 > D2's re-trigger is the subnet router** — the same event the user's own trigger
 > names, since the remote-access work *is* the subnet router. **Revisit then;
 > nothing to do now.**
+> *(CG-78 placeholdered that host:port. The ACL's precision is the point of
+> quoting it, so the sentence keeps the port and reuses the **same** `<LAN-IP>`
+> as the paragraph above — it is the same host, and that link is what the
+> sentence means.)*
 
 ##### 2 · ⏸ D2's tailnet ACL is DEFERRED — still wanted, no longer gating
 
