@@ -439,8 +439,8 @@ transfer is a diff rather than a rediscovery.
 `!SECRETS.template.md` negation); `SECRETS.md` is gitignored and holds real
 values. Rows are three columns — `| Secret | Where it lives on the box | How to
 regenerate / rotate |` — and the model to copy is the existing Chroma row, which
-names the **env var and the service** rather than a value. Two rows, structure
-only:
+names the **env var and the service** rather than a value. **THREE rows**,
+structure only:
 
 - **the per-app API keys** — regenerate with `python3 -m chat_gateway mint-key`,
   then update the consumer.
@@ -448,6 +448,40 @@ only:
   delete-and-recreate by hand, per `docs/google-cloud-setup.md` §8a. Say so in
   the rotate column: this project burned every webhook it owns once, on
   2026-07-29, and each one had to be recreated through the console.
+- **the Google service-account key JSON** — the credential `GOOGLE_APPLICATION_CREDENTIALS`
+  points at, under `secrets/` (mode `600`, mounted read-only at `/secrets`).
+  Rotate by `gcloud iam service-accounts keys delete <KEY_ID> --iam-account=…`,
+  re-run the setup script, copy the new JSON over **stdin** into a pre-created
+  `install -m 0600` target, redeploy — then **re-run the `CREDS-OK` check below**,
+  because that is the step that catches a wrong path.
+  ⚠ **Do not write the key's FILENAME into that row.** It varies by project, and
+  one historical value of it names a **dead** key from the deleted
+  `chat-gateway-prod`. Its one home is `docs/google-cloud-setup.md`; a second copy
+  is the drift that made the warning necessary. Point at the directory and the doc.
+
+⚠ **This section specified TWO rows until 2026-08-05, and the two-row spec was
+the defect.** The homelab Builder wrote exactly what was asked, then surfaced that
+a rebuild driven from `SECRETS.md` would **silently omit the one credential tier 2
+cannot work without**. The user approved a third row and it has landed in homelab
+**PR #21** (`feat/chat-gateway-service-artifacts`). Corrected here, in the spec,
+rather than only in the artifact — otherwise the next rebuild of this runbook's
+output regenerates the same omission.
+
+**The failure mode is why it is worth this much text: it is silent and it is
+partial.** A missing or misplaced key does **not** stop the gateway. It boots
+clean, builds the Chat API adapter, **reports the adapter present at `/healthz`**
+— which never `stat`s the file — and then fails at every Google call. Tier-1
+webhooks keep working throughout, so the box looks *half*-healthy rather than
+broken. **A deployment that looks fine and cannot reach Google is the exact shape
+hard rule #5 exists because of**, arriving through a gap in a restore procedure
+instead of through a hardcoded `OK`.
+
+⚠ **The third row is DIFFERENT IN KIND from the two above it, and the row must
+say so.** The other two hold **values**: you paste them into `.env` and redeploy.
+This one holds a **path** — the env var is not the secret, it names a file on the
+box. **So restoring this entry means restoring a FILE, and the `.env` alone is not
+enough.** A restorer who treats all three rows the same recovers two credentials
+and a dangling pointer, and gets the silent half-healthy state above.
 
 Writing those rows is a homelab-repo change — see §9.
 
@@ -621,9 +655,33 @@ so they are named here for the user to pick up:
 | Artifact | Shape |
 |---|---|
 | `nas/services/chat-gateway.md` | **four headers only**, per `nas/services/_TEMPLATE.md`: `## Overview (User)`, `## Deployment (Ops)`, `## Reinstall / Recovery`, `## Gotchas`. No extra headers, no `###`. Carries the inline minimum its siblings do and links here for the rest — ⚠ which is a **new pattern** in that directory (see the deviation note at the top of this file) |
-| a `SECRETS.template.md` row | two rows per §6 — per-app API keys, tier-1 webhook URLs — three columns, naming the **env var and the service**, never a value |
+| `SECRETS.template.md` rows | **three** rows per §6 — per-app API keys, tier-1 webhook URLs, **and the service-account key JSON** — three columns, naming the **env var and the service**, never a value and never the key's filename. ⚠ *This said "two rows" until 2026-08-05; the third is the credential tier 2 cannot work without, and its absence is **silent** (§6). It is also different in kind: it names a **path**, so restoring it means restoring a **file**.* |
 | `nas/scripts/restore-chat-gateway.sh` | the five-line wrapper form its four siblings use over `lib/restore.sh` |
-| `nas/DASHBOARDS.md` + Homepage tile | the service registration its siblings all carry |
+| `nas/DASHBOARDS.md` + Homepage tile | the service registration its siblings all carry. ⚠ **The tile's `siteMonitor` must end up on `/healthz?strict=1`, not on plain `/healthz`** — see the note below |
+
+✅ **Status 2026-08-05: all five are written and open as homelab PR #21**
+(`feat/chat-gateway-service-artifacts`) — service doc, restore wrapper, tile,
+`DASHBOARDS.md` entry and the `SECRETS.template.md` rows (**three**, per §6).
+
+⚠ **One of them ships a known-wrong verdict, and it is named here rather than
+left to be discovered.** The Homepage tile's `siteMonitor` probes **plain
+`/healthz`**, which returns **200 whenever `reasons` is non-empty** — including
+for *"subscriber is enabled but has never completed a poll — inbound has never
+worked on this process"*, the exact string this box emitted at boot (§10 fact 1).
+**So the tile reads green while inbound is dead.** That is the claude-mem
+hardcoded-health-check failure — the one hard rule #5 exists because of, which hid
+11 days of silent capture failure — **occurring one layer up, at the dashboard**,
+against an endpoint that is itself scrupulously honest. `/healthz` is not lying;
+the thing reading it cannot hear it.
+
+**The fix is split across two repos and both halves are needed:** **CG-59** adds
+an additive `GET /healthz?strict=1` returning **503** when `reasons` is non-empty
+with an identical body (plain form unchanged — it is a published contract), and
+**the tile is then repointed at the strict form in the homelab repo.** Neither
+half is worth anything alone: the endpoint without the repoint changes nothing an
+operator can see, and the repoint without the endpoint probes a URL that behaves
+identically. ⚠ **Recorded as an owned follow-up, not a defect in PR #21** — the
+tile is correct against the endpoint that exists today.
 
 ---
 
@@ -860,11 +918,19 @@ tailnet subnet route re-opens the question (CG-55's row, decision 1's contingenc
 - **`capture.sh`** — 🛑, requested. ✅ **Since RUN by the user, 2026-08-05, output
   verified clean** (CG-79). This bullet said *"outstanding"*; the run genuinely
   did not do it, which is what this list is for, but the status word had expired.
-- **Every homelab-side artifact in §9** — ⏸ **still outstanding**;
+- **Every homelab-side artifact in §9** — ~~⏸ **still outstanding**~~;
   `nas/services/chat-gateway.md`, the
   `SECRETS.template.md` rows (§6), `restore-chat-gateway.sh`, `DASHBOARDS.md`,
   the Homepage tile. Deploy-then-document: they are written **now**, from the
   facts above, in **that** repo.
+  ✅ **All five are WRITTEN and open as homelab PR #21** (recorded 2026-08-05).
+  Two things came back from writing them, and both are corrections to **this**
+  file rather than to that PR: §6 asked for **two** `SECRETS.template.md` rows and
+  the answer is **three** — the omitted one is the service-account key, whose
+  absence is silent (§6 now carries the reasoning) — and the Homepage tile probes
+  plain `/healthz`, which is green while inbound is dead (§9). ⚠ **Deploy-then-document
+  found two defects in the document, which is the argument for that convention
+  rather than an embarrassment to it.**
 - **The tailnet ACL** — deferred (D2), and recorded above as not applied.
 - **No ⚠ verification-ledger flag was cleared, added or reworded.** A live deploy
   is a tempting moment to move one and this run moved none; flag movement needs

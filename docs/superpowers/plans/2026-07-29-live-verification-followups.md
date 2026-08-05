@@ -102,12 +102,24 @@ they never accept a URL as an argument, and they never print one.
 | Secret | Recovery |
 |---|---|
 | Webhook URL | Space → **⚙ → Apps & integrations → Webhooks → ⋮ → Delete**, then create a new webhook with the same name and avatar, then update `.env`. The old URL cannot be revoked any other way. |
-| `chat-gateway-sa.json` | `gcloud iam service-accounts keys delete <KEY_ID> --iam-account=chat-gateway@<PROJECT_ID>.iam.gserviceaccount.com`, then re-run the setup script to mint a new one. |
+| The service-account key JSON (⚠ **filename varies by project — derive it, do not copy this row's**) | `gcloud iam service-accounts keys delete <KEY_ID> --iam-account=chat-gateway@<PROJECT_ID>.iam.gserviceaccount.com`, then re-run the setup script to mint a new one. |
 | A per-app API key | `python -m chat_gateway mint-key`, update `.env` and the consuming app. |
 
 **4. Delete the throwaway script when you are done.** It contains no secret, but
 it is one edit away from containing one.
 ```
+
+⚠ **The key row above named the literal filename `chat-gateway-sa.json` until
+2026-08-05 — routed here by CG-79 and corrected rather than left.** That filename
+belongs to the **deleted** `chat-gateway-prod` project; the live key is
+`chat-gateway-sa-gw.json`, and **the file the old name pointed at was deleted by
+the user on 2026-08-05**. A rotation recipe keyed on a dead project's filename is
+worse than one that names no file at all: it would have an operator delete a key
+id that authenticates to nothing while the live key stays exposed. CG-51 made both
+setup scripts **derive** `KEY_FILE` from `PROJECT_ID` for exactly this reason, so
+the recipe now points at the mechanism rather than at a name. ⚠ **The scripts still
+default that variable to the dead filename**, so re-running setup can recreate it
+— confirm which key you hold by its own `project_id`, never by its name.
 
 ### Task A.3 — `docs/google-cloud-setup.md`: the tier trade-off
 
