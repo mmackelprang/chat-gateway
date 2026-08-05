@@ -98,11 +98,31 @@ this file**:
 | `DOC_TENANT_ASSIGN` | a `domainId`/`customer` key, a `:`/`=`/`,` separator, and a quoted value of 4+ identifier characters, without an `example` marker | the shape incident 2 was literally written in — a Python tuple of `(key, value)` pairs. A `(?<!\w)` left boundary keeps it from matching the key as the *suffix* of a longer identifier; every real target shape has a quote, punctuation, whitespace or line-start in front of the key, so the boundary costs no detection. No opacity test here, unlike `DOC_URL_CRED`: a tenant id has no entropy signature to test |
 | `DOC_TENANT_TABLE` | the same two keys in a markdown **table row** — `\| key \| value \|` — where the value cell is backticked, without an `example` marker | the cell form `DOC_TENANT_ASSIGN` structurally cannot see, because the separator is `\|` and not `[:=,]`. Precision comes from requiring the value's backticks: this repo always backticks a literal in a table cell, so demanding them costs no detection, while a *prose* cell beside these two field names is common and would otherwise be captured as a tenant id |
 | `DOC_URL_CRED` | a credential in a URL query or fragment, when the value is opaque | the narrowed replacement for a `SUSPECT_KEY`/`SUSPECT_VALUE` port — see below |
+| `DOC_PRIVATE_IP` | an RFC1918 or CGNAT address literal — `10/8`, `172.16/12`, `192.168/16`, `100.64/10` | scoped to the **private** ranges and never "any dotted quad", which is the entire precision argument: `0.0.0.0`, `127.0.0.1`, netmasks and the RFC 5737 documentation nets (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`) are all things this repo writes on purpose, and none is private. Four full octets with boundaries on both ends, so version strings and outline numbers cannot match. Placeholders are `<LAN-IP>` / `<tailnet-IP>` / `<LAN-subnet>` |
+
+⚠ **`DOC_PRIVATE_IP` guards the working tree, not the published history.** It
+was added by CG-78 after CG-55's planning prose put this homelab's real LAN
+address into `docs/BUILDER_QUEUE.md` on a **public** repo. The scrub cleaned
+those documents; it did **not** un-publish anything, because the literals are in
+committed history and a `git log -S` finds them. Removing them for real needs a
+history rewrite, which was considered and **rejected** by the user — it would
+invalidate every merge record this project uses as its audit trail, to buy down
+exposure of addresses that are not routable from the internet. The rule stops
+the *next* one. Read it that way; the stronger reading is false.
 
 Scope, stated because it is easy to assume otherwise, and because the previous
 version of this paragraph is now false: the second scan's trees are
 `docs/**/*.md`, `tests/**/*.py`, `tests/**/*.md` and root-level `*.md`
-(**non**-recursive at the root, so it cannot wander into `.claude/worktrees/`).
+(**non**-recursive at the root, so it cannot wander into `.claude/worktrees/`),
+**plus two individually-named deploy-config files** — `docker-compose.yml` and
+`.env.example` (CG-78). Those two are named one at a time rather than by a tree
+because the reason for each is specific: the compose file is where CG-55's own
+decision table sends a LAN address (`"<LAN-IP>:8085:8085"`), so a guard skipping
+it would be blind exactly where the next literal lands; and `.env.example` is
+the file most likely in this repo to receive a pasted **real credential**, which
+until CG-78 put it outside the credential rules too, not just the address one.
+`src/` and `iac/` stay out — measured at zero findings for all eight rules
+(21 files and 3 respectively), so that is a scope decision rather than a gap.
 **This README is scanned** — it used to be exempt for the accidental reason that
 it is a `.md` outside `docs/`, which also left `CLAUDE.md` and the root
 `README.md` outside. The point worth stating: the document that explains the

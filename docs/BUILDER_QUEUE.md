@@ -1,6 +1,18 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
+**Last updated:** 2026-08-05 (Builder — **CG-78 SHIPPED**: the LAN address
+literals CG-55's planning prose left in this file are placeholdered, and
+`DOC_PRIVATE_IP` guards the return path. The sweep was far wider than the three
+hits it was handed — private + CGNAT quads, any dotted quad, `*.ts.net`, MACs,
+IPv6 ULA, internal hostname suffixes, real credential shapes, whole tracked tree
+— and **three was the whole set**; nothing turned up that was not an address.
+⚠ **It does NOT un-publish them.** They are in committed history on a public
+remote; the history rewrite that would remove them was **considered and rejected
+by the user**, because it would invalidate every merge record this project uses
+as its audit trail. Read the row's *"What this row does NOT do"* before
+believing the checkbox. Suite **382 → 383**. Previous entry follows.)
+
+**Previously:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
 running on the NAS and serving. Five facts observed, three of §5's open
 verification points answered on the box, seven deviations recorded. The record
 has one home — `docs/deploy/nas.md` §10 *Executed*. ⏸ **PR open and HELD for the
@@ -8,7 +20,7 @@ user's review; not merged.** ⏸ `capture.sh` outstanding, homelab §9 artifacts
 outstanding, tailnet ACL still not applied. Suite **382**, re-measured on the
 branch. Previous entry follows.)
 
-**Previously:** 2026-08-03 (Builder — **CG-53 SHIPPED (#65)**: the deployment
+**And before that:** 2026-08-03 (Builder — **CG-53 SHIPPED (#65)**: the deployment
 artifacts, the runbook, and the loader that makes hard rule #2 hold on the NAS.
 **Ships no deploy.** Suite **382** on the CG-53 branch, measured with
 `python3 -m pytest -q`, not copied from any row.
@@ -1125,6 +1137,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-73** · ~~five~~ **three** print/persist sites bypass CG-29's allowlist | 📋 queued · ⚠ **narrowed 2026-08-03** | Filed by CG-71's Planner, **not folded in**. `retention.py` uses `describe_exception`; `delivery.py` and `heartbeat.py` interpolate a raw `{exc}`. **Drift in a hard-rule-#2 control, not a proven leak** — stated at that confidence. `test_error_surfaces.py` cannot see it: it reads construction sites of *marked* classes; these are print sites of unmarked ones. ⚠ **CG-74 closes TWO of the five as a side effect** — it rewrites both `_run` handlers to render `last_pass_error` / `last_scan_error` through `describe_exception`, and those handlers' prints are two of this row's sites. **The residue is three, all in `delivery.py`:** `_journal_write`'s print, and the **two that persist into the delivery log** (`process_due`'s `"attempt {n}: {exc}"` and `_finish`'s `"gave up after {n} attempts: {exc}"`) — which are the sharper two anyway, because they reach disk rather than a console. Counted down here rather than left at five: a count with two homes is this repo's own recorded failure mode. ⚠ **The *"not a proven leak"* above is now scoped to these three.** For the **two CG-74 closed** it was settled the other way on 2026-08-03 — measured, `main` vs branch, one home for the measurement and it is CG-74's row. No plan yet. CG-71 spec §7 |
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
 | **CG-67** · `.gitignore` — stop `state/` from ever being committed | ✅ done (#48) | **Split out of CG-66 and promoted by the user**, because it is a live path to committing message bodies and CG-53/CG-55 are the rows that first run the gateway from the repo root. Config-only |
+| **CG-78** · scrub LAN address literals from the public repo | ✅ done ([#67](https://github.com/mmackelprang/chat-gateway/pull/67)) | **User decision 2026-08-05**, filed and built by the same Builder. This repo is **public**; CG-55's planning left internal address literals in **this file** — the only file in the repo that had any, confirmed by a sweep far wider than the one that found them. ⚠ **This does NOT un-publish them.** They are in committed history on a public remote and a single `git log -S` finds them; the fix for that is a history rewrite, which was **considered and rejected by the user** because it would invalidate every merge record this project uses as its audit trail. The row buys *"no new ones, and the current documents are clean"* — stated plainly, because a reader who thinks it bought more is worse off than one who knows. Docs + one guard rule |
 
 **Recommended order is the table order, and it is NOT the order the arc was
 briefed in.** The brief had deploy first. Three rows move ahead of it:
@@ -3372,6 +3385,183 @@ this queue keeps re-learning:
 
 ---
 
+### CG-78 · Scrub LAN address literals from the public repo  ✅ shipped 2026-08-05 · [PR #67](https://github.com/mmackelprang/chat-gateway/pull/67)
+
+| | |
+|---|---|
+| **Origin** | user decision 2026-08-05; filed and built by the same Builder |
+| **Depends on** | nothing |
+| **Touches** | `docs/BUILDER_QUEUE.md` (this file), `tests/test_fixtures_scrubbed.py`, `tests/fixtures/README.md` |
+| **Merge gate** | no — docs plus one guard rule |
+
+This repo is **public** (`mmackelprang/chat-gateway`, `isPrivate=false`).
+CG-55's planning wrote the homelab's real LAN address and its subnet into this
+file as literals, at `d5593f9` ([PR #59](https://github.com/mmackelprang/chat-gateway/pull/59)).
+They are **pre-existing** — CG-55's Builder used `<LAN-IP>` / `<tailnet-IP>`
+placeholders in everything *it* wrote, and `docs/deploy/nas.md` is clean
+throughout; the leak is in the *planning* prose that preceded it, which is the
+half nobody re-reads.
+
+**The literals are not reprinted anywhere in this row, and that is deliberate.**
+This queue's standing habit is to quote the wording it corrects — a dozen rows
+above do it, and it is usually the right call. Here it is exactly wrong: the
+quoted text *is* the artifact being removed, and a row that reprints it has
+scrubbed nothing and added a fourth copy. **This is the one correction in this
+file that must be described rather than quoted.** (It is also now mechanically
+enforced — the guard below scans this file, so a future editor who reaches for
+the quote gets a red suite rather than a published address.)
+
+#### ⚠ What this row does NOT do — read this before believing the checkbox
+
+**Scrubbing HEAD does not un-publish anything.** The literals are in committed
+history on a public remote. `git log -S` finds them in seconds — measured, not
+assumed; the search returns `d5593f9` immediately.
+
+Removing them **for real** needs a history rewrite and a force-push. **The user
+considered and rejected that trade, 2026-08-05**, and the reasoning is recorded
+rather than the verdict alone, because a future reader will otherwise re-open it:
+
+- A rewrite changes **every SHA in the repository**. This queue cites commits by
+  SHA in dozens of rows, `docs/deploy/nas.md` §10 cites them, and the specs cite
+  a base commit each. Every one of those citations would become a dangling
+  reference to an object that no longer exists.
+- The **merge records are this project's audit trail.** PR links, `Merged as
+  <sha>` notes, and the "which PR falsified which claim" chains that half this
+  file is made of all resolve through those objects.
+- The exposure being bought down is **RFC1918 addresses, not routable from the
+  internet**. Knowing a host is at a private address on somebody's LAN is not a
+  capability; it is trivia. Weighed against permanently breaking the audit
+  trail, the trade is not worth making.
+
+So the honest statement of what shipped is: **this stops new literals and cleans
+the current documents. The old ones remain public and always will.** Recorded in
+this shape on purpose — a row that said *"LAN IPs removed from the repo"* would
+be read as *"they are gone"*, and would be false.
+
+#### The sweep — the count, and the pattern that produced it
+
+The brief arrived with three known hits found by a narrow grep, and asked
+whether three was the whole set. **It is** — but only the wider pattern proves
+that, so the pattern is recorded rather than the number alone:
+
+| Swept for | Hits |
+|---|---|
+| RFC1918 + CGNAT dotted quads (`10/8`, `172.16/12`, `192.168/16`, `100.64/10`) | **3**, all in this file |
+| any dotted quad at all, minus `0.0.0.0` / `127.0.0.1` / netmasks | **3** — the same three, so nothing hid in an unusual range |
+| tailnet MagicDNS hosts (`*.ts.net`) | 0 |
+| MAC addresses | 0 |
+| IPv6 ULA / link-local (`fd00::/8`, `fe80::`) | 0 |
+| internal hostname suffixes (`.local`, `.lan`, `.home`, `.internal`) | 0 |
+| **real** credential shapes — `AIza…`, `ghp_…`, PEM armour, `?key=` / `?token=` with an opaque value | 0 |
+
+The whole tracked tree was swept, not just `docs/` — `src/`, `tests/`, `iac/`,
+`.env.example`, `docker-compose.yml`, `config/registry.example.yaml` included.
+**Nothing turned up that was not an address literal.** The last row is the one
+worth naming explicitly, because it was the one finding that would have stopped
+this row and escalated it to the user: every `key=` / `token=` hit is a
+synthetic test value (`SECRETKEYVALUE`, `SYNTHETICKEYVALUE`), which is hard rule
+#2 holding, and `config/registry.yaml` — the file that would carry a real one —
+is gitignored and untracked.
+
+**Not touched, by instruction:** `/mnt/d/prj/homelab` (a different repo, whose
+addresses belong there) and `docs/architecture/` (which had no hits anyway —
+measured, so the exclusion cost nothing).
+
+#### What the placeholders had to preserve
+
+Three of the four edits are mechanical. The fourth is not, and deleting the
+sentence would have been the wrong repair:
+
+- The drafted tailnet ACL's `tests` block **denies teammates a specific host and
+  port**. That is the whole point of quoting it — the ACL is precise about
+  *which* host — so the sentence keeps `<LAN-IP>:443`, the **same placeholder**
+  used for the same host two paragraphs up. The identity link survives the
+  scrub; only the octets do not.
+- The homelab's own wording, *"everything references `<last octet>`"*, is a
+  **quotation**, and its meaning is that the short form is used repo-wide. It is
+  redacted inside the quote marks in the standard editorial way rather than
+  paraphrased, so it still reads as somebody else's sentence.
+
+#### The guard — shipped, and here is why it is not a wolf-crier
+
+CG-69 measured the failure mode this had to avoid: a guard that fires on
+legitimate prose looks like coverage, gets disabled, and leaves the repo worse
+than no guard. So the rule was **measured before it was written**, not after:
+
+- **Scoped to RFC1918 + CGNAT specifically**, never "any dotted quad". That is
+  what keeps it silent on every address this repo discusses on purpose —
+  `0.0.0.0` (which `docker-compose.yml` and CG-55's bind decision both argue
+  about at length), `127.0.0.1` (the smoke-curl vantage point), netmasks, and
+  the RFC 5737 documentation nets `192.0.2.x` / `198.51.100.x` / `203.0.113.x`,
+  none of which is in a private range.
+- **Version strings and section numbers do not match.** `10.2.1`, `3.13.7`,
+  *"line 10.4"* are all three-part or shorter; the rule needs a full four-octet
+  quad with `10.` as its own first octet and boundaries on both ends.
+- **Measured across the trees the guard already scans: 3 findings before the
+  scrub, 0 after** — and the 3 are precisely the 3 being fixed. There is no
+  residue for a future editor to suppress.
+- **The bait is composed, not inlined** (`"192.168." + …`), for the reason
+  `_TENANT_BAIT` records: this file scans itself, and an inlined real-shaped
+  literal in the guard's own negative case is exactly incident 2. The bait is
+  also an **invented** address, never this network's.
+
+**The scan was widened by two files, and that is a finding rather than
+tidiness.** `docker-compose.yml` and `.env.example` were outside the guard's
+trees entirely. Both are named by CG-55's own decision table as where a LAN
+address goes (`"<LAN-IP>:8085:8085"`), so a guard covering only `docs/` would
+have been blind at the exact spot the next literal lands. Measured: all **eight**
+rules over both files, **0 findings**, so the widening cost nothing on the day
+it went in. ⚠ **The larger half of that measurement is not about IPs at all** —
+`.env.example` is the file in this repo most likely to receive a pasted real
+credential, and until this row it was outside the **credential** rules too.
+
+⚠ **Coverage limit, stated rather than left to be discovered:** `src/` (21
+files) and `iac/` (3) are still unscanned. Both measured 0 findings for all
+**eight** rules, so this is a scope decision, not a measurement gap — widening
+to them would drag seven credential rules over 24 further files for no measured
+gain today. If a LAN address ever needs to live in `iac/`, that is the moment to
+revisit.
+
+**Pre-merge review changed the rule and corrected three counts**, recorded
+because how a thing was found is worth more than the thing:
+
+- **The rule was blind to this repo's own house style.** It required bare
+  digits, so a private address with a backticked or bolded last octet —
+  ``192.0.2.`5` `` and `192.0.2.**5**`, shown in the RFC 5737 documentation
+  range for the reason below — matched nothing, and singling out the last octet
+  in backticks is exactly what the passage this row scrubbed does
+  (*"everything references `<last octet>`"*). Markdown emphasis is
+  now tolerated around any numeric run, measured at **0 findings across the
+  entire tracked tree**, so the tolerance is free. **The residual is written
+  down rather than built:** an address split across markdown *table cells* is
+  still matched by nothing, and it stays that way until something is measured
+  hiding there — a second rule on a hypothesis is how a rule set stops being
+  explainable.
+- ⚠ **The guard then caught its own author, and that is the best evidence in
+  this row.** The two examples above were first written with a *real* private
+  address; the scan of `docs/BUILDER_QUEUE.md` and of the guard's own source —
+  both inside its scanned set — failed the suite on them within a minute of the
+  fix landing. They are now in the RFC 5737 documentation range, which is what
+  that range is for. **A rule whose explanation cannot violate the rule is the
+  property CG-26 built the self-scan for**, and it just paid out on the row whose
+  entire subject is not publishing addresses.
+- ***"all seven rules"* was wrong in three places** — the scan has **eight**
+  rules once `DOC_PRIVATE_IP` joins it, and the figure was carried over from a
+  measurement taken *before* the rule existed. Corrected here, in the rule's own
+  comment, and in `tests/fixtures/README.md`.
+- **A stale count in a file this row was already editing:** the guard's
+  tolerance docstring claimed *"26 files, zero findings"*; it is **46**. Fixed
+  rather than left, because leaving it would have made this row the one that
+  touched the sentence and declined to re-measure it.
+- **This row's own `Touches` line was incomplete** — it omitted
+  `tests/fixtures/README.md`, which the row edits. The same defect CG-52's row
+  recorded, in the row that exists to be careful about published text.
+
+⚠ **No ⚠ verification-ledger flag cleared, added or reworded.** Verified with a
+`-- src/` grep: this row does not touch `src/` at all.
+
+---
+
 ### CG-67 · Stop `state/` from ever being committed  ✅ shipped 2026-07-31 · [PR #48](https://github.com/mmackelprang/chat-gateway/pull/48)
 
 | | |
@@ -3535,10 +3725,15 @@ always on the LAN IP by homelab convention. That convention is now
 **load-bearing** rather than incidental.
 
 **Resolve the address on the box; do not hardcode it out of a document.** The
-homelab records `192.168.86.47` as static and *"load-bearing — everything
-references `.47`"*, and `reservations.md` also carries an **unconfirmed**
-router-side reading that contradicts it. Fail closed on the real interface, the
-same way this row already fails closed on the app name.
+homelab records `<LAN-IP>` as static and *"load-bearing — everything
+references `<last octet>`"*, and `reservations.md` also carries an
+**unconfirmed** router-side reading that contradicts it. Fail closed on the real
+interface, the same way this row already fails closed on the app name.
+*(The address and its octet were literals here until CG-78 replaced them with
+placeholders; the redaction inside the quotation is marked rather than
+paraphrased, so the sentence still reads as the homelab's, not ours. The address
+itself is resolved on the box — which is what the first sentence of this
+paragraph demands anyway.)*
 
 **Not built here.** If honouring this needs anything beyond the app JSON's port
 form, that is **CG-55's** work to build — a bookkeeping row records decisions, it
@@ -3546,16 +3741,20 @@ does not write config.
 
 > **Note — a caveat to revisit later, not a qualification of the decision above.**
 > The bind fences the tailnet **while no tailnet subnet route to
-> `192.168.86.0/24` exists** — which is the state measured in the homelab repo on
+> `<LAN-subnet>` exists** — which is the state measured in the homelab repo on
 > 2026-08-03: **~2 tailnet devices** (the NAS and Mark's admin device), with
 > **appserver still `(planned — Task 2)`**, that being the node whose job is to
 > advertise exactly that `/24`. **If that route goes live, a tailnet peer can
 > reach the LAN address through it, and the ACL — not the bind — is the boundary
 > again.** The drafted ACL already anticipates it: its `tests` block **denies**
-> teammates `192.168.86.47:443` and siblings *"via the LAN subnet route"*. **So
+> teammates `<LAN-IP>:443` and siblings *"via the LAN subnet route"*. **So
 > D2's re-trigger is the subnet router** — the same event the user's own trigger
 > names, since the remote-access work *is* the subnet router. **Revisit then;
 > nothing to do now.**
+> *(CG-78 placeholdered that host:port. The ACL's precision is the point of
+> quoting it, so the sentence keeps the port and reuses the **same** `<LAN-IP>`
+> as the paragraph above — it is the same host, and that link is what the
+> sentence means.)*
 
 ##### 2 · ⏸ D2's tailnet ACL is DEFERRED — still wanted, no longer gating
 
