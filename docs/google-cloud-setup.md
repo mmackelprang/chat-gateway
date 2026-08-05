@@ -85,13 +85,21 @@ This enables `chat.googleapis.com` + `pubsub.googleapis.com` +
 subscribe on the subscription, writes the service-account key (owner-only:
 `chmod 600` on POSIX, `icacls` on Windows), and prints the `.env` block to copy.
 
-> **⚠ The key filename is a variable, and one value of it in this repo is dead.**
+> **⚠ The key filename is a variable, and the scripts' default value of it is a
+> dead key's name.**
 > The scripts default `KEY_FILE` / `-KeyFile` to `chat-gateway-sa.json`. The key
-> actually in use on `chat-gateway-gw` is **`chat-gateway-sa-gw.json`**, and
-> **`iac/chat-gateway-sa.json` belongs to the deleted `chat-gateway-prod`** — it
-> is dead, it will not authenticate, and its presence on disk is not
-> configuration. Point `GOOGLE_APPLICATION_CREDENTIALS` at the key you actually
-> minted, by full path. *(The scripts' default filename and example project id
+> actually in use on `chat-gateway-gw` is **`chat-gateway-sa-gw.json`**, and any
+> file matching that **default** name belongs to the deleted `chat-gateway-prod`
+> — it is dead, it will not authenticate, and finding one is not configuration.
+> ⚠ **The trap survives the file.** `iac/chat-gateway-sa.json` was **deleted on
+> 2026-08-05**, so the hazard is no longer *"there is a dead key sitting in your
+> tree"* — it is that **re-running these scripts with the default writes that
+> exact filename again**, and that old checkouts, backups and clones still hold
+> the dead one. *(Reworded 2026-08-05 by CG-79, which found this phrased around
+> the file's presence on disk; the presence is gone and the trap is not.)*
+> Point `GOOGLE_APPLICATION_CREDENTIALS` at the key you actually
+> minted, by full path, and **confirm it by reading its `project_id`, not its
+> name.** *(The scripts' default filename and example project id
 > are corrected under queue item **CG-19**, which touches `iac/` and therefore
 > ships separately.)*
 
@@ -368,7 +376,7 @@ Safe to paste in chat (non-secret): **project id, topic + subscription
 names, space IDs**.
 **Never paste in chat** (secrets — put them straight into the gateway
 host's `.env`, mode 600, with pointers in homelab `SECRETS.md`):
-- the service-account key JSON you minted (→ `GOOGLE_APPLICATION_CREDENTIALS=/path/to/it`). On the live project that is **`chat-gateway-sa-gw.json`**; **`iac/chat-gateway-sa.json` is a dead key for the deleted `chat-gateway-prod`** and must not be used or copied to the host
+- the service-account key JSON you minted (→ `GOOGLE_APPLICATION_CREDENTIALS=/path/to/it`). On the live project that is **`chat-gateway-sa-gw.json`**; **any other `chat-gateway-sa*.json` is a dead key for the deleted `chat-gateway-prod`** and must not be used or copied to the host. *(This named `iac/chat-gateway-sa.json` specifically; that file was deleted 2026-08-05, but copies outside this tree — and the setup scripts' own default filename — still produce it, so the warning is now against the shape. CG-79.)*
 - every webhook URL (→ the `GOOGLE_CHAT_WEBHOOK_URL__*` vars)
 
 Then set `GATEWAY_ENABLE_PUBSUB=1`, fill `CHAT_GATEWAY_PUBSUB_SUBSCRIPTION`,

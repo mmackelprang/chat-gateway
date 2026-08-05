@@ -483,12 +483,43 @@ volume signal, not a data path.
 **And that exposure is not being silently accepted.** It re-priced the `/healthz`
 exposure question for the production-readiness arc: no longer app-id enumeration,
 but another tenant's live traffic volume and timing, on the one system whose whole
-contract is that it takes no inbound path. The user's decision (**D2**, [arc spec
+contract is that it takes no inbound path. ~~The user's decision (**D2**, [arc spec
 §7](../superpowers/specs/2026-07-31-production-readiness-arc-design.md)) is that
 the drafted homelab tailnet ACL lands **before** this gateway is deployed, so
-`/healthz` is fenced from the first minute rather than afterwards. **Named
-residual, because a fence with an unstated gap is worse than none:** that ACL
-governs the tailnet, not the LAN.
+`/healthz` is fenced from the first minute rather than afterwards.~~
+
+⚠ **CORRECTED 2026-08-05 (CG-79) — and this is the correction in this document
+that matters most, because the struck sentence told you your exposure was
+controlled by a mechanism that does not exist.** D2's tailnet ACL was
+**deferred** by the user on 2026-08-03 — still wanted, no longer gating — and the
+gateway **deployed on 2026-08-05 without it**. The live tailnet policy is still
+the default allow-all; the drafted ACL exists only on an unmerged local branch in
+the homelab repo.
+
+**What actually fences `/healthz` today is a different and narrower mechanism,
+decided the same day D2 was deferred:** the deployed instance **binds its
+published port to the LAN address, not `0.0.0.0`**, so a tailnet peer cannot
+reach it whatever any ACL says. That is a property of the socket rather than of a
+policy, which is stronger where it applies — and it applies to **less**.
+
+**Named residual, because a fence with an unstated gap is worse than none — and
+the gap is now bigger than the one this paragraph originally named:**
+- the old residual stands: **that ACL governed the tailnet, not the LAN**;
+- **`/healthz` is unauthenticated and reachable by anyone on the home LAN.** No
+  ACL was ever going to change that, and the bind does not either;
+- ⚠ **the bind's fence lapses if a tailnet subnet route to that LAN is ever
+  advertised** — at which point the ACL, not the bind, is the boundary again, and
+  it is not applied. The homelab's own drafted policy anticipates exactly this.
+
+Both decisions, their reasoning and the accepted residual have **one home** —
+`docs/BUILDER_QUEUE.md` § CG-55, *"Two user decisions, 2026-08-03"*. Read them
+there; they are deliberately not restated in full here.
+
+⚠ **One further change to what this endpoint discloses, in your favour:** since
+CG-61's live-registry edit landed (2026-08-03), **two** tenants are
+`allow_inbound: false`, so `suppressed_opt_out` now **pools** their traffic and no
+longer decomposes to you by inference. **Partial, not complete** — it narrows
+attributability and authenticates nothing.
 
 Recorded because "nothing about aitrader is observable" should be true for a
 **stated and correct** reason, not by assumption — the first stated reason was

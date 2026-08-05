@@ -789,19 +789,25 @@ class SubscriberLoop:
         #    alternatives (a full `_unrouted` audit record; a metadata-only
         #    record carrying space + event type) and would sink a future
         #    `last_suppressed_app` or per-space breakdown. Accepted with eyes
-        #    open: with exactly ONE opted-out tenant registered — today's
-        #    deployment — this is a de-facto unauthenticated activity meter for
+        #    open: with exactly ONE opted-out tenant registered — the state on
+        #    2026-07-31 — this is a de-facto unauthenticated activity meter for
         #    that tenant BY INFERENCE, though no field names it. Taken as
         #    VOLUME-only and marginal: `events_seen` already publishes total
         #    inbound volume here. That "exactly ONE" is what CG-61's decision D1
-        #    ends — but NOT YET: a PR cannot edit the gitignored live registry,
-        #    which still granted `aiteam-harness` inbound when this was written
-        #    (2026-07-31). Once it carries D1, a second tenant is opted out and
-        #    this integer POOLS their traffic instead of decomposing to one —
-        #    PARTIAL mitigation, and not a reason to skip the /healthz ACL
-        #    (production-readiness arc spec §7 D2). CLAUDE.md's CG-12 bullet
-        #    carries the same "not yet" and expires on the same operator edit;
-        #    whoever makes it owns both.
+        #    ends — and it HAS ENDED, 2026-08-03 (recorded 2026-08-05, CG-79):
+        #    the operator edited the gitignored live registry, which a PR cannot
+        #    touch, and `aiteam-harness` now carries an EXPLICIT
+        #    `allow_inbound: false` rather than inheriting the True default.
+        #    Measured through the real `load_registry`, not assumed. So TWO
+        #    tenants are opted out and this integer POOLS their traffic instead
+        #    of decomposing to one — PARTIAL mitigation, and not a reason to skip
+        #    the /healthz ACL (production-readiness arc spec §7 D2), which was
+        #    DEFERRED by the user 2026-08-03 and is still not applied; what
+        #    fences the endpoint on the deployed instance is CG-55's LAN-address
+        #    bind, and LAN reach remains open by design. This comment read
+        #    "— but NOT YET" until 2026-08-05. CLAUDE.md's CG-12 bullet carried
+        #    the same "not yet"; the two named each other, and that pairing is
+        #    the only reason this one was found and corrected in the same pass.
         # 3. THE TWO REASONS ARE DISTINCT PHENOMENA, which is why this is two
         #    counters and not one. `opt_out` is hard rule #6 working exactly as
         #    designed — an app installed in a space it will never serve.

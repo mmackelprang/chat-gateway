@@ -124,9 +124,18 @@ in the gateway's inbound audit directory — the only one with
 else. ⚠ **Scoped to the example registry deliberately.** The live registry is
 gitignored and cannot be read from a PR; `CLAUDE.md` records that CG-61's
 `allow_inbound: false` for `aiteam-harness` landed in the **example** file and
-that the live edit is a separate recorded operator action, with the key absent
+that the live edit was a separate recorded operator action. ~~with the key absent
 from the live file and the default doing the work until then. So a second tenant
-may still have records in that directory on the running deployment. Nothing
+may still have records in that directory on the running deployment.~~
+✅ **That operator edit landed 2026-08-03** (corrected 2026-08-05, CG-79):
+`aiteam-harness` now carries an **explicit** `allow_inbound: false` in the live
+file, so **you are once again the only tenant whose events are being written to
+that directory.** ⚠ **The conclusion this paragraph drew still half-holds, and
+the surviving half is the one that affects your data:** records that tenant
+generated **before** 2026-08-03 can still be sitting in that directory, and they
+age out on the same global 30-day window described below — nothing was
+retroactively deleted. What changed is the *reason* — the default is no longer
+doing the work — not the possibility that older files exist. Nothing
 about the window below is tenant-specific — it is global (ADR-0002 D6) — so
 this changes who else should read this section, not what it says.
 
