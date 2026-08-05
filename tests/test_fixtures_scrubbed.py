@@ -610,13 +610,14 @@ SCANNED_ROOT_GLOB = "*.md"
 # CG-78 it sat outside the credential rules entirely, not just the address one.
 #
 # NOT widened to `src/` or `iac/`, and that is a scope decision rather than a
-# measurement gap: all seven rules over both trees measured **0** findings, so
-# there is nothing there to catch today, and pulling 28 more files under six
-# credential rules buys nothing now while adding a surface that has to stay
-# green forever. Revisit if an address ever needs to live in `iac/`.
+# measurement gap: all **eight** rules over both trees measured **0** findings
+# (21 files under `src/`, 3 under `iac/`), so there is nothing there to catch
+# today, and pulling 24 more files under seven credential rules buys nothing now
+# while adding a surface that has to stay green forever. Revisit if an address
+# ever needs to live in `iac/`.
 #
 # Measured on the day it went in, the same standard the tree widenings above
-# were held to: all seven rules over both files, zero findings.
+# were held to: all eight rules over both files, zero findings.
 SCANNED_FILES = ("docker-compose.yml", ".env.example")
 
 # Same shape as `PII`'s id arm, `(?!0)` lookahead included, so a document may
@@ -696,14 +697,53 @@ DOC_PEM = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 # history. The literals it was written for are still in this repo's commits and
 # a `git log -S` finds them; removing those needs a history rewrite, which was
 # considered and rejected (CG-78). This stops the NEXT one.
+# **Markdown emphasis may wrap any numeric run, and that tolerance was added
+# after pre-merge review rather than by foresight.** The first version required
+# each octet to be bare digits, which reads as obviously sufficient and is not:
+# this repo's own prose habit is to single out the last octet in backticks — the
+# very passage CG-78 scrubbed says *"everything references `<last octet>`"* — so
+# a private address whose last octet is backticked or bolded (in the RFC 5737
+# documentation range, that is ``192.0.2.`5` `` or `192.0.2.**5**`) is the shape
+# MOST likely to carry a reintroduced address here, and the bare-digit form
+# matched neither. A guard blind to the house style is a guard blind to the
+# house.
+#
+# **Those two examples are written in the documentation range on purpose, and it
+# is this rule that forced it.** The first draft of this comment illustrated them
+# with a real private address, and the scan of this very file — the self-scan
+# property incident 2 earned — failed the suite on it. Left as the demonstration:
+# the rule's own explanation cannot violate the rule.
+#
+# Measured before it went in, in both directions: every emphasis placement fires,
+# and the widened form produces **0** findings across the ENTIRE tracked tree —
+# not just the scanned set — so the tolerance costs nothing. `{0,2}` is a bound,
+# not a flourish: it covers ` `` `, `*`, `**` and `_` without letting the rule
+# wander, and every quantifier here stays bounded, so there is no backtracking
+# blowup.
+_EMPH = r"[*_`]{0,2}"
+_OCTET = _EMPH + r"\d{1,3}" + _EMPH
 DOC_PRIVATE_IP = re.compile(
     r"(?<![\w.])(?:"
-    r"10(?:\.\d{1,3}){3}"
-    r"|192\.168(?:\.\d{1,3}){2}"
-    r"|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}"
-    r"|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}"
-    r")(?![\w.])"
+    + _EMPH + r"10" + _EMPH + r"(?:\." + _OCTET + r"){3}"
+    + r"|" + _EMPH + r"192" + _EMPH + r"\." + _EMPH + r"168" + _EMPH
+    + r"(?:\." + _OCTET + r"){2}"
+    + r"|" + _EMPH + r"172" + _EMPH + r"\." + _EMPH + r"(?:1[6-9]|2\d|3[01])"
+    + _EMPH + r"(?:\." + _OCTET + r"){2}"
+    + r"|" + _EMPH + r"100" + _EMPH + r"\." + _EMPH
+    + r"(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])" + _EMPH + r"(?:\." + _OCTET + r"){2}"
+    + r")(?![\w.])"
 )
+
+# ⚠ **Residual, stated rather than left to be discovered** — the discipline
+# `DOC_TENANT_ASSIGN` already applies to its own blind spot. An address split
+# across markdown TABLE CELLS (`| 192.168.1 | 5 |`) is matched by nothing here,
+# because the separator is `|` and the rule needs a dot. `DOC_TENANT_TABLE`
+# exists for exactly that shape on the tenant rules — but it was added because a
+# reconstruction of incident 1 proved the table cell was where a value actually
+# hid. Nothing has been measured hiding there for an address, and the real leak
+# this rule was written for (`d5593f9`) was three plain literals in prose. A
+# second rule on a hypothesis is how a rule set stops being explainable, so this
+# one is written down instead of built.
 
 # A Workspace customer id has no structure to key off — the same problem
 # `TENANT_KEY` has, and the same answer: the RFC 2606 marker. `customers/C`
@@ -1000,6 +1040,21 @@ def test_docs_guard_rejects_a_private_lan_address():
             f"rules that did fire: {sorted(fired) or 'none'}"
         )
 
+    # Emphasis placements — added after pre-merge review, which pointed out that
+    # a rule requiring bare digits is blind to this repo's own writing habit of
+    # backticking the last octet. Each is built from a composed bait so the
+    # source still carries no whole literal.
+    net, host = _BAIT_RFC1918[0].rsplit(".", 1)
+    for styled in (f"`{net}.{host}`", f"{net}.**{host}**", f"{net}.`{host}`",
+                   f"**{net}**.{host}", f"_{net}.{host}_"):
+        fired = {rule for _, _, rule, _ in
+                 scan_text_for_real_identity("the box is at " + styled)}
+        assert "DOC_PRIVATE_IP" in fired, (
+            f"DOC_PRIVATE_IP missed an address wearing markdown emphasis "
+            f"({styled!r}) — that is the shape this repo is most likely to "
+            f"write; rules that did fire: {sorted(fired) or 'none'}"
+        )
+
     for benign in (
         "ports 8085:8085 binds 0.0.0.0, every interface",
         "curl 127.0.0.1:8085/healthz on the NAS, over SSH",
@@ -1152,7 +1207,10 @@ def test_docs_guard_tolerates_what_this_repo_publishes_on_purpose():
       to tolerate their values BY DESIGN rather than by annotation. The merge
       made that argument better-evidenced rather than moot: both files now sit
       inside the scanned trees, so `test_docs_and_tests_carry_no_real_identity`
-      re-proves the tolerance on every run — 26 files, zero findings — where it
+      re-proves the tolerance on every run — 46 files, zero findings (26 when
+      that sentence was written; re-measured by CG-78, which both widened the
+      scanned set and is the row that would otherwise have left a second stale
+      count in this file) — where it
       previously rested on a side check. And it would be worse than
       inconvenient if it broke: those files are the tests that PROVE hard rule
       #2 holds — that a webhook URL's key and token never reach a log. Breaking

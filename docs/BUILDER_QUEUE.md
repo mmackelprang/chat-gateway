@@ -1,6 +1,18 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
+**Last updated:** 2026-08-05 (Builder — **CG-78 SHIPPED**: the LAN address
+literals CG-55's planning prose left in this file are placeholdered, and
+`DOC_PRIVATE_IP` guards the return path. The sweep was far wider than the three
+hits it was handed — private + CGNAT quads, any dotted quad, `*.ts.net`, MACs,
+IPv6 ULA, internal hostname suffixes, real credential shapes, whole tracked tree
+— and **three was the whole set**; nothing turned up that was not an address.
+⚠ **It does NOT un-publish them.** They are in committed history on a public
+remote; the history rewrite that would remove them was **considered and rejected
+by the user**, because it would invalidate every merge record this project uses
+as its audit trail. Read the row's *"What this row does NOT do"* before
+believing the checkbox. Suite **382 → 383**. Previous entry follows.)
+
+**Previously:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
 running on the NAS and serving. Five facts observed, three of §5's open
 verification points answered on the box, seven deviations recorded. The record
 has one home — `docs/deploy/nas.md` §10 *Executed*. ⏸ **PR open and HELD for the
@@ -8,7 +20,7 @@ user's review; not merged.** ⏸ `capture.sh` outstanding, homelab §9 artifacts
 outstanding, tailnet ACL still not applied. Suite **382**, re-measured on the
 branch. Previous entry follows.)
 
-**Previously:** 2026-08-03 (Builder — **CG-53 SHIPPED (#65)**: the deployment
+**And before that:** 2026-08-03 (Builder — **CG-53 SHIPPED (#65)**: the deployment
 artifacts, the runbook, and the loader that makes hard rule #2 hold on the NAS.
 **Ships no deploy.** Suite **382** on the CG-53 branch, measured with
 `python3 -m pytest -q`, not copied from any row.
@@ -3379,7 +3391,7 @@ this queue keeps re-learning:
 |---|---|
 | **Origin** | user decision 2026-08-05; filed and built by the same Builder |
 | **Depends on** | nothing |
-| **Touches** | `docs/BUILDER_QUEUE.md` (this file), `tests/test_fixtures_scrubbed.py` |
+| **Touches** | `docs/BUILDER_QUEUE.md` (this file), `tests/test_fixtures_scrubbed.py`, `tests/fixtures/README.md` |
 | **Merge gate** | no — docs plus one guard rule |
 
 This repo is **public** (`mmackelprang/chat-gateway`, `isPrivate=false`).
@@ -3497,17 +3509,53 @@ than no guard. So the rule was **measured before it was written**, not after:
 tidiness.** `docker-compose.yml` and `.env.example` were outside the guard's
 trees entirely. Both are named by CG-55's own decision table as where a LAN
 address goes (`"<LAN-IP>:8085:8085"`), so a guard covering only `docs/` would
-have been blind at the exact spot the next literal lands. Measured: all seven
+have been blind at the exact spot the next literal lands. Measured: all **eight**
 rules over both files, **0 findings**, so the widening cost nothing on the day
 it went in. ⚠ **The larger half of that measurement is not about IPs at all** —
 `.env.example` is the file in this repo most likely to receive a pasted real
 credential, and until this row it was outside the **credential** rules too.
 
-⚠ **Coverage limit, stated rather than left to be discovered:** `src/` and
-`iac/` are still unscanned. Both measured 0 findings for all seven rules, so
-this is a scope decision, not a measurement gap — widening to them would drag
-six credential rules over 28 further files for no measured gain today. If a LAN
-address ever needs to live in `iac/`, that is the moment to revisit.
+⚠ **Coverage limit, stated rather than left to be discovered:** `src/` (21
+files) and `iac/` (3) are still unscanned. Both measured 0 findings for all
+**eight** rules, so this is a scope decision, not a measurement gap — widening
+to them would drag seven credential rules over 24 further files for no measured
+gain today. If a LAN address ever needs to live in `iac/`, that is the moment to
+revisit.
+
+**Pre-merge review changed the rule and corrected three counts**, recorded
+because how a thing was found is worth more than the thing:
+
+- **The rule was blind to this repo's own house style.** It required bare
+  digits, so a private address with a backticked or bolded last octet —
+  ``192.0.2.`5` `` and `192.0.2.**5**`, shown in the RFC 5737 documentation
+  range for the reason below — matched nothing, and singling out the last octet
+  in backticks is exactly what the passage this row scrubbed does
+  (*"everything references `<last octet>`"*). Markdown emphasis is
+  now tolerated around any numeric run, measured at **0 findings across the
+  entire tracked tree**, so the tolerance is free. **The residual is written
+  down rather than built:** an address split across markdown *table cells* is
+  still matched by nothing, and it stays that way until something is measured
+  hiding there — a second rule on a hypothesis is how a rule set stops being
+  explainable.
+- ⚠ **The guard then caught its own author, and that is the best evidence in
+  this row.** The two examples above were first written with a *real* private
+  address; the scan of `docs/BUILDER_QUEUE.md` and of the guard's own source —
+  both inside its scanned set — failed the suite on them within a minute of the
+  fix landing. They are now in the RFC 5737 documentation range, which is what
+  that range is for. **A rule whose explanation cannot violate the rule is the
+  property CG-26 built the self-scan for**, and it just paid out on the row whose
+  entire subject is not publishing addresses.
+- ***"all seven rules"* was wrong in three places** — the scan has **eight**
+  rules once `DOC_PRIVATE_IP` joins it, and the figure was carried over from a
+  measurement taken *before* the rule existed. Corrected here, in the rule's own
+  comment, and in `tests/fixtures/README.md`.
+- **A stale count in a file this row was already editing:** the guard's
+  tolerance docstring claimed *"26 files, zero findings"*; it is **46**. Fixed
+  rather than left, because leaving it would have made this row the one that
+  touched the sentence and declined to re-measure it.
+- **This row's own `Touches` line was incomplete** — it omitted
+  `tests/fixtures/README.md`, which the row edits. The same defect CG-52's row
+  recorded, in the row that exists to be careful about published text.
 
 ⚠ **No ⚠ verification-ledger flag cleared, added or reworded.** Verified with a
 `-- src/` grep: this row does not touch `src/` at all.

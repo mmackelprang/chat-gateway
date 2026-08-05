@@ -121,8 +121,8 @@ decision table sends a LAN address (`"<LAN-IP>:8085:8085"`), so a guard skipping
 it would be blind exactly where the next literal lands; and `.env.example` is
 the file most likely in this repo to receive a pasted **real credential**, which
 until CG-78 put it outside the credential rules too, not just the address one.
-`src/` and `iac/` stay out — measured at zero findings for all eight rules, so
-that is a scope decision rather than a gap.
+`src/` and `iac/` stay out — measured at zero findings for all eight rules
+(21 files and 3 respectively), so that is a scope decision rather than a gap.
 **This README is scanned** — it used to be exempt for the accidental reason that
 it is a `.md` outside `docs/`, which also left `CLAUDE.md` and the root
 `README.md` outside. The point worth stating: the document that explains the
