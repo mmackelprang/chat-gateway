@@ -40,7 +40,27 @@ your own configured destination when running these.
 
 ---
 
-## §1 · What this is — the tenth stack
+## §1 · What this is — the ELEVENTH stack
+
+> ⚠ **This heading said *"the tenth stack"* until 2026-08-05 (CG-79), and the
+> section's own body — three lines below — has always disagreed with it.**
+> 10 stacks were already running; the gateway is therefore the **eleventh**, and
+> the live `app.query` on the box (captured 2026-08-05) lists **11 apps**, which
+> settles it by measurement rather than by arithmetic.
+>
+> **This is not a claim that went stale — it was wrong the day it was written**,
+> which makes it a different and worse kind of error than the rest of what CG-79
+> corrected. In CG-69's taxonomy it is **category (b), wrong when written**, not
+> **(a), falsified by a later change**; §8 of that spec says plainly that no guard
+> in this repo can reach category (b).
+>
+> **Why it survived is the part worth keeping.** The wrong number sat in a
+> **heading** and the right one in the **body**, and nobody reads a heading and a
+> paragraph as two claims about the same fact — the heading reads as a title, the
+> paragraph as data. It then **propagated by quotation**, out of this file and
+> into a briefing, before being caught independently by the agent writing the
+> homelab-side artifacts. A self-contradicting section is more interesting than a
+> typo: the correct value was sitting three lines away the entire time.
 
 The gateway becomes an additional app stack on a box that is already busy. ⚠
 **This is not a role change for that machine.** An earlier draft of this plan
@@ -449,8 +469,12 @@ and the retention line.
 ### The capture gate
 
 ⚠ **Do NOT run `capture.sh` yourself.** It rewrites `nas/compose/*.json` for
-**all ten** stacks — a cross-repo write owned by whoever holds that working tree.
-**Request the run; then read what it produced.** A stop means stop.
+**every** stack on the box — a cross-repo write owned by whoever holds that
+working tree. **Request the run; then read what it produced.** A stop means stop.
+*(This said* ***"all ten"*** *until 2026-08-05. It was ten before the gateway
+existed and is **eleven** now — which is exactly why the rule is stated against
+"every stack" rather than a number: the count changes every time this runbook
+succeeds. CG-79.)*
 
 The file to read is **`nas/compose/chat-gateway.config.json`**. The pattern is
 `nas/compose/<app-name>.config.json`, and the app set is derived live from
@@ -541,9 +565,20 @@ design does not need that rule, and must not be justified by it.
   is claude-mem's Postgres. See `mem_limit` in §5.
 - **No public ingress is needed or wanted.** Pub/Sub is an outbound **pull**.
   Never put this behind the public reverse proxy.
-- **`iac/chat-gateway-sa.json` is DEAD.** It belongs to the deleted
-  `chat-gateway-prod` project. Do not authenticate with it, and do not treat its
-  presence in the repo as configuration.
+- **Only `chat-gateway-sa-gw.json` authenticates.** Any *other*
+  `chat-gateway-sa*.json` you find — in an old checkout, a backup, a clone, a
+  copy someone made before 2026-08-05 — belongs to the **deleted**
+  `chat-gateway-prod` project. It will not authenticate, and finding one is not
+  configuration. **Confirm by reading the key's own `project_id` field**, never by
+  its filename; that is what the deploy actually did (§10 deviation 7).
+  ⚠ **REWORDED 2026-08-05 (CG-79), not removed.** This warning named
+  `iac/chat-gateway-sa.json` and warned about *"its presence in the repo"*. **That
+  file has since been deleted**, so the old phrasing described nothing — but the
+  hazard did not go with it, because this repo cannot delete copies that live
+  outside it. §10 deviation 7 said this warning *"must not be removed"* and
+  CG-55's queue row set the condition: when the deletion lands, **reword, not
+  drop** — a warning that simply vanishes is indistinguishable from one nobody
+  thought about.
 - **Restarting drops nothing.** Both queues are durable and are replayed at boot
   **with the attempt count preserved** — which is what stops a crash loop from
   resetting the backoff ladder every boot and hammering Google. The replay rule
@@ -686,11 +721,26 @@ container stayed `exited` (code 137) until `app.start`. The policy **is** set �
 crash-loop claim**, which is about a process exiting 2 on its own; that stays
 unobserved rather than being read as confirmed.
 
-**5 · The capture — requested, NOT run, and read anyway.** `capture.sh` is a 🛑
-(cross-repo write across all ten stacks) and **was not run**. ⏸ **It is an
-outstanding request to whoever holds that working tree**;
-`nas/compose/chat-gateway.config.json` does not exist yet, and appears
-automatically on the first capture after the app exists.
+**5 · The capture — requested, NOT run *by this deploy*, and read anyway.**
+`capture.sh` is a 🛑 (cross-repo write across **every** stack on the box) and
+**was not run here**. ⏸ ~~It is an outstanding request to whoever holds that
+working tree; `nas/compose/chat-gateway.config.json` does not exist yet~~ —
+✅ **CLOSED: the user ran it on 2026-08-05 and that file now exists** (recorded
+2026-08-05, CG-79). The dated record of what *this run* did is left intact above,
+because it is a §10 *Executed* entry and its job is to say what happened on the
+day; only the forward-looking half — *"outstanding"*, *"does not exist yet"* —
+had expired.
+
+**What the capture showed, without reproducing it.** Scanned for the credential
+shapes this project's names defeat (`cgw_`, `chat.googleapis.com`, `token=`,
+`key=`, `private_key`, PEM headers): **zero hits**; every env var it carries is a
+path or a non-secret flag. ⚠ **The file lives in the homelab repo and its counts
+are deliberately not copied here** — a first attempt to quote one got the env-var
+count wrong (said four, it is six) from a grep pattern that structurally could not
+match the two extras. Both extras are non-secret so the verdict never moved, but
+the number had no business being in this repo. ⚠ **`clean. safe to commit.` was
+not the evidence** — §5 and CG-53 both establish that the script's suffix rule
+cannot see these shapes.
 
 **What was read instead is the same bytes from the same source.** `capture.sh`
 captures each custom app via `midclt call app.config <name>` — so
@@ -793,15 +843,25 @@ tailnet subnet route re-opens the question (CG-55's row, decision 1's contingenc
 6. **Restart used `docker kill` + `midclt app.start`, not §4's `app.redeploy`** —
    because fact 4 needed a **crash**, not a tidy restart. `app.redeploy` remains
    the documented upgrade step and is untested by this run.
-7. ⚠ **`iac/chat-gateway-sa.json` — the dead key — is STILL PRESENT in the repo.**
-   §8's warning is therefore still current and must not be removed. It was **not**
-   used; `chat-gateway-sa-gw.json` was, and both files' `project_id` fields were
-   read to confirm which is which before anything was copied.
+7. ⚠ **`iac/chat-gateway-sa.json` — the dead key — was STILL PRESENT in the repo
+   on the day of this deploy.** It was **not** used; `chat-gateway-sa-gw.json`
+   was, and both files' `project_id` fields were read to confirm which is which
+   before anything was copied — **which is the deviation worth recording, because
+   it means the check did not rely on the filename.**
+   ✅ **The file has since been DELETED (2026-08-05, by the user).** §8's warning
+   was therefore **reworded, not removed** — this entry said it *"must not be
+   removed"* and that instruction is honoured: what §8 now warns against is the
+   dead key's **shape**, since copies of it can outlive this working tree in old
+   checkouts, backups and clones, while the path cannot. Recorded 2026-08-05,
+   CG-79.
 
 ### What this run did NOT do
 
-- **`capture.sh`** — 🛑, requested, outstanding.
-- **Every homelab-side artifact in §9** — `nas/services/chat-gateway.md`, the
+- **`capture.sh`** — 🛑, requested. ✅ **Since RUN by the user, 2026-08-05, output
+  verified clean** (CG-79). This bullet said *"outstanding"*; the run genuinely
+  did not do it, which is what this list is for, but the status word had expired.
+- **Every homelab-side artifact in §9** — ⏸ **still outstanding**;
+  `nas/services/chat-gateway.md`, the
   `SECRETS.template.md` rows (§6), `restore-chat-gateway.sh`, `DASHBOARDS.md`,
   the Homepage tile. Deploy-then-document: they are written **now**, from the
   facts above, in **that** repo.

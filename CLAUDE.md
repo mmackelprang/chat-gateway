@@ -155,9 +155,21 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   this file used to describe — was **deleted 2026-07-30**, along with E1's
   throwaway project. Chat + Pub/Sub APIs enabled (no billing needed), the
   `chat-gateway` SA, the topic and the pull subscription all exist on `gw`; the
-  live SA key is **`chat-gateway-sa-gw.json`**. ⚠ `iac/chat-gateway-sa.json` is
-  **dead** — it belongs to the deleted project; do not try to authenticate with
-  it and do not treat its presence as configuration.
+  live SA key is **`chat-gateway-sa-gw.json`**. ⚠ **The key that authenticates is
+  that one and only that one.** Any *other* `chat-gateway-sa*.json` — in an old
+  checkout, a backup, a stale clone — belongs to the deleted `chat-gateway-prod`
+  and will not authenticate; do not try, and do not treat finding one as
+  configuration.
+  ⚠ **REWORDED 2026-08-05 (CG-79), not dropped.** This read *"`iac/chat-gateway-sa.json`
+  is **dead** … do not treat **its presence** as configuration"* — and **that file
+  has since been deleted**, so a warning phrased around its presence now describes
+  nothing. CG-55's row set the condition explicitly (*"the deletion is the user's;
+  when it lands, both need **rewording, not dropping** — a warning that simply
+  vanishes is indistinguishable from one nobody thought about"*) and CG-55's
+  Builder deliberately left it standing because the deletion had not landed then.
+  It has. **The warning is now phrased against the key SHAPE rather than one path,
+  because the path is gone and the hazard is not:** copies of that dead key exist
+  outside this working tree and nothing here can delete those.
   **Provisioning is not verification** — see below.
 - **The live Chat app is in FOUR spaces, not one — corrected 2026-07-31 (CG-60).**
   A **user statement about the Google Chat console**, which this repo cannot
@@ -391,17 +403,34 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   app is now in both Ai Trader spaces, so the counter **does** move on that
   tenant's traffic rather than merely *would if*. The accepted-with-eyes-open
   reasoning above is unchanged and is why this is a note rather than a reopening —
-  what changed is the tense, and the user's D2 decision responds to it by fencing
-  `/healthz` behind the homelab tailnet ACL **before** the first deploy.
-  ⚠ **The "exactly ONE tenant" condition is what CG-61 ends — but NOT YET.** A PR
+  what changed is the tense, and ~~the user's D2 decision responds to it by fencing
+  `/healthz` behind the homelab tailnet ACL **before** the first deploy.~~
+  ⚠ **That last clause is FALSE and is corrected here, 2026-08-05 (CG-79).** The
+  user **deferred** D2's ACL on 2026-08-03 — still wanted, no longer gating — and
+  the first deploy went ahead on 2026-08-05 **without it**. What actually fences
+  the endpoint is the paired decision taken the same day: **CG-55 binds the
+  published port to the LAN address rather than `0.0.0.0`**, so a tailnet peer
+  cannot reach `/healthz` whatever the ACL says. Both halves, their reasoning and
+  the residual have **one home** — `docs/BUILDER_QUEUE.md` § CG-55, *"Two user
+  decisions, 2026-08-03"*. **Read the residual there, because the bind is a
+  narrower guarantee than the ACL was:** `/healthz` is unauthenticated and
+  reachable by anyone on the **home LAN**, which the ACL never governed either.
+  ✅ **The "exactly ONE tenant" condition is ENDED — CG-61's operator edit landed
+  2026-08-03** (`config/registry.yaml` mtime `2026-08-03T20:34:06Z`; re-measured
+  through the real `load_registry` on 2026-08-05, `aiteam-harness
+  allow_inbound=False`, with `allow_inbound: false` now **written explicitly**
+  rather than defaulted). ~~**but NOT YET.** A PR
   cannot touch the gitignored `config/registry.yaml`, which when measured
   2026-07-31 still granted `aiteam-harness` inbound — **by the default; the key
-  is absent from that file**, which is D1's whole reasoning. **Once the live
-  registry carries decision D1** — a recorded operator action — a second tenant
-  is opted out and `suppressed_opt_out` starts **pooling** their traffic, so it
-  stops decomposing to `aitrader`. **Partial mitigation, not complete**, and not
-  a reason to skip the ACL: arc spec §7 D2. That operator edit falsifies the
-  "not yet" in **two** places — here and `adapters/pubsub.py`'s counter comment.
+  is absent from that file**, which is D1's whole reasoning.~~ **So a second
+  tenant is now opted out and `suppressed_opt_out` POOLS their traffic — it no
+  longer decomposes to `aitrader`.** That is a real change to what this
+  unauthenticated endpoint discloses, and it is the mitigation this paragraph
+  predicted, now in the past tense. **Partial mitigation, not complete**, and not
+  a reason to skip the ACL: arc spec §7 D2. That operator edit falsified the
+  "not yet" in **two** places — here and `adapters/pubsub.py`'s counter comment —
+  ✅ **and both were corrected together on 2026-08-05, which is the only reason
+  the second one moved at all.**
   Two integers rather than one because the reasons are different investigations
   — `opt_out` is rule #6 working as designed, `not_authorized` is a real human
   refused (jobhunt R4, newly reachable in production since `job-hunter` gained
@@ -460,14 +489,22 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   `poll_once`'s error paths and `_post`'s non-200 branch remain unexercised
   against Google, and this changed what they PRINT, not what is verified.
 - Consumers registered so far: `aiteam-harness` (via its `notify.py`
-  gateway transport, aiteam Stage 6 — `allow_inbound: false` **in
-  `registry.example.yaml`** as of CG-61, user decision D1: a **default
-  corrected, not a verdict** about that consumer, and reversible in that one
-  registry line; reasoning lives in the production-readiness arc spec §7 D1.
-  ⚠ The **live** registry is gitignored, so that row's PR could not change it —
-  the live edit is CG-61's recorded operator action, and until it is done this
-  app is still open inbound in production. `aitrader`'s entry beside it
-  describes the live file; this one does not yet), `aitrader` (docs/consumers/aitrader.md
+  gateway transport, aiteam Stage 6 — `allow_inbound: false` **in the live
+  registry AND in `registry.example.yaml`** as of CG-61, user decision D1: a
+  **default corrected, not a verdict** about that consumer, and reversible in that
+  one registry line; reasoning lives in the production-readiness arc spec §7 D1.
+  ⚠ **CORRECTED 2026-08-05 (CG-79).** This said *"`allow_inbound: false` **in
+  `registry.example.yaml`**"* with the caveat *"the live edit is CG-61's recorded
+  operator action, and **until it is done this app is still open inbound in
+  production**. `aitrader`'s entry beside it describes the live file; **this one
+  does not yet**."* **The operator made the edit on 2026-08-03**
+  (`config/registry.yaml` mtime `2026-08-03T20:34:06Z`), so this entry now
+  describes the live file exactly as `aitrader`'s does — measured through the real
+  `load_registry` on 2026-08-05, with the key **explicitly present** rather than
+  defaulted. The caveat is recorded rather than deleted because it was the
+  **correct** thing to say for three days and its shape recurs: a PR cannot change
+  a gitignored file, so *"merged"* and *"in effect"* are two different facts here
+  and always will be), `aitrader` (docs/consumers/aitrader.md
   — notify + dead-man, `allow_inbound: false`), `jobhunt`
   (docs/consumers/jobhunt.md — the first two-way tenant: whole-event
   callback forwarding with per-user authorization, structured reasons via

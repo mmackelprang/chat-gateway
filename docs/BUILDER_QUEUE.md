@@ -1,6 +1,54 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-05 (Builder — **CG-78 SHIPPED**: the LAN address
+**Last updated:** 2026-08-05 (Builder — **CG-79 SHIPPED**: CG-55's recorded
+status reconciled across this file, `CLAUDE.md`, `docs/deploy/nas.md`,
+`docs/google-cloud-setup.md`, both consumer contracts and one `src/` comment.
+**PR #66 merged as `4ddd6f5`**; the banner two entries below still said *"PR open
+and HELD … not merged"*, and **it was not the only one — the sweep corrected MORE THAN
+FORTY passages across seven files, on SIX falsified facts**, including three
+that were already false *before* the deploy ran. ⚠ *A precise site count was
+drafted and then deliberately dropped: two of this row's own numbers were wrong
+on first writing (see the row), and a tally nobody can re-derive is exactly what
+this row exists to stop shipping. The floor is checkable; the point was never the
+number.*
+**CG-61's live-registry operator action is DONE** — measured through the real
+`load_registry`, `aiteam-harness allow_inbound=False` with the key now
+**explicitly present** at `config/registry.yaml:38`, file mtime
+`2026-08-03T20:34:06Z`. That is **an hour and eighteen minutes after** the
+`2026-08-03 19:15:56Z` measurement three rows still quote as the current state,
+and `docs/deploy/nas.md:609` recorded the pre-flight PASS on 2026-08-05 — so the
+fact was **already written down in this repo, in a different file, while this
+file went on calling it outstanding**. `capture.sh` has been **run** and its
+output verified clean by the user; the artifact lives in the **homelab** repo and
+is named, not reproduced. ⚠ **`iac/chat-gateway-sa.json` is DELETED** — the
+condition CG-55's row set for rewording the dead-key warnings, so the five
+present-tense *"still present"* warnings are reworded, **not dropped**, exactly as
+that row instructed — and each now warns against the dead key's **shape** rather
+than a path this repo has deleted, because the setup scripts still default to that
+filename and copies outlive this working tree.
+⚠ **A SIXTH fact, folded in by user approval and worse than the other five: the
+gateway is the ELEVENTH stack, not the tenth.** `docs/deploy/nas.md` §1's
+**heading** said tenth while its own **body** three lines down measured 10
+pre-existing stacks; the live `app.query` lists **11**. **Wrong when written —
+CG-69 category (b), not (a)** — and it propagated by quotation before a sibling
+agent caught it by counting rather than by trusting its brief. Corrected in six
+places.
+⚠ **This row got a number wrong in its own draft too**, and **deleted** it rather
+than fixing it: the captured config's env-var count is **six**, not the four a
+too-narrow grep produced. That count lives in the homelab repo and no longer has a
+second home here.
+⚠ **No ⚠ verification-ledger flag cleared, added or
+reworded**: `git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"`
+→ **0**, and the one `src/` hunk is a comment `CLAUDE.md` names as this edit's
+paired site. ⚠ **The `docs/superpowers/` specs and plans carry the same claims and
+were NOT edited** — a Builder does not rewrite a Planner artifact — but they are
+**routed with file and line**, re-checked by `grep` here rather than copied,
+because CG-69 instance 5 is precisely the case where staying in lane shipped a
+false claim anyway. ⚠ **Logged as CG-69 evidence instance 6** — a merge going stale in
+this file's own banner within hours. Suite **383**, re-measured. Previous entry
+follows.)
+
+**Previously:** 2026-08-05 (Builder — **CG-78 SHIPPED**: the LAN address
 literals CG-55's planning prose left in this file are placeholdered, and
 `DOC_PRIVATE_IP` guards the return path. The sweep was far wider than the three
 hits it was handed — private + CGNAT quads, any dotted quad, `*.ts.net`, MACs,
@@ -12,15 +60,23 @@ by the user**, because it would invalidate every merge record this project uses
 as its audit trail. Read the row's *"What this row does NOT do"* before
 believing the checkbox. Suite **382 → 383**. Previous entry follows.)
 
-**Previously:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
+**And before that:** 2026-08-05 (Builder — **CG-55 DEPLOYED**: the gateway is
 running on the NAS and serving. Five facts observed, three of §5's open
 verification points answered on the box, seven deviations recorded. The record
-has one home — `docs/deploy/nas.md` §10 *Executed*. ⏸ **PR open and HELD for the
-user's review; not merged.** ⏸ `capture.sh` outstanding, homelab §9 artifacts
-outstanding, tailnet ACL still not applied. Suite **382**, re-measured on the
+has one home — `docs/deploy/nas.md` §10 *Executed*. ~~⏸ **PR open and HELD for
+the user's review; not merged.**~~ ⚠ **CORRECTED 2026-08-05 (CG-79): that PR is
+[#66](https://github.com/mmackelprang/chat-gateway/pull/66) and it MERGED the
+same day as `4ddd6f5`** (`gh pr view 66` → `MERGED`, `2026-08-05T18:04:05Z`).
+Struck rather than deleted, because **this sentence is the whole reason CG-79
+exists**: it is the first line of the file a Builder reads, it was true for a
+matter of hours, and nothing about it looked stale. ~~⏸ `capture.sh`
+outstanding~~ — ⚠ **also corrected: it has been RUN by the user and its output
+verified clean** (that artifact is the **homelab** repo's, named in CG-79's row
+and not reproduced here). ⏸ homelab §9 artifacts outstanding, tailnet ACL still
+not applied — **both still true.** Suite **382**, re-measured on the
 branch. Previous entry follows.)
 
-**And before that:** 2026-08-03 (Builder — **CG-53 SHIPPED (#65)**: the deployment
+**Earlier:** 2026-08-03 (Builder — **CG-53 SHIPPED (#65)**: the deployment
 artifacts, the runbook, and the loader that makes hard rule #2 hold on the NAS.
 **Ships no deploy.** Suite **382** on the CG-53 branch, measured with
 `python3 -m pytest -q`, not copied from any row.
@@ -179,9 +235,18 @@ action and the D2 tailnet ACL still gate it.
 
 ⚠ **Amended 2026-08-03 (Planner, user decision): the D2 tailnet ACL is DEFERRED
 and no longer gates CG-55.** The line above is left standing as the record of
-where the arc stood when CG-75 shipped; this is the currency pointer. **CG-61's
+where the arc stood when CG-75 shipped; this is the currency pointer. ~~**CG-61's
 live-registry operator action still gates CG-55** — measured against the real
-loader at **2026-08-03 19:15:56Z (15:15 EDT)** and **not yet done**. Deferred is
+loader at **2026-08-03 19:15:56Z (15:15 EDT)** and **not yet done**.~~
+⚠ **EXPIRED, corrected 2026-08-05 (CG-79). The operator edit was made the same
+day that measurement was taken** — `config/registry.yaml` mtime
+`2026-08-03T20:34:06Z`, **78 minutes later** — and re-measuring through the real
+`load_registry` returns `aiteam-harness allow_inbound=False` with the key now
+**explicitly written** at line 38, not defaulted. So this "currency pointer" was
+stale within the hour and stayed the file's designated current answer for two
+days. **The lesson is the label, not the fact:** a sentence that calls itself the
+currency pointer is trusted *more*, so it ages *worse*. The row's own advice —
+*"re-measure rather than trusting this line"* — is the part that worked. Deferred is
 not cancelled and not deleted, and it does not stand alone: the same day the user
 also decided **CG-55 binds its published port to the LAN interface rather than
 `0.0.0.0`**, which is what makes the deferral sound rather than merely
@@ -430,14 +495,31 @@ explicit sign-off naming that rule; narrowing is still a change to the surface.
 half is now stale and is corrected here rather than preserved verbatim — but its
 second half is NOT stale and is the reason this row is not simply done:**
 
-⚠ **The row is not finished now that the PR has merged.** `config/registry.yaml` is
+⚠ **That "second half is NOT stale" judgement has itself EXPIRED — corrected
+2026-08-05 (CG-79), and it is worth more than the fact it corrects.** This
+paragraph split one banner into a stale half and a durable half and was right on
+both counts *on the day*. What it could not do is stay right: the durable half
+was falsified on **2026-08-03** by an operator action taken in a gitignored file,
+which is the one class of change no diff, no test and no reviewer in this repo
+can see. **A sentence explicitly certified not-stale reads as verified rather
+than as merely current**, which is exactly why it sat unexamined for two days.
+Both halves are now spent; the paragraph is kept whole because the pattern is the
+finding.
+
+~~⚠ **The row is not finished now that the PR has merged.** `config/registry.yaml` is
 gitignored, so the PR changes only the EXAMPLE. Measured today with the real
 `load_registry` against the real live file: `aiteam-harness` is still
 `allow_inbound=True`, and the **key is absent** — the default is doing the work,
 which is decision D1's entire argument. Until an operator edits that file the
 app is **still open inbound in production**, and **CG-55 depends on the live
-file, not on the example**. The PR body carries the edit and its verification
-snippet.
+file, not on the example**.~~ ⚠ **DONE — the operator made the edit
+2026-08-03T20:34:06Z** (file mtime), and re-measuring through the real
+`load_registry` on 2026-08-05 returns `aiteam-harness allow_inbound=False` with
+`allow_inbound: false` now **written explicitly** at `config/registry.yaml:38`
+rather than defaulted. `aiteam-harness` is **no longer open inbound in
+production**; CG-55's own fail-closed pre-flight independently confirmed it on
+the box (`docs/deploy/nas.md:609`). The PR body carries the edit and its
+verification snippet.
 
 **Pre-merge review caught one HIGH, and it was this PR asserting its own
 outcome:** `CLAUDE.md`'s consumer bullet stated `allow_inbound: false` as the
@@ -607,7 +689,13 @@ recorded caveat has gone from hypothetical to live, and
 `docs/consumers/aitrader.md` **predicted this exact trigger**. Filed as
 **CG-60**. (b) The NAS is **NOT "backup target only"** — measured, it already
 runs **10 app stacks / 15 containers** including claude-mem's Postgres, so this
-is a *tenth stack*, not a role change. Probed read-only: **20.8 GB RAM free,
+is an *additional stack*, not a role change. *(This said "a **tenth** stack".
+⚠ **Wrong when written, not gone stale** — 10 were already running, so the
+gateway is the **eleventh**, and the live `app.query` captured 2026-08-05 lists
+**11 apps**. The measurement in the same sentence was always correct; only the
+ordinal derived from it was not. Corrected 2026-08-05, CG-79; the full account is
+in `docs/deploy/nas.md` §1, which carried the same contradiction in its own
+heading.)* Probed read-only: **20.8 GB RAM free,
 load 0.29/16 cores, `datapool` 1%, and ZERO swap** — the swap is the only real
 risk. **`ssh claude@nas` with passwordless sudo exists**, so CG-53/CG-55 are now
 **executable**, under a declared blast radius the plan states rather than
@@ -1114,19 +1202,19 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | Item | State | Note |
 |---|---|---|
 | **CG-60** · repo-wide correction of the one-space premise | ✅ done (#44) | Plan Part H. Merge gate **released by the user 2026-07-31**; merged the same day. Consumer contracts. **Sequenced FIRST.** Filed **CG-62** |
-| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | ✅ merged (#50) · ⏸ **operator action outstanding** | Gate released by the user; merged 2026-07-31 as `dced002`. ⚠ **Merging is not finishing** — the PR changed only `registry.example.yaml`; the **live gitignored registry edit is a separate operator action**, and **CG-55 depends on the live file**. ⚠ **Still outstanding — measured, not assumed:** `load_registry("config/registry.yaml")` at **2026-08-03 19:15:56Z** returned `aiteam-harness allow_inbound=True`, and the `allow_inbound` key is **absent** from that app's block (file mtime `2026-07-30T15:49:24Z`), so the `True` is the loader default — exactly D1's reasoning. Re-measure rather than trusting this line; it dates from before the edit, not after it. Suite 246 → 247. Plan Part I |
-| **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | ✅ done (#65) | ⏸ **merge gate** — secret-handling path; **held, the user's to release**, and the row now states exactly what releasing it approves (four things, **none of them a deploy**). ✅ **The premise was RE-MEASURED, not re-quoted** — it is the one load-bearing fact here and it lives in a repo this one does not control: through the homelab redactor's **real** `is_secret_key`, all seven credential vars still miss, and end to end through the **real** scan gate a payload keeping a live-shaped API key and webhook URL **exited 0**. ⚠ One correction: *"the `__<SUFFIX>` convention defeats it"* is only half right — bare `GOOGLE_CHAT_WEBHOOK_URL` is missed **anyway** (no `URL` suffix), so **renaming would not fix the webhook family**, the one secret with no rotate-in-place. ⚠ **Ten drifts found and corrected in Part A** across NINE merged PRs — **two would have failed at runtime**: A2's `build_runtime()` unpack is now a **6**-tuple (CG-68's `sweeper`), and §5's compose mounted the registry where its own env var did not point. Also folded in: **CG-70's owed runbook line** (that row stays **open**), the real state tree (**four** directories hold tenant bodies; `quarantine/` is never swept), **D2's deferral** replacing an *"ACL lands BEFORE deploy"* claim, and `202`→345→**359** (CG-76 landed mid-refresh and moved it a second time). Plan Part A |
+| **CG-61** · close `aiteam-harness`'s inbound path (decision D1) | ✅ **done — merged (#50) AND the operator action complete** (2026-08-03) | Gate released by the user; merged 2026-07-31 as `dced002`. ⚠ **Merging is not finishing** — the PR changed only `registry.example.yaml`; the **live gitignored registry edit was a separate operator action**, and **CG-55 depended on the live file**. ~~⚠ **Still outstanding — measured, not assumed:** `load_registry("config/registry.yaml")` at **2026-08-03 19:15:56Z** returned `aiteam-harness allow_inbound=True`, and the `allow_inbound` key is **absent** from that app's block (file mtime `2026-07-30T15:49:24Z`), so the `True` is the loader default — exactly D1's reasoning.~~ ✅ **DONE — corrected 2026-08-05 (CG-79).** The edit landed at mtime `2026-08-03T20:34:06Z`, **78 minutes after** the measurement struck above; re-measured through the real `load_registry` on 2026-08-05, `aiteam-harness allow_inbound=False`, with `allow_inbound: false` now **explicitly written** at line 38 rather than defaulted. CG-55's fail-closed pre-flight confirmed it independently on the box (`docs/deploy/nas.md:609`, 2026-08-05). ⚠ **This row's own instruction — *"re-measure rather than trusting this line"* — is the only reason it did not ship a false gate**; the line was already wrong when CG-55 read it. Suite 246 → 247. Plan Part I |
+| **CG-53** · deployment artifacts + secret-safety proof (**no deploy**) | ✅ done (#65) | ✅ **merge gate RELEASED by the user 2026-08-03** — secret-handling path; the row states exactly what releasing it approved (four things, **none of them a deploy**). ⚠ *This cell read* ***"held, the user's to release"*** *until 2026-08-05 while the row's own detail section three thousand lines below already said* ***"✅ RELEASED by the user 2026-08-03"*** *— a status word with two homes, disagreeing. Found by CG-79's sweep for a different row and corrected rather than left, because the sweep is the only thing that would have found it.* ✅ **The premise was RE-MEASURED, not re-quoted** — it is the one load-bearing fact here and it lives in a repo this one does not control: through the homelab redactor's **real** `is_secret_key`, all seven credential vars still miss, and end to end through the **real** scan gate a payload keeping a live-shaped API key and webhook URL **exited 0**. ⚠ One correction: *"the `__<SUFFIX>` convention defeats it"* is only half right — bare `GOOGLE_CHAT_WEBHOOK_URL` is missed **anyway** (no `URL` suffix), so **renaming would not fix the webhook family**, the one secret with no rotate-in-place. ⚠ **Ten drifts found and corrected in Part A** across NINE merged PRs — **two would have failed at runtime**: A2's `build_runtime()` unpack is now a **6**-tuple (CG-68's `sweeper`), and §5's compose mounted the registry where its own env var did not point. Also folded in: **CG-70's owed runbook line** (that row stays **open**), the real state tree (**four** directories hold tenant bodies; `quarantine/` is never swept), **D2's deferral** replacing an *"ACL lands BEFORE deploy"* claim, and `202`→345→**359** (CG-76 landed mid-refresh and moved it a second time). Plan Part A |
 | **CG-54** · queue **and inbox** durability (JSONL under `CHAT_GATEWAY_STATE_DIR`) | ✅ done (#45) | Part B. Shipped 2026-07-31: `journal.py`, both queues, replay + compaction + the mid-flight answer. 246 tests |
 | **CG-64** · post-CG-54 stale durability claims in `CLAUDE.md` + `docs/integration-guide.md` | ✅ done (#46) | Filed by CG-54's Builder. Shipped 2026-07-31 after CG-60 (#44) cleared the way. Item 4's "four fields degrade" was **five** — measured, and the row records both |
-| **CG-55** · first NAS deploy + live smoke | 🚀 **DEPLOYED and serving** (2026-08-05) · PR open, ⏸ **HELD for the user's review before merge** | ✅ **The gateway runs on the NAS. All five facts observed, §5's three open verification points answered on the box, seven deviations recorded — and the record has exactly ONE home: `docs/deploy/nas.md` §10 *Executed*.** Deliberately not summarized here; the interesting numbers are the ones that will move, and this file is where a second copy of a moving fact has burned this project three times. The row's detail section carries only what is still **open** and who owns it. ⚠ **`capture.sh` NOT run — 🛑, requested, outstanding.** ⚠ **No ⚠ ledger flag cleared, added or reworded** (one candidate named, left for CG-59). ⏸ **merge gate** + **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61**, **CG-75**, **CG-76** (⚠ **the CG-76 dependency was NOT recorded on this row until 2026-08-03** — the user's 2026-08-02 pre-deploy-blocker decision existed, and `grep` found it named nowhere under either CG-55 entry. A first deploy whose dead-man switch has six ways to drop an alert with `/healthz` green is a first deploy that should not happen, and aitrader's contract surface is exactly that switch), **CG-75** (⚠ **added 2026-08-03, user decision** — this gateway has never run on a box with a real disk that can fill, so CG-75's *"low likelihood"* is an artifact of never having been deployed, and **CG-55 is the event that changes it**; a first deploy that can turn a full disk into an unbounded send storm against Google is a first deploy that should not happen), and ~~⚠ an **external homelab-repo prerequisite (D2)**~~ — ⏸ **D2's tailnet ACL is DEFERRED by the user, 2026-08-03. It no longer gates this row; the dependency is recorded, not deleted.** ⚠ **Paired with a second decision the same day that this row must BUILD: bind the published port to the LAN interface, not `0.0.0.0`** (both, with reasoning and residual, in the row). Part C |
+| **CG-55** · first NAS deploy + live smoke | ✅ **done — DEPLOYED and serving** (2026-08-05) · **[PR #66](https://github.com/mmackelprang/chat-gateway/pull/66) MERGED** as `4ddd6f5` (⚠ this cell read *"PR open, ⏸ HELD for the user's review before merge"* until 2026-08-05; the merge happened hours later the same day and the cell did not move — **CG-69 evidence instance 6**) | ✅ **The gateway runs on the NAS. All five facts observed, §5's three open verification points answered on the box, seven deviations recorded — and the record has exactly ONE home: `docs/deploy/nas.md` §10 *Executed*.** Deliberately not summarized here; the interesting numbers are the ones that will move, and this file is where a second copy of a moving fact has burned this project three times. The row's detail section carries only what is still **open** and who owns it. ~~⚠ **`capture.sh` NOT run — 🛑, requested, outstanding.**~~ ✅ **RUN by the user and its output verified clean — corrected 2026-08-05 (CG-79).** The captured JSON lives in the **homelab** repo; it is **named, not reproduced here**, because it is that repo's artifact and a second copy of it in a public repo is the thing the capture gate exists to prevent. ⚠ **Still open: the homelab §9 artifacts** (a PR is being prepared in that repo) **and CG-59's soak.** ⚠ **No ⚠ ledger flag cleared, added or reworded** (one candidate named, left for CG-59). ✅ **merge gate released — PR #66 merged 2026-08-05.** **Builder-executed over SSH**. Depends on CG-53, CG-54, **CG-61** (✅ live registry edit done 2026-08-03), **CG-75**, **CG-76** (⚠ **the CG-76 dependency was NOT recorded on this row until 2026-08-03** — the user's 2026-08-02 pre-deploy-blocker decision existed, and `grep` found it named nowhere under either CG-55 entry. A first deploy whose dead-man switch has six ways to drop an alert with `/healthz` green is a first deploy that should not happen, and aitrader's contract surface is exactly that switch), **CG-75** (⚠ **added 2026-08-03, user decision** — this gateway has never run on a box with a real disk that can fill, so CG-75's *"low likelihood"* is an artifact of never having been deployed, and **CG-55 is the event that changes it**; a first deploy that can turn a full disk into an unbounded send storm against Google is a first deploy that should not happen), and ~~⚠ an **external homelab-repo prerequisite (D2)**~~ — ⏸ **D2's tailnet ACL is DEFERRED by the user, 2026-08-03. It no longer gates this row; the dependency is recorded, not deleted.** ⚠ **Paired with a second decision the same day that this row must BUILD: bind the published port to the LAN interface, not `0.0.0.0`** (both, with reasoning and residual, in the row). Part C |
 | **CG-56** · inbox delivery semantics: at-most-once → ack | 📋 queued | ✅ **APPROVED (D3)** — opt-in per request; default path unchanged. Part D |
 | **CG-57** · jobhunt `callback_url` → passive inbox polling | 📋 queued | Depends on CG-54 and **CG-56 (approved, D3)** so the contract doc is written once. Part E |
 | **CG-58** · structured adapter failures + `Retry-After` | 📋 queued | Part F. Touches `adapters/` — **no ⚠ flag may be touched** |
-| **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued | Depends on **CG-55** — the soak clock starts when it lands. Part G |
+| **CG-59** · long-run observation + a deployed `/healthz` | 📋 queued · ✅ **UNBLOCKED — the clock is running** | ~~Depends on **CG-55** — the soak clock starts when it lands.~~ ✅ **CG-55 landed 2026-08-05 and the soak clock started with it** — corrected 2026-08-05 (CG-79); the future tense here survived the event it was waiting for. This row is now the **only** thing standing between the `SubscriberLoop` long-run ⚠ flag and a decision about it, and it is the one row that gets *more* valuable the longer it waits. Part G |
 | **CG-62** · does replacing the Chat app re-price the ledger? | 📋 queued | **Filed by CG-60's Builder, deliberately NOT answered.** ⏸ needs **explicit hard-rule-#3 sign-off** — a Builder docs row may not decide it. No plan yet |
 | **CG-65** · shrink the journal's body window, harden both audit trails, and correct `aitrader.md` | ✅ done (#52) | Compact-on-drain, `0600` on both audit trails, the **unrevivable quarantine**, and the contract correction. Pre-merge review found a **data-loss race** in compact-on-drain — both producers journal the `open` before taking the queue lock, so `compact([])` could erase a record already on disk; fixed by recomputing survivors under the journal's own lock. Suite **247 → 268**. [Spec](superpowers/specs/2026-07-31-body-retention-and-audit-hardening-design.md) · [plan](superpowers/plans/2026-07-31-body-retention-and-audit-hardening.md) Tasks 1–9 |
 | **CG-68** · time-bounded pruning of the inbound audit trail | ✅ done (#54) | **The first row that DELETES a tenant's content.** 30/7/0 via `CHAT_GATEWAY_INBOX_RETENTION_DAYS`; the filename is the retention key, so pruning never opens a file holding message bodies. Amends `integration-guide.md:366`'s published *"never pruned"* (A4). ⚠ **New user decision A5** — the boot guard **refuses** rather than warns, and is stricter than the non-recursive glob requires (decision 4 below). Review found **0 HIGH, 6 MEDIUM, 6 LOW**; the sharpest was **M2** — the sweeper would have pruned `state/deliveries/` (ADR D7, permanent by decision), because the guard only fenced the quarantine and `state/deliveries` is its *sibling*. Suite **268 → 314**. Plan Tasks **10–14** |
-| **CG-69** · published-promise inventory (process control) | 📋 queued · ⚠ **evidence list now at FIVE** · ✅ **designed 2026-08-03** | Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. ⚠ **Instances 4 and 5 added 2026-08-03 by CG-76's Planner** — #4 CG-74 falsifying its own spec's `/healthz` strings, #5 CG-76 finding the delivery write-path spec §5's *"the only thing standing between a silently-dropped aitrader alert and a green `/healthz`"* to be false. **Every one was caught only because somebody independently went looking**, and #5 took two independent sweeps of the same code path to find its last two doors. ⚠ *That entry ended "**Still no plan**" when it was written; this PR falsified it hours later and it is corrected rather than left standing.* **Designed the same day — inverted and one fifth the size the row proposed**, because measurement falsified the row's stated cause (**instances 4 and 5 are both inside the sweep's own list**, and the sweep found counterexamples where the diff *did* contain the sentence) and showed the row's proposed pairing has already rotted: **8 of the 14 code citations in the live contracts point at the wrong code**, three of them in `aitrader.md`'s hard-rule-#6 enforcement table, while the same files' name-anchored citations are 0 of 8 wrong. [spec](superpowers/specs/2026-08-03-published-promise-inventory-design.md) · [plan](superpowers/plans/2026-08-03-published-promise-inventory.md) |
+| **CG-69** · published-promise inventory (process control) | 📋 queued · ⚠ **evidence list now at SIX** · ✅ **designed 2026-08-03** | ⚠ **Instance 6 added 2026-08-05 by CG-79's Builder** — the queue's own banner said CG-55's PR was *"open and HELD … not merged"* while it had merged hours earlier, and **more than forty sibling passages said the same or worse**; category (a), and the first instance whose falsified claim is about **this file's own bookkeeping** rather than about code. Filed by CG-65's Planner. Three changes in one day invalidated a guarantee recorded in a file nobody in the loop was reading. ⚠ **Instances 4 and 5 added 2026-08-03 by CG-76's Planner** — #4 CG-74 falsifying its own spec's `/healthz` strings, #5 CG-76 finding the delivery write-path spec §5's *"the only thing standing between a silently-dropped aitrader alert and a green `/healthz`"* to be false. **Every one was caught only because somebody independently went looking**, and #5 took two independent sweeps of the same code path to find its last two doors. ⚠ *That entry ended "**Still no plan**" when it was written; this PR falsified it hours later and it is corrected rather than left standing.* **Designed the same day — inverted and one fifth the size the row proposed**, because measurement falsified the row's stated cause (**instances 4 and 5 are both inside the sweep's own list**, and the sweep found counterexamples where the diff *did* contain the sentence) and showed the row's proposed pairing has already rotted: **8 of the 14 code citations in the live contracts point at the wrong code**, three of them in `aitrader.md`'s hard-rule-#6 enforcement table, while the same files' name-anchored citations are 0 of 8 wrong. [spec](superpowers/specs/2026-08-03-published-promise-inventory-design.md) · [plan](superpowers/plans/2026-08-03-published-promise-inventory.md) |
 | **CG-70** · the `0600` chmod is create-only — a pre-existing `0644` day-file keeps its mode | 📋 queued · **decided** | Filed by CG-65's Builder (LOW). ✅ **Planner call made 2026-08-02: option (a), and the row's own argument against it was measurably wrong.** `strace` shows every append already issues the stat and the kernel already returns the mode in it — (a) costs **zero** extra syscalls in the steady state. (b) goes to CG-53 for the files (a) provably cannot reach; (c) rejected. Severity unchanged; the reason changed from *"defer, it is low"* to *"do it, it is free"*. Spec §6 |
 | **CG-72** · `/healthz` cannot see two of the four threads (rule #5) | ✅ done (#56) | `dispatcher` and `monitor` now publish `thread_alive`/`thread_started` + staleness and **degrade**. Proven by killing both threads in a **real** server through the documented hole — an exception raised inside `_run`'s own handler, not `.stop()`: on `main` `/healthz` answered `status: ok`, `reasons: []`; on the branch, `degraded` with one reason each. Suite **314 → 324**. Review found **0 HIGH, 3 MEDIUM, 6 LOW** — the sharpest, **M1**, was a reason string asserting *"neither completing nor raising"* on two blocks that **count no failures**, copied from siblings where a counter branch made it true; reworded, and the counters filed as **CG-74**. **M2**: `last_pass_at` stamped the pass **start** while three places defined it as completion — the plan's own "do not call `self._now()` twice" had silently changed the field's meaning. [spec](superpowers/specs/2026-08-02-runtime-lifecycle-and-liveness-design.md) §2.6/§4 · [plan](superpowers/plans/2026-08-02-runtime-lifecycle-and-liveness.md) Part A |
 | **CG-75** · a raising `_finish` re-sends the same job every second, unbounded | ✅ done (#58) | **Pre-existing; surfaced by CG-72's review, not caused by it.** `_finish` calls `self._log.record(...)` **before** the job leaves `_jobs`, and the delivered path never advances `next_attempt_at`. `DeliveryLog.record` does raw `mkdir`/`open`/`write` with **no guard** — so an `OSError` there propagates out of `process_due` with the job still due, and the next pass **sends it again**, once a second, forever. **Measured 2026-08-03, not reasoned about: one message, one successful send, then 60 passes → 60 SENDS TO GOOGLE in 60 seconds.** Exactly the failure `_journal_write`'s docstring exists to prevent for the journal, on the one write path that never got it. Severity **HIGH on impact**; the *"low likelihood"* half is now recorded as **an artifact of never having been deployed** — hence the CG-55 dependency (user decision 2026-08-02). [spec](superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md) §3 · [plan](superpowers/plans/2026-08-03-delivery-write-path-robustness.md) **Part A** |
@@ -1138,6 +1226,7 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-66** · post-#45 residue outside the two CG-64 files | 📋 queued | Filed by CG-64's Builder. `README.md`'s **98**-test count, `__init__.py`'s module map, `journal.py`'s citation of a runbook line that does not exist, `.env.example`. ⚠ **now doc-only** — its one non-doc item was split out and shipped ahead of it as **CG-67** |
 | **CG-67** · `.gitignore` — stop `state/` from ever being committed | ✅ done (#48) | **Split out of CG-66 and promoted by the user**, because it is a live path to committing message bodies and CG-53/CG-55 are the rows that first run the gateway from the repo root. Config-only |
 | **CG-78** · scrub LAN address literals from the public repo | ✅ done ([#67](https://github.com/mmackelprang/chat-gateway/pull/67)) | **User decision 2026-08-05**, filed and built by the same Builder. This repo is **public**; CG-55's planning left internal address literals in **this file** — the only file in the repo that had any, confirmed by a sweep far wider than the one that found them. ⚠ **This does NOT un-publish them.** They are in committed history on a public remote and a single `git log -S` finds them; the fix for that is a history rewrite, which was **considered and rejected by the user** because it would invalidate every merge record this project uses as its audit trail. The row buys *"no new ones, and the current documents are clean"* — stated plainly, because a reader who thinks it bought more is worse off than one who knows. Docs + one guard rule |
+| **CG-79** · reconcile CG-55's recorded status across the repo | ✅ done ([#68](https://github.com/mmackelprang/chat-gateway/pull/68)) | **User-flagged 2026-08-05**, after CG-78's Builder spotted the banner and correctly declined to edit another row. **The banner was one of more than forty corrected passages, across seven files.** **Six** falsified facts, not one: PR #66 merged (`4ddd6f5`); CG-61's live-registry operator action done (2026-08-03, **78 minutes after** the measurement three rows still quote); `iac/chat-gateway-sa.json` deleted; `capture.sh` run and verified clean; *"has never been deployed"*; and ⚠ **the gateway is the ELEVENTH stack, not the tenth** — `nas.md` §1's heading disagreeing with its own body, **wrong when written (CG-69 category (b))** rather than gone stale, and caught only because a sibling agent counted the live `app.query` instead of trusting what it had been told. ⚠ **Three of them were already false *before* CG-55 deployed** — CG-55's Builder read a live-registry gate that had been satisfied two days earlier and re-measured rather than trusting it, which is the only reason nothing shipped wrong. ⚠ **The dead-key warnings are REWORDED, not dropped**, on CG-55's own explicit instruction — a warning that simply vanishes is indistinguishable from one nobody thought about. ⚠ **No ⚠ ledger flag moved** (`git diff main -- src/` greps **0** for either flag word); the single `src/` hunk is the `pubsub.py` comment `CLAUDE.md` names as the paired site of its own correction. Logged as **CG-69 evidence instance 6**. Docs + one comment |
 
 **Recommended order is the table order, and it is NOT the order the arc was
 briefed in.** The brief had deploy first. Three rows move ahead of it:
@@ -1154,10 +1243,16 @@ in parallel with it, and only CG-55 waits.
 paragraph is kept because it records what was decided on 2026-07-31, and this is
 what changed since.** The ACL is **deferred, not cancelled**: it is still wanted,
 it is simply no longer a blocker on CG-55, so **CG-55 no longer waits on
-homelab-repo work.** What still gates it is all **in this queue**: **CG-53**
+homelab-repo work.** ~~What still gates it is all **in this queue**: **CG-53**
 (📋 queued) and **CG-61's live-registry operator action** (measured outstanding —
-see its row). CG-54 and CG-75 are done. The reasoning and the accepted residual
-live in **CG-55's row** — one home, not three.
+see its row). CG-54 and CG-75 are done.~~ ⚠ **Nothing gates CG-55 any more — it
+DEPLOYED and MERGED on 2026-08-05** (`4ddd6f5`). Corrected 2026-08-05 (CG-79);
+the struck sentence was **stale on all three of its claims at once** — CG-53 is
+`✅ done (#65)`, CG-61's operator action landed 2026-08-03, and the row they
+gated has shipped. **A sentence that enumerates gates is the worst shape to leave
+standing**, because each item ages independently and the sentence reads as
+current until *every* one of them is checked. The reasoning and the accepted
+residual live in **CG-55's row** — one home, not three.
 
 ⚠ **A second exception to "the table order", added 2026-08-03: CG-75 must
 precede CG-55**, exactly as CG-61 does, and for a structurally identical reason —
@@ -1202,6 +1297,11 @@ one Planner has taken.
 
 **The deploy sits third rather than last on purpose: the soak clock starts
 there**, so CG-59 harvests days of real uptime instead of beginning a wait.
+✅ **That is now history rather than intent — the deploy landed 2026-08-05 and
+the clock has been running since** (noted 2026-08-05, CG-79). The sequencing
+argument is left in the future tense it was written in, because it is a record of
+why the order was chosen; what follows from it — that **CG-59 is unblocked and
+accruing value every day it waits** — is recorded on CG-59's own row.
 
 **Nothing in this arc widens any tenant's inbound surface.** `aitrader` stays
 `allow_inbound: false`; CG-57 **narrows** jobhunt's, per the user's decision.
@@ -1676,12 +1776,18 @@ call**, because "likely" is the exact word rule #3 exists to refuse.
 
 ---
 
-### CG-61 · Close `aiteam-harness`'s inbound path  ✅ merged ([#50](https://github.com/mmackelprang/chat-gateway/pull/50), `dced002`) · ⏸ **OPERATOR ACTION OUTSTANDING** · **BEFORE CG-55**
+### CG-61 · Close `aiteam-harness`'s inbound path  ✅ **DONE** — merged ([#50](https://github.com/mmackelprang/chat-gateway/pull/50), `dced002`) **and the operator action complete (2026-08-03)**
+
+> ⚠ **This heading read `⏸ OPERATOR ACTION OUTSTANDING · BEFORE CG-55` until
+> 2026-08-05.** Both halves are spent: the operator edit landed **2026-08-03**,
+> and CG-55 — the row it was sequenced before — deployed and merged **2026-08-05**.
+> Corrected by CG-79, and the heading is the site that matters most, because a
+> heading is what a reader takes on trust without opening the row.
 
 | | |
 |---|---|
 | **Decision** | **user, 2026-07-31 (D1)** — from Planner's finding while correcting the four-spaces premise |
-| **Depends on** | nothing. **CG-55 depends on THIS** being in the live registry |
+| **Depends on** | nothing. ~~**CG-55 depends on THIS** being in the live registry~~ ✅ **satisfied** — the live edit landed 2026-08-03, CG-55's pre-flight confirmed it 2026-08-05 |
 | **Touches** | `config/registry.example.yaml`, `CLAUDE.md` (consumer list), one new test. ⚠ the **live** `config/registry.yaml` is gitignored — an operator action, recorded |
 | **Merge gate** | ⏸ **YES — a live-config change narrowing a tenant's inbound surface** (hard rule #6 territory) |
 | **Spec / plan** | [spec §4.0b + §7 D1](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part I](superpowers/plans/2026-07-31-production-readiness-arc.md) |
@@ -1721,6 +1827,16 @@ first, the deployed gateway runs with inbound open and the first drain writes
 that content to disk. CG-55 carries a **fail-closed pre-flight** asserting the
 opt-in map rather than trusting anyone to remember.
 
+✅ **The edit landed 2026-08-03 and the pre-flight is what proved it** (recorded
+2026-08-05, CG-79). `docs/deploy/nas.md:609` logs the PASS on the box:
+`{aiteam-harness: False, job-hunter: True, aitrader: False}` from the real
+`load_registry` against the gitignored file, run as a fail-closed script rather
+than a memory test. **The paragraph above is the design that worked** — it
+assumed nobody would remember, and nobody did: this file went on calling the
+action outstanding for two more days while the deployed gateway was already
+running with the path closed. Left standing in the present tense it was written
+in, because it is a statement about what CG-55 must carry, not about a date.
+
 **Collision note:** CG-57 also edits `config/registry.example.yaml` (removing
 `job-hunter`'s `callback_url`). Independent in content, sequential in time —
 CG-61 before CG-55, CG-57 after — so the queue's standing two-rows-one-file
@@ -1735,13 +1851,24 @@ released by the user and the tense is corrected here, not the content). Two note
 and the second is why this row is **not** closed:
 
 - **The pre-state was re-measured, not copied from this row.** The real
-  `load_registry` against the real live file returns `aiteam-harness
-  allow_inbound=True` today, and the key is **absent** — so the default is what
-  granted inbound, exactly as D1 argues. This row's ⚠ paragraph above was right.
+  `load_registry` against the real live file returned `aiteam-harness
+  allow_inbound=True` **on 2026-07-31**, and the key was **absent** — so the
+  default was what granted inbound, exactly as D1 argues. This row's ⚠ paragraph
+  above was right. *(Tense fixed 2026-08-05 by CG-79: this said* ***"returns …
+  today"***, *and "today" in a merge note is a date that stops being one the
+  moment the note is filed. The post-state is measured above.)*
 - ⚠ **Merging is not finishing.** The PR changes `registry.example.yaml`; the
   live edit is the operator action, and it **falsifies a dated "not yet" in two
   files** — `CLAUDE.md`'s CG-12 bullet and `adapters/pubsub.py`'s counter
-  comment, each of which now names the other so neither is missed. The plan's
+  comment, each of which now names the other so neither is missed.
+  ✅ **The edit landed 2026-08-03; both "not yet"s were corrected 2026-08-05 by
+  CG-79, and the cross-reference is why both moved together.** That pairing —
+  *"whoever makes it owns both"* — is the one control in this whole row that did
+  its job across a two-day gap and a different Builder. ⚠ **It also has a
+  measured limit worth recording:** it named the two sites that would go stale
+  and nothing named *this row's own status cells*, which is why five of them sat
+  false while the two it did name were fixed in a single sweep. A cross-reference
+  is a pointer, not an inventory — which is CG-69's entire thesis. The plan's
   I3 sketch was also one disk surface short (it predates #45's journal); the
   shipped test asserts **both**, and a mutation that wrote only the journal was
   used to prove that half bites.
@@ -1916,8 +2043,11 @@ explicit in-container check for the second.
   came from another project's *pipeline-scoped* table and is **withdrawn**;
   any "blast radius of making the NAS an app host" framing goes with it.
   Measured: **10 app stacks / 15 containers** already run there, including
-  claude-mem's Postgres. The real question is what a **tenth stack** costs, and
-  it is answerable: **20.8 GB RAM available of 31.9 GB, load 0.29 on 16 cores,
+  claude-mem's Postgres. The real question is what **one more stack** costs, and
+  it is answerable: *(said "a **tenth** stack" until 2026-08-05 — with 10 already
+  running the gateway is the **eleventh**, confirmed by the live `app.query`'s 11
+  apps. Wrong when written, not gone stale; CG-79, and `docs/deploy/nas.md` §1
+  carries the account of how a heading and its own body disagreed for five days)* **20.8 GB RAM available of 31.9 GB, load 0.29 on 16 cores,
   `datapool` 1% of 13 TB.** A small Python service is noise.
 - ⚠ **ZERO swap — the one real finding.** A memory spike is an OOM kill on a box
   hosting someone else's Postgres, so the compose should declare a `mem_limit`.
@@ -1976,7 +2106,7 @@ runtime, not at review.**
 | 1 | **A2's `build_runtime()` unpack is a 5-tuple; it is now SIX** (CG-68 added `sweeper`). Retyping the plan's line drops it and `serve` dies at `sweeper.sweep()`. A2 now edits the `except` clause **only** | ⚠ would break |
 | 2 | **§5's compose could not have booted.** `CHAT_GATEWAY_REGISTRY=/config/registry.yaml` with the `config` dir mounted at `/config/config` → file at `/config/config/registry.yaml` → `RegistryError`, exit 2. Filed as *"verify it resolves"* when it was a thing to **fix**. `.env` now has its own mount point; nothing nests | ⚠ would break |
 | 3 | **The dev `.env` is not usable verbatim** — see the two-key table above. Part A said "scp `.env`" as though it were | ⚠ silent |
-| 4 | **§7 said "Run `capture.sh`" — that contradicts this plan's own standing rules**, where it is a 🛑 (it rewrites all ten stacks' files). Part C already had it right. Now: request the run, read the output | process |
+| 4 | **§7 said "Run `capture.sh`" — that contradicts this plan's own standing rules**, where it is a 🛑 (it rewrites every stack's file — ten then, **eleven** now; CG-79). Part C already had it right. Now: request the run, read the output | process |
 | 5 | **§8 carried D2 as decided-and-gating** (*"the ACL lands BEFORE this is deployed"*). **Deferred by the user 2026-08-03.** Corrected, with the LAN bind named as the replacing half | expired |
 | 6 | **§3's state tree was missing `quarantine/` and the retention sweep** (CG-65, CG-68). Now names **four** locations holding tenant bodies, which are swept and which never are | stale |
 | 7 | **CG-70's runbook line was absent** — that row's 2026-08-02 decision routes option (b) here explicitly. Folded into §3, with the disjoint-sets reasoning and ⚠ **it does not close CG-70** | owed |
@@ -2444,6 +2574,7 @@ carelessness — each change was correct in its own file:
 | 3 | **CG-68's prune** — *would have* | *"never pruned"* / *"the only copy"* | `integration-guide.md:366`, `:382`, **and a `/healthz` string** |
 | 4 | **CG-74** — the counters it added | two `/healthz` reason strings that hedged *"neither completing nor raising"* on blocks that counted nothing | `service.py`, its own spec |
 | 5 | **CG-74 again**, found by **CG-76** | *"this counter is **the only thing** standing between a silently-dropped aitrader alert and a green `/healthz`"* | `2026-08-03-delivery-write-path-robustness-design.md:421` |
+| 6 | **#66 / CG-55 merging** — and CG-61's operator edit two days earlier | *"PR open and HELD for the user's review; **not merged**"* (and *"operator action outstanding"*) — stale within hours, in **the first file a Builder reads**, across **40+ passages in 7 files** | `BUILDER_QUEUE.md` banner + siblings everywhere; found by the user, not by a diff |
 
 ⚠ **Instances 4 and 5 added 2026-08-03 by CG-76's Planner.** Instance 5 is the
 sharpest yet and extends this row's thesis in a direction the original three did
@@ -2562,8 +2693,16 @@ rather than per *append*. The consequence is that a day-file created by an
 earlier build, by a different umask, or by anything else, **keeps `0644`
 forever**. Only files created after CG-65 are `0600`.
 
-**Why this is LOW and was deferred rather than folded in:** the gateway has
-never been deployed (ADR-0002 §8), so no such file exists in production, and the
+**Why this is LOW and was deferred rather than folded in:** ~~the gateway has
+never been deployed (ADR-0002 §8), so no such file exists in production~~ — ⚠ **that
+premise expired 2026-08-05 when the gateway deployed, and the conclusion survives
+on measured evidence instead of on the premise** (CG-79). CG-55 ran a
+historical-mode sweep on the box: the gateway's own writers created **every** file
+`0600` and the `! -perm 600` probe printed nothing (`docs/deploy/nas.md` §10 Steps).
+So there is still no such file in production — now because it was **looked for**
+rather than because nothing was running, which is the stronger of the two reasons
+and the one this row should have wanted all along. **The severity is unchanged;
+what changed is that it now rests on a measurement.** And the
 window is bounded by one day — the filename is date-sharded, so tomorrow's file
 is created fresh at `0600`. The queue journals escape the problem entirely
 because compaction replaces the inode (`journal.py`), which also upgrades a
@@ -3562,6 +3701,183 @@ because how a thing was found is worth more than the thing:
 
 ---
 
+### CG-79 · Reconcile CG-55's recorded status across the repo  ✅ shipped 2026-08-05 · [PR #68](https://github.com/mmackelprang/chat-gateway/pull/68)
+
+| | |
+|---|---|
+| **Origin** | user-flagged 2026-08-05, after **CG-78's Builder** spotted the queue banner and **correctly declined to edit another row**. That restraint is the reason this row exists rather than the reason it was needed |
+| **Depends on** | nothing |
+| **Touches** | `docs/BUILDER_QUEUE.md`, `CLAUDE.md`, `docs/deploy/nas.md`, `docs/google-cloud-setup.md`, `docs/consumers/aitrader.md`, `docs/consumers/jobhunt.md`, `src/chat_gateway/adapters/pubsub.py` (one comment) |
+| **Merge gate** | no — docs plus one comment |
+| **Falsifies** | six live claims (below). **Changes no behaviour and moves no ⚠ flag** |
+
+**The row was handed one sentence and corrected more than forty passages across seven files.** The banner said
+CG-55's PR was *"open and HELD for the user's review; not merged"*. It had merged
+hours earlier the same day. **That was the least interesting of the six things
+that turned out to be false**, and the instruction that made the row worth doing
+was *do not fix only the sentence I quoted*.
+
+#### The six falsified facts, and what each one cost
+
+| # | The claim | What is true | Where it was wrong |
+|---|---|---|---|
+| 1 | CG-55's PR is *"open and HELD … not merged"* | **[#66](https://github.com/mmackelprang/chat-gateway/pull/66) merged 2026-08-05 as `4ddd6f5`** (`gh pr view`) | banner, summary-table cell, section heading, merge-gate row |
+| 2 | CG-61's live-registry operator action is *"outstanding"* | **done 2026-08-03**, mtime `2026-08-03T20:34:06Z`; `aiteam-harness allow_inbound=False` through the real `load_registry`, key **explicitly present** at line 38 | 7 sites incl. one labelled *"the currency pointer"* and one certified *"NOT stale"* |
+| 3 | `capture.sh` *"not run — outstanding"* | **run by the user 2026-08-05**, output verified clean | banner, table cell, the row's *"what is left OPEN"* table, the success gate, `nas.md` ×2 |
+| 4 | `iac/chat-gateway-sa.json` is *"STILL PRESENT"* | **deleted 2026-08-05** | 7 sites across 4 files (5 outside this file, enumerated in CG-55's row) |
+| 5 | The gateway *"has never been deployed"* | deployed and serving | CG-55's own decision section, CG-70's severity rationale |
+| 6 | The gateway is *"the **tenth** stack"* | **the eleventh** — 10 pre-existing + 1; the live `app.query` lists **11 apps** | `nas.md` §1 heading, 2 queue sites, 3 *"all ten stacks"* rules |
+
+#### ⚠ Three of these were already false when CG-55 read them — and that is the finding
+
+**CG-61's operator edit landed at 20:34Z on 2026-08-03. The measurement this file
+kept quoting as current was taken at 19:15:56Z the same day — 78 minutes
+earlier.** So when CG-55's Builder came to deploy on 2026-08-05, the queue told it
+a hard prerequisite was unsatisfied, and it was wrong.
+
+**Nothing shipped broken, and the reason is a single sentence somebody wrote into
+the CG-61 row: *"Re-measure rather than trusting this line."*** CG-55 carried a
+**fail-closed pre-flight** instead of a memory check, ran it on the box, and got
+`{aiteam-harness: False, job-hunter: True, aitrader: False}`
+(`docs/deploy/nas.md:609`). **The correct fact was therefore written down in this
+repo, in a different file, on 2026-08-05 — while this file went on calling it
+outstanding.** That is not a stale-docs problem. That is two homes for a moving
+fact, which is the failure this project names more often than any other.
+
+⚠ **The two sentences that aged worst were the two that certified themselves.**
+One called itself *"the currency pointer"*; another declared a neighbouring claim
+*"NOT stale"* and was right on the day. **A sentence that asserts its own currency
+is read as verified rather than as merely current**, so it is examined less, not
+more. Both are struck in place with this reasoning attached, because the shape
+will recur and the wording is the only warning available.
+
+#### Fact 6 is a different class from the other five — and worse
+
+The other five are **CG-69 category (a)**: live claims falsified by a later
+change. **The stack count is category (b) — wrong when written.** 10 stacks were
+already measured in `nas.md` §1's own body when the same section's **heading**
+called the gateway *"the tenth stack"*. The right number was three lines from the
+wrong one, for five days.
+
+**It survived because of where it sat.** A heading reads as a title and a
+paragraph reads as data; nobody compares them. It then **propagated by
+quotation** into a briefing and into a sibling agent's task, and was caught only
+because that agent independently counted the live `app.query` and recorded the
+discrepancy rather than deferring to what it had been told. ⚠ **CG-69's spec §8
+says plainly that no guard in this repo can reach category (b)** — this row is
+evidence for that claim, not a counterexample to it.
+
+#### The dead-key warnings are REWORDED, not dropped — on CG-55's own instruction
+
+CG-55's row set the condition in advance: *"the deletion is the user's; when it
+lands, both need **rewording, not dropping** — a warning that simply vanishes is
+indistinguishable from one nobody thought about."* It landed. All five sites were
+reworded, and the rewording changes what they warn **about**:
+
+**from a path — `iac/chat-gateway-sa.json` — to a shape: any
+`chat-gateway-sa*.json` that is not `chat-gateway-sa-gw.json`.** The file is gone
+and the hazard is not: old checkouts, backups and clones still hold the dead key,
+and **`iac/gcloud-setup.sh` and its `.ps1` sibling still default `KEY_FILE` to
+that exact filename**, so re-running setup writes it again. A warning keyed on a
+path this repo has deleted protects nobody; one keyed on the shape survives the
+deletion. Every site now also says **confirm by the key's own `project_id`, not
+by its name** — which is what the deploy actually did (`nas.md` §10 deviation 7).
+
+⚠ **`adapters/chat_api.py`'s docstring mentions the dead key and was deliberately
+NOT touched.** It sits inside a **⚠ flag CLEARED** entry, as a dated observation
+about which key minted a real token. It asserts nothing about the file existing,
+and editing prose inside a ledger entry is flag movement by another name.
+
+#### ⚠ Not fixed here — routed to Planner, with the list
+
+**`docs/superpowers/` specs and plans carry the same stale claims, and this row
+did not edit them.** A Builder does not rewrite a Planner artifact; CG-53's row
+set that precedent twice in one section. **But CG-69 evidence instance 5 is
+exactly a case where a Builder stayed correctly in its lane and a false claim
+shipped anyway** — so the finding is routed rather than merely declined, with
+file and line, which is the whole point of that control:
+
+| File | Lines | Stale on |
+|---|---|---|
+| `superpowers/specs/2026-07-31-production-readiness-arc-design.md` | 11; 179, 583, 588 | *"It has never been deployed"*; *"tenth stack"* ×3 |
+| `superpowers/specs/2026-07-31-production-readiness-arc-design.md` | 425, 429; 759; 1001, 1026, 1101, 1496 | CG-55 *"user-executed"* + CG-59 *"strictly after a deploy"*; dead key; *"ten stacks"* ×4 |
+| `superpowers/plans/2026-07-31-production-readiness-arc.md` | 42, 432, 478, 566, 720, 802, 1716, 1761, 1808, 1810 | *"all ten stacks"* ×4; *"tenth stack"*; dead key ×3; *"never been deployed"*; *"deployed gateway runs `allow_inbound: true`"* |
+| `superpowers/plans/2026-08-03-published-promise-inventory.md` | 518 | *"nothing is deployed yet"* |
+| `superpowers/specs/2026-08-03-delivery-write-path-robustness-design.md` | 567 | *"has never run on a box with a real disk that can fill"* |
+| `superpowers/plans/2026-07-29-live-verification-followups.md` | 105 | rotation recipe keyed on the deleted key's filename |
+
+**Every line number above was re-checked with `grep` in this repo before being
+published** — not carried from the sweep that found them, because a routing list
+whose coordinates are wrong is worse than no list. Two of the sweep's rows did not
+survive that check and are **deliberately absent**: spec `:838` (*"all ten"*
+counts `nas/services/*.md` **docs**, a different set of ten and still correct) and
+spec `:1418` (*"user-executed"* there is CG-59's observation half, which really is).
+
+⚠ **`plans/2026-07-31-production-readiness-arc.md:1761` is the one to read first.**
+It says a *"deployed gateway runs `allow_inbound: true` and the first drain
+writes"* — a **security-shaped** claim about a live deployment, and it is now
+false in the safe direction. A Planner reconciling this list should start there.
+
+#### ⚠ Three numbers this row got wrong in its own draft — and it is a row about wrong numbers
+
+**Recorded rather than quietly fixed, because a row whose entire subject is
+inaccurate bookkeeping does not get to be silently inaccurate.** Two were caught
+by **pre-merge review**, one by the user; **none by the author.**
+
+| # | Draft said | Truth | How it was caught |
+|---|---|---|---|
+| 1 | the CG-61 edit landed *"**79** minutes after"* the 19:15:56Z measurement, in **five** places | `20:34:06 − 19:15:56` = **1h 18m 10s** → **78 minutes** | reviewer subtracted the two timestamps **printed in the same sentence** |
+| 2 | routing table: plan carries *"all ten stacks"* **×5** | **×4** (lines 42, 720, 1716, 1810) — the row's own tallies summed to 11 against 10 listed line numbers | reviewer counted the row's tallies against its own coordinates |
+| 3 | the captured config has **four** env vars | **six** — plus `GATEWAY_ENABLE_PUBSUB` and `TZ` | user; the grep pattern `CHAT_GATEWAY_[A-Z_]+\|GOOGLE_[A-Z_]+` **structurally could not match either** |
+
+⚠ **#1 is the sharpest, and it indicts the format rather than the arithmetic.**
+The wrong figure sat **immediately beside both timestamps that disprove it**, in
+the same sentence, five times over — the identical shape as fact 6, where
+`nas.md` §1's heading contradicted its own body three lines down. **Twice in one
+PR, a derived number and the data it derives from sat side by side and disagreed,
+and the human-readable derived number is the one that got trusted.** That is not
+carelessness; it is what prose does. It is also the best argument in this file for
+CG-69's control being *executable* rather than editorial.
+
+⚠ **A fourth number was DELETED rather than corrected: the count of sites this row
+touched.** The draft said *"21 sites"* in five places. It is **more than forty**,
+and rather than assert a precise figure nobody can re-derive, the claim is now a
+**checkable floor**. Having got three counts wrong already, publishing a fourth
+precise one would have been the joke telling itself.
+
+#### The env-var count, and why it was deleted rather than fixed
+
+The first draft of the capture summary said *"717 bytes, **four** env vars"*. It
+is **six** — the four paths plus `GATEWAY_ENABLE_PUBSUB` and `TZ` — and the four
+came from a grep pattern (`CHAT_GATEWAY_[A-Z_]+|GOOGLE_[A-Z_]+`) that
+**structurally could not match either extra**. Both extras are non-secret, so the
+*"zero secret values"* verdict never moved.
+
+**The fix was not to correct the number but to delete it.** That count lives in
+the **homelab** repo and has no business having a second home in a public one —
+which is the same lesson as the test count, arrived at by walking into it inside
+a row written to catch exactly this.
+
+#### What this row does NOT do
+
+- **It does not re-verify the deploy.** The five facts, the seven deviations and
+  the counters keep their one home in `docs/deploy/nas.md` §10 and are **not**
+  summarized here.
+- **It moves no ⚠ verification-ledger flag.**
+  `git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"` → **0**.
+  A live deploy plus a merged PR is a tempting moment to retire the
+  `SubscriberLoop` long-run row; it clears by **soak (CG-59)**, not by deploying,
+  and not by a bookkeeping PR.
+- **It closes nothing that is actually open.** The homelab §9 artifacts and
+  CG-59's soak are still outstanding and are recorded as such in three places.
+- **It does not reconcile the Planner artifacts above** — it lists them.
+
+⚠ **Logged as CG-69 evidence instance 6.** First instance whose falsified claim is
+about **this file's own bookkeeping** rather than about code — and the first found
+by a human reading the file, not by a sweep, a test or a reviewer.
+
+---
+
 ### CG-67 · Stop `state/` from ever being committed  ✅ shipped 2026-07-31 · [PR #48](https://github.com/mmackelprang/chat-gateway/pull/48)
 
 | | |
@@ -3652,7 +3968,7 @@ as unnoticed:
 
 ---
 
-### CG-55 · First NAS deploy and live smoke  🚀 **DEPLOYED 2026-08-05** · PR open, ⏸ **HELD for review before merge** · **BUILDER-EXECUTED over SSH**
+### CG-55 · First NAS deploy and live smoke  ✅ **DEPLOYED 2026-08-05** · **[PR #66](https://github.com/mmackelprang/chat-gateway/pull/66) MERGED** as `4ddd6f5` · **BUILDER-EXECUTED over SSH**
 
 > ✅ **Executed 2026-08-05. The gateway is deployed on the NAS and serving.** The
 > record of what actually happened — every step, all five facts, the seven
@@ -3664,24 +3980,61 @@ as unnoticed:
 > lives in §10 and a second copy of it here is the trap this row's own note
 > just warned about:**
 >
+> **⚠ Status of this table reconciled 2026-08-05 by CG-79. Two of its four rows
+> closed, and the third and fourth are the only work this row still owns.**
+>
 > | Open | Owner | Evidence |
 > |---|---|---|
-> | `capture.sh` not run — 🛑 for Builder, **requested and outstanding** | whoever holds the homelab working tree | §10 fact 5 |
-> | every §9 homelab-side artifact (`nas/services/`, `SECRETS.template.md`, `restore-*.sh`, `DASHBOARDS.md`, Homepage tile) | homelab repo, deploy-then-document | §10 *What this run did NOT do* |
-> | the tailnet ACL (D2) **not applied at deploy time** | deferred by the user; re-priced by the subnet router | §10 Steps table |
-> | what the subscription actually carries, and the `SubscriberLoop` long-run ⚠ flag | **CG-59** — it needs a clock, not a smoke test | §10 *C1a* |
+> | ~~`capture.sh` not run — 🛑 for Builder, **requested and outstanding**~~ ✅ **CLOSED — run by the user 2026-08-05, output verified clean** | was: whoever holds the homelab working tree | §10 fact 5 · the captured JSON is the **homelab** repo's artifact, named below and **not reproduced** |
+> | every §9 homelab-side artifact (`nas/services/`, `SECRETS.template.md`, `restore-*.sh`, `DASHBOARDS.md`, Homepage tile) — ⏸ **STILL OPEN**, a PR is being prepared in that repo | homelab repo, deploy-then-document | §10 *What this run did NOT do* |
+> | the tailnet ACL (D2) **not applied at deploy time** — ⏸ **still not applied**, and still deferred | deferred by the user; re-priced by the subnet router | §10 Steps table |
+> | what the subscription actually carries, and the `SubscriberLoop` long-run ⚠ flag — ⏸ **STILL OPEN** | **CG-59** — it needs a clock, not a smoke test; the clock started 2026-08-05 | §10 *C1a* |
 >
-> ⚠ **`iac/chat-gateway-sa.json` is STILL PRESENT**, so the dead-key warnings in
-> `CLAUDE.md` and `docs/deploy/nas.md` §8 are **still current** and were left
-> standing deliberately. The deletion is the user's; when it lands, both need
-> **rewording, not dropping** — a warning that simply vanishes is
-> indistinguishable from one nobody thought about.
+> **The capture, recorded as a fact and not as an artifact.** `capture.sh` was
+> run by the user; its output is `nas/compose/chat-gateway.config.json`, and it
+> was scanned for the credential shapes this project's names defeat (`cgw_`,
+> `chat.googleapis.com`, `token=`, `key=`, `private_key`, PEM headers) — **zero
+> hits**. Every env var it carries is a **path** or a non-secret flag. ⚠ **That
+> file lives in the homelab repo, not this one, and its counts are therefore NOT
+> restated here.** The verdict is recorded because this row's success gate
+> depended on it; **the contents and their tallies are not**, because a second
+> copy of a captured config in a *public* repo is precisely the outcome the gate
+> exists to prevent — and because a count copied out of another repo is this
+> project's oldest recorded failure mode. ⚠ **This paragraph proved that in the
+> writing.** Its first draft said *"**717 bytes**, **four** env vars"*; the count
+> was **six** (the four paths plus `GATEWAY_ENABLE_PUBSUB` and `TZ`), and the
+> four came from a grep whose pattern — `CHAT_GATEWAY_[A-Z_]+|GOOGLE_[A-Z_]+` —
+> **structurally could not match either extra**. Caught before merge. Both extras
+> are non-secret, so the *"zero secret values"* verdict never moved; what moved
+> was a number that had no business being in this file at all, which is why it is
+> now absent rather than corrected. ⚠ **`clean. safe to commit.` was not the
+> evidence** — this row said in advance that the script's suffix rule cannot see
+> these shapes, so the assurance is worth nothing; the explicit shape scan is what
+> answered it.
+>
+> ⚠ **`iac/chat-gateway-sa.json` — the dead key — is now DELETED, and this row's
+> instruction has been carried out** (2026-08-05, CG-79). ~~It is STILL
+> PRESENT, so the dead-key warnings in `CLAUDE.md` and `docs/deploy/nas.md` §8
+> are **still current** and were left standing deliberately.~~ **The condition
+> that paragraph named came true.** All five sites — `CLAUDE.md`,
+> `docs/deploy/nas.md` §8, `docs/deploy/nas.md` §10 deviation 7,
+> `docs/google-cloud-setup.md` twice — were **reworded, not dropped**, because
+> *"a warning that simply vanishes is indistinguishable from one nobody thought
+> about"* and that reasoning is the durable half of this note. What each of them
+> now says is the thing that outlives the file: **the key that authenticates is
+> `chat-gateway-sa-gw.json`, and any *other* `chat-gateway-sa*.json` a reader
+> finds — in an old checkout, a backup, a stale clone — belongs to the deleted
+> `chat-gateway-prod` and will not authenticate.** ⚠ **Deliberately NOT touched:
+> `adapters/chat_api.py`'s docstring**, which mentions the dead key inside a
+> **⚠ flag CLEARED** entry. That is a dated observation about which key minted a
+> real token, it asserts nothing about the file existing, and editing prose
+> inside a ledger entry is flag movement by another name.
 
 | | |
 |---|---|
-| **Depends on** | **CG-53** (artifacts), **CG-54** (durability), **CG-75** (the storming write path), **CG-76** (⚠ **added 2026-08-03 — the dependency was NOT recorded here.** The user's 2026-08-02 pre-deploy-blocker decision existed; measured the same day, `grep -n "CG-76"` named it nowhere under either CG-55 entry. aitrader's whole gateway relationship is the dead-man switch, and that switch has **six** measured ways to drop an alert while `/healthz` answers `ok` — three of them needing no fault at all. A first deploy should not ship that), **CG-61** (in the LIVE registry — D1), and ~~⚠ an **external prerequisite in the homelab repo: the drafted tailnet ACL, applied (D2)**~~ — ⏸ **DEFERRED by the user 2026-08-03, paired with a bind-to-LAN design decision this row must honour: see *"Two user decisions, 2026-08-03"* below.** No external prerequisite remains |
+| **Depends on** | **CG-53** (artifacts), **CG-54** (durability), **CG-75** (the storming write path), **CG-76** (⚠ **added 2026-08-03 — the dependency was NOT recorded here.** The user's 2026-08-02 pre-deploy-blocker decision existed; measured the same day, `grep -n "CG-76"` named it nowhere under either CG-55 entry. aitrader's whole gateway relationship is the dead-man switch, and that switch has **six** measured ways to drop an alert while `/healthz` answers `ok` — three of them needing no fault at all. A first deploy should not ship that), **CG-61** (in the LIVE registry — D1; ✅ **satisfied — the operator edit landed 2026-08-03 and the pre-flight confirmed it on the box 2026-08-05**, `docs/deploy/nas.md:609`), and ~~⚠ an **external prerequisite in the homelab repo: the drafted tailnet ACL, applied (D2)**~~ — ⏸ **DEFERRED by the user 2026-08-03, paired with a bind-to-LAN design decision this row must honour: see *"Two user decisions, 2026-08-03"* below.** No external prerequisite remains. **All dependencies satisfied; the row shipped** |
 | **Touches** | `docs/deploy/nas.md` § *Executed* only. The homelab-side artifacts land in **that** repo |
-| **Merge gate** | ⏸ **YES — deploy + secret-handling path** |
+| **Merge gate** | ✅ **RELEASED — [PR #66](https://github.com/mmackelprang/chat-gateway/pull/66) merged 2026-08-05 as `4ddd6f5`.** Was: ⏸ **YES — deploy + secret-handling path** |
 | **Spec / plan** | [spec §4.3 + §4.3.1](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part C + standing rules](superpowers/plans/2026-07-31-production-readiness-arc.md) |
 
 #### ✅ Two user decisions, 2026-08-03 — read BOTH before building this row
@@ -3701,9 +4054,21 @@ says. That is what converts the ACL from a security gate this project carries
 debt on into a **remote-access enabler for later**.
 
 ⚠ **Nothing is leaking today, and this must not be read as though something is.**
-The gateway **has never been deployed** (ADR-0002 §8); **this row is the first
-deploy and it is still queued.** This decides what CG-55 *does*, not what some
+~~The gateway **has never been deployed** (ADR-0002 §8); **this row is the first
+deploy and it is still queued.**~~ This decides what CG-55 *does*, not what some
 running instance stops doing.
+
+⚠ **Corrected 2026-08-05 (CG-79): the premise of that struck sentence is now
+false — the deploy happened, and the decision above is what it BUILT.** The
+gateway is published on the LAN address only; `docs/deploy/nas.md` §10 records
+the bind as executed and demonstrated. **The conclusion the sentence was
+defending survives and gets stronger, which is why the sentence had to go:** it
+argued *"nothing is leaking, because nothing is running."* What is true now is
+*"something is running, and it is bound where the decision said to bind it."*
+Those are different guarantees with the same headline, and leaving the weaker
+one standing would let a reader think the exposure question was still
+hypothetical. The residual is unchanged and stated below: `/healthz` is
+unauthenticated and reachable by **anyone on the home LAN**.
 
 ⚠ **The bind does not replace the ACL — any more than CG-61's registry edit
 does.** It removes tailnet reach **to this port**. It says nothing about the rest
@@ -3817,14 +4182,22 @@ is not applied.** That instruction predates this decision; it is amended in plac
 by a dated note at plan **Part C, C0(a)**. Prerequisite **(b) — CG-61 in the live
 registry — is unchanged and still fail-closed. Run it.**
 
+✅ **Both were carried out on 2026-08-05 and this row has shipped** (noted
+2026-08-05, CG-79). C0(b) **PASSED** — `{aiteam-harness: False, job-hunter: True,
+aitrader: False}` from the real `load_registry` against the gitignored file
+(`docs/deploy/nas.md:609`). The imperative *"Run it"* is left in place rather
+than struck: it is an instruction to a Builder, and this row is not the last
+thing that will ever touch that box.
+
 **Builder-executed over SSH.** ⚠ **This supersedes the "USER-EXECUTED, CG-15/CG-16
 pattern" this row carried until 2026-07-31.** `ssh claude@nas` works with
 `BatchMode` and **`sudo` is passwordless — effectively root**, so Builder can both
 run and *verify* the deploy instead of handing over instructions and hoping.
 
 ⚠ **That capability is the largest thing this arc introduces, and it is bounded
-before it is used.** Passwordless root on a box running **10 live stacks** —
-including claude-mem's Postgres — is a large blast radius, and `claude` is **not**
+before it is used.** Passwordless root on a box running **10 live stacks** at the
+time this was written — **11 now that the gateway is one of them** (CG-79,
+2026-08-05) — including claude-mem's Postgres, is a large blast radius, and `claude` is **not**
 in a `docker` group, so every docker call is `sudo docker`, i.e. root: a single
 `-v /:/host` would be total host compromise. **The plan's standing rules are not
 optional** and are what make this row safe to execute:
@@ -3835,7 +4208,10 @@ optional** and are what make this row safe to execute:
 - 🛑 **another stack** — never stop, restart, exec into or reconfigure any other
   `ix-*` container. 🛑 **Docker global state** — never `system prune`, never a
   daemon restart. 🛑 **pools / TrueNAS writes** outside the gateway's own path.
-- 🛑 **`capture.sh`** — it rewrites `nas/compose/*.json` for **all ten** stacks.
+- 🛑 **`capture.sh`** — it rewrites `nas/compose/*.json` for **every** stack on
+  the box (ten when this was written, **eleven** since the gateway joined them —
+  which is why the rule is now stated against "every" rather than a number that
+  this very runbook increments; CG-79).
   It looks like verification and is a **cross-repo write**; request it, read what
   it produced, do not run it.
 - **A stop means stop and report — never work around.**
@@ -3865,6 +4241,15 @@ differed from plan.**
 suffix rule cannot see this project's secret shapes, so that assurance is worth
 nothing here.
 
+✅ **This gate is now SATISFIED — the user ran it 2026-08-05 and the output was
+read the way this paragraph demands** (recorded 2026-08-05, CG-79). Result:
+**zero** hits for `cgw_`, `chat.googleapis.com`, `token=`, `key=`, `private_key`
+or a PEM header; every env var present is a path or a non-secret flag. **The
+`clean. safe to commit.` line was not what answered it** — the explicit shape
+scan was, exactly as written. ⚠ **No tally of that file is reproduced here**, and
+the reason is recorded at the top of this row: the first attempt to reproduce one
+got it wrong within a single paragraph. The artifact is the **homelab** repo's.
+
 Five facts to observe (not boxes to tick): `/healthz` `status` + `reasons`
 **verbatim**; one tier-1 webhook send through the deployed instance; tier-2
 subscriber alive with `seconds_since_last_poll` moving — **the first evidence
@@ -3873,8 +4258,12 @@ replay on real hardware; and the capture.
 
 **Must not happen:** a secret in `custom_compose_config` (stop and fix the layout
 *before* capturing — a capture commits it to a sibling repo); `network_mode:
-host`; any change to an existing NAS app; or reaching for the dead
-`iac/chat-gateway-sa.json`.
+host`; any change to an existing NAS app; or reaching for **any**
+`chat-gateway-sa*.json` other than `chat-gateway-sa-gw.json`. *(This last named
+`iac/chat-gateway-sa.json` specifically until 2026-08-05; that file has since been
+**deleted**, so the prohibition is restated against the shape rather than the
+path — an old checkout or a backup can still hand a reader a dead key, and the
+rule has to survive the file. CG-79.)*
 
 ---
 
@@ -4056,11 +4445,11 @@ residue, **link `CLAUDE.md`'s verification ledger — do not restate it.**
 
 ---
 
-### CG-59 · Long-run observation, and what a **deployed** `/healthz` needs  📋 queued
+### CG-59 · Long-run observation, and what a **deployed** `/healthz` needs  📋 queued · ✅ **UNBLOCKED 2026-08-05 — the clock is running**
 
 | | |
 |---|---|
-| **Depends on** | **CG-55** — the soak clock starts when it lands |
+| **Depends on** | ~~**CG-55** — the soak clock starts when it lands~~ ✅ **CG-55 landed 2026-08-05** (`4ddd6f5`); the soak clock started with it and has been running ever since. **Nothing blocks this row.** *(Corrected 2026-08-05 by CG-79 — the future tense outlived the event it was waiting for, which is the one way a dependency line goes wrong without ever looking wrong.)* |
 | **Touches** | `service.py` (`?strict=1`), `docs/deploy/nas.md` (the observation section) |
 | **Merge gate** | no for the code; **any ledger change needs explicit hard-rule-#3 sign-off** |
 | **Spec / plan** | [spec §4.7](superpowers/specs/2026-07-31-production-readiness-arc-design.md) · [plan Part G](superpowers/plans/2026-07-31-production-readiness-arc.md) |
