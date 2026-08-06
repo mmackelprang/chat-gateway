@@ -152,7 +152,7 @@ flattening pass that could become a place to edit things.
    and the fix that suggests itself is to teach the gateway Cards v2 — a card
    *builder*, an `add_button` tool, a simplified card schema. **That is rule #1
    telling you no.** The gateway's total knowledge of card structure today is one
-   validator asserting `"card" in entry` (`envelope.py:70`), and this row must not
+   validator asserting `"card" in entry` (`envelope.py::OutboundMessage._cards_shape`), and this row must not
    add a second byte to it. Trimming `cards` out of the schema is also refused,
    for a subtler reason: `del schema["properties"]["cards"]` is hand-authoring
    wearing a derivation's clothes, and it puts the first edit on the slope.
@@ -374,7 +374,7 @@ These are the non-obvious ones. Each becomes a plan task and a test.
 
 | # | Requirement | Consequence for us |
 |---|---|---|
-| 1 | **`Origin` MUST be validated**; if present and invalid → **HTTP 403**. When running locally a server SHOULD bind to loopback rather than all interfaces | A genuine security MUST, cheap to honour, and **it was missing from this spec's first draft.** Note the exact conditional: the MUST fires only when `Origin` **is present and invalid** — a missing `Origin` (normal for non-browser clients) is not covered. ⚠ The bind half is already satisfied one layer out and *better*: CG-55 publishes the container port on the **LAN address**, so `127.0.0.1` and the tailnet address both refuse (nas.md §10). `__main__.py:202` binds `0.0.0.0` *inside* the container, which is correct — the Docker publish is the boundary |
+| 1 | **`Origin` MUST be validated**; if present and invalid → **HTTP 403**. When running locally a server SHOULD bind to loopback rather than all interfaces | A genuine security MUST, cheap to honour, and **it was missing from this spec's first draft.** Note the exact conditional: the MUST fires only when `Origin` **is present and invalid** — a missing `Origin` (normal for non-browser clients) is not covered. ⚠ The bind half is already satisfied one layer out and *better*: CG-55 publishes the container port on the **LAN address**, so `127.0.0.1` and the tailnet address both refuse (nas.md §10). `__main__.py::main`'s `uvicorn.run` binds `0.0.0.0` *inside* the container, which is correct — the Docker publish is the boundary |
 | 2 | **Three headers are REQUIRED** on every modern POST: `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` (for `tools/call`) — and the server **MUST** reject a mismatch against the body with **400** + `-32020` (`HeaderMismatch`). Base64 sentinel values (`=?base64?…?=`) MUST be decoded before comparing | The single largest chunk of incidental work in a modern implementation, with no legacy analogue. ✅ **One thing makes it cheaper for us:** our only tool name is `send_message`, which is inside the header-safe `[A-Za-z0-9_.-]` set, so no client ever needs the Base64 sentinel form for `Mcp-Name` — but the decoder is still implemented, because *the client* decides |
 | 3 | **Unimplemented RPC method → HTTP 404 + `-32601`**, not the usual JSON-RPC reflex of 200-with-an-error-body | Gets `resources/list`, `prompts/list`, `subscriptions/listen` right. Dual-era client probes misclassify a server that returns 200 here |
 | 4 | **Unsupported protocol version → 400 + `-32022`** with `data.supported` listing our versions; **missing required `_meta` → 400 + `-32602`** | Honest negotiation. A server that silently echoes back whatever version it was asked for is the failure this rule exists to stop |
@@ -840,7 +840,7 @@ persuasive and narrower than it looks.** Three things:
 
 Every test below runs with no network, in the existing `tests/` layout, using
 `fastapi.testclient.TestClient` and the `FakeAdapter` idiom already in
-`tests/test_service.py:27`.
+`tests/test_service.py::FakeAdapter`.
 
 **New file `tests/test_mcp.py`:**
 

@@ -1,6 +1,85 @@
 # Builder queue — chat-gateway
 
-**Last updated:** 2026-08-05 (Builder — **CG-59 half 1 SHIPPED, half 2 RUNNING.**
+**Last updated:** 2026-08-06 (Planner — **CG-80 filed: the gateway becomes an MCP
+server, send-only. CG-81 filed and deliberately NOT queued.**
+
+**Nothing is built and nothing is decided.** Spec + plan + these rows only; `git
+diff main -- src/` is **empty**. **Eight decisions are open in
+[spec §14](superpowers/specs/2026-08-06-mcp-server-surface-design.md)** and three
+of them change what gets built — do not start CG-80 before they are answered.
+Three *were* settled by the user in the brief (audience is *both*; inbound scope
+and process model were explicitly **delegated to the Planner**), so D1 and D2 in
+that table are answers rather than re-asks.
+
+⚠ **The protocol broke nine days before this row was written, and it resized the
+work.** MCP revision `2026-07-28` is not a point release: it **deletes**
+`initialize`, `notifications/initialized`, `ping` and `Mcp-Session-Id`, and adds
+`server/discover`, per-request `_meta`, three required headers and
+`resultType`/`ttlMs`/`cacheScope`. **Modern client → legacy server fails, and
+legacy client → modern server fails** — so serving one era makes the endpoint
+**silently unreachable** to clients speaking the other. Filed as **D4a**,
+recommendation dual-era. ⚠ **The spec's own sizing section was drafted before
+this finding arrived and now SAYS so** rather than leaving the earlier "one PR,
+comfortably" standing — CG-69 category (b), caught in self-review rather than by
+a reader.
+
+⚠ **Two findings that would have shipped a hard-rule-#4 breach, both found by
+measuring rather than reasoning.** (1) **`cacheScope` must be `"private"`**:
+`"public"` asserts a response may be cached *across authorization contexts*, and
+this server's tool list **does** vary by API key because `identity`'s enum is
+that app's allowlist — so `"public"` would let an intermediary serve one tenant's
+identity allowlist to another. **A rule #4 violation delivered by a cache
+header**, invisible to a review looking at the auth check. (2) The schema
+narrowing **mutates** the dict `model_json_schema()` returns; had pydantic handed
+back a **cached** one, an app's enum would persist into the next caller's schema
+*and* into `/openapi.json`, which serves the same model to every unauthenticated
+reader of `/docs`. **Measured: it does not** — and a test now pins it, because
+the failure mode is silent, global, and one upgrade away.
+
+**Hard rule #1's answer is mechanical, not a reassurance.** A tool `inputSchema`
+is a schema and a tool `description` is a **prompt**, so both are where app-domain
+knowledge leaks in — invisibly, because it reads as helpfulness. The
+discriminator is whether a human typed a property name, so the schema is
+**generated** and a test compares it for equality against a fresh generation.
+⚠ **Verified during planning that the guard CATCHES a hand-edit to
+`cards.items`** — a guard that does not is worth nothing, and this repo has
+shipped one of those before.
+
+⚠ **CG-81 is filed and NOT queued, on a reason that is not a policy question.**
+`Inbox.poll` **drains**, so until CG-56 lands an MCP `read_inbox` and a tenant's
+production poller are **competing destructive consumers of one queue** — a model
+silently deleting replies jobhunt was about to collect, undetectably, because the
+audit trail records what **arrived**, never what left. The rule #6 analysis is
+argued **both ways** in spec §7 rather than resting on *"it is gated on the
+caller's own `allow_inbound`"*; it needs the user's explicit sign-off **naming
+that rule**, and it is coupled to CG-80's D2 in a way that makes choosing the
+mounted route **sharpen** the question rather than settle it.
+
+⚠ **Sequencing, and it is not this row's to invent.** CG-80 needs a rebuild +
+`app.redeploy`, which restarts the container — and that container's uninterrupted
+uptime **is** the evidence CG-59's soak is accruing. The constraint has a
+documented expiry (72 h from `2026-08-05T16:34:10Z`), so it is a **note, not a
+blocker**. ✅ Two bonuses fall out: that redeploy is the **vehicle that finally
+lands CG-59's `?strict=1` on the box** (order per `docs/deploy/nas.md` §9 hazard
+1 — rebuild, verify 503 on a degraded boot, *then* repoint the tile), and it is
+the **first real exercise of `app.redeploy`**, which nas.md §10 deviation 6
+records as documented-but-untested.
+
+✅ **No new deploy artifact and no new secret** — checked against the runbook
+rather than assumed. `GATEWAY_ENABLE_MCP` holds no credential, so there is no new
+`.env` key, no new stdin transport and **no new `SECRETS.template.md` row**;
+nas.md §6's three-row set is unchanged. ⚠ **But merging is not finishing:** the
+surface ships with **no caller** until an operator mints a key and edits the
+**gitignored** `config/registry.yaml`. CG-61's lesson exactly.
+
+⚠ **No ⚠ verification-ledger flag is cleared, added or reworded** — this PR
+touches no `src/` and no `tests/`, and the spec §11 states the position in the
+ledger's own terms rather than by silence, **including naming the temptation a
+Builder will meet**: a live round-trip through the MCP tool will *look* like
+fresh Google evidence and is **not**. Suite **390**, measured on `f4b9c99` with
+`python3 -m pytest -q`, not copied from `CLAUDE.md`. Previous entry follows.)
+
+**Previously:** 2026-08-05 (Builder — **CG-59 half 1 SHIPPED, half 2 RUNNING.**
 `GET /healthz?strict=1` returns **503 when `reasons` is non-empty**, 200
 otherwise, **byte-identical body**. The plain form is untouched — still 200 while
 degraded, by decision, because it is a published contract and because a 503 from
@@ -58,7 +137,7 @@ disk-growth calibration (§G3′) and the ledger **proposal** are what close it.
 may still be `0` at the end. Suite **383 → 390**, both ends re-measured. Previous
 entry follows.)
 
-**Previously:** 2026-08-05 (Planner — **CG-59 REFRESHED + CG-79's routed list
+**And the one before that:** 2026-08-05 (Planner — **CG-59 REFRESHED + CG-79's routed list
 cleared, and it was NOT the whole set.** Three jobs, one PR, bundled because all
 three edit the production-readiness arc plan.
 **(1)** The six falsified facts are corrected across `docs/superpowers/` — the
@@ -1324,6 +1403,8 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-67** · `.gitignore` — stop `state/` from ever being committed | ✅ done (#48) | **Split out of CG-66 and promoted by the user**, because it is a live path to committing message bodies and CG-53/CG-55 are the rows that first run the gateway from the repo root. Config-only |
 | **CG-78** · scrub LAN address literals from the public repo | ✅ done ([#67](https://github.com/mmackelprang/chat-gateway/pull/67)) | **User decision 2026-08-05**, filed and built by the same Builder. This repo is **public**; CG-55's planning left internal address literals in **this file** — the only file in the repo that had any, confirmed by a sweep far wider than the one that found them. ⚠ **This does NOT un-publish them.** They are in committed history on a public remote and a single `git log -S` finds them; the fix for that is a history rewrite, which was **considered and rejected by the user** because it would invalidate every merge record this project uses as its audit trail. The row buys *"no new ones, and the current documents are clean"* — stated plainly, because a reader who thinks it bought more is worse off than one who knows. Docs + one guard rule |
 | **CG-79** · reconcile CG-55's recorded status across the repo | ✅ done ([#68](https://github.com/mmackelprang/chat-gateway/pull/68)) | **User-flagged 2026-08-05**, after CG-78's Builder spotted the banner and correctly declined to edit another row. **The banner was one of more than forty corrected passages, across seven files.** **Six** falsified facts, not one: PR #66 merged (`4ddd6f5`); CG-61's live-registry operator action done (2026-08-03, **78 minutes after** the measurement three rows still quote); `iac/chat-gateway-sa.json` deleted; `capture.sh` run and verified clean; *"has never been deployed"*; and ⚠ **the gateway is the ELEVENTH stack, not the tenth** — `nas.md` §1's heading disagreeing with its own body, **wrong when written (CG-69 category (b))** rather than gone stale, and caught only because a sibling agent counted the live `app.query` instead of trusting what it had been told. ⚠ **Three of them were already false *before* CG-55 deployed** — CG-55's Builder read a live-registry gate that had been satisfied two days earlier and re-measured rather than trusting it, which is the only reason nothing shipped wrong. ⚠ **The dead-key warnings are REWORDED, not dropped**, on CG-55's own explicit instruction — a warning that simply vanishes is indistinguishable from one nobody thought about. ⚠ **No ⚠ ledger flag moved** (`git diff main -- src/` greps **0** for either flag word); the single `src/` hunk is the `pubsub.py` comment `CLAUDE.md` names as the paired site of its own correction. Logged as **CG-69 evidence instance 6**. Docs + one comment |
+| **CG-80** · the gateway becomes an **MCP server** — send-only | 📋 queued · ✅ **specced + planned 2026-08-06** · ⚠ **8 decisions open** | **Filed by Planner 2026-08-06** from the *inverse* of the question asked: consuming a third-party Chat MCP server helps this project not at all; **exposing** one is additive. `POST /mcp` is another ingress to the send path — same `authenticate()`, same `registry.identity_for`, same adapter — so hard rule #4 holds **by reuse**. ⚠ **The protocol broke nine days before this row:** `2026-07-28` deletes `initialize`, `ping` and sessions, and **modern↔legacy fails in BOTH directions**, so picking one era makes the endpoint **silently unreachable** to the other (decision **D4a**, recommend dual-era — and it roughly doubles the protocol layer, which §16 now says rather than leaving its pre-finding estimate standing). ⚠ **`cacheScope` MUST be `"private"`** — the tool list varies by API key, so `"public"` lets an intermediary serve one tenant's identity allowlist to another: **a rule #4 leak delivered by a cache header.** Hard rule #1 gets a **mechanical** answer — the tool `inputSchema` is *generated* from `OutboundMessage.model_json_schema()` and a test compares it for equality; verified during planning that the guard **catches** a hand-edit to `cards.items`, because a guard that does not is worth nothing. Rule #5: **one config echo, no counters**, never an input to `status` — a synchronous route has no silent-failure mode, and the field exists for CG-59's just-learned lesson that a deployed image may not be the one you think. ⚠ **No ⚠ ledger flag moves**, and the spec names the temptation: a live round-trip through the tool *looks* like fresh Google evidence and is **not**. ⚠ **Sequenced after CG-59's soak** (a rebuild spends the uptime the soak is measuring) and its redeploy is the **vehicle for CG-59's `?strict=1`** reaching the box — order per nas.md §9 hazard 1. ⚠ **Merging is not finishing:** the surface has **no caller** until an operator mints a key and edits the gitignored registry (CG-61's lesson). [spec](superpowers/specs/2026-08-06-mcp-server-surface-design.md) · [plan](superpowers/plans/2026-08-06-mcp-server-surface.md) |
+| **CG-81** · an MCP `read_inbox` tool | 🚫 **FILED, NOT QUEUED** · **needs user sign-off naming hard rule #6** | **Designed in full by CG-80's Planner and deliberately withheld.** Depends on **CG-56** (hard) and on explicit sign-off. ⚠ **One reason is dispositive and is not a policy question:** `Inbox.poll` **drains**, so until CG-56 an MCP reader and a tenant's production poller are **competing destructive consumers of one queue** — a model's curiosity silently deleting replies jobhunt was about to collect, undetectably, because the audit trail records what **arrived**, never what left. Two further holes are genuinely arguable and are argued **both ways** in the spec: the *consumer* of the data changes though the *authorization* does not, and whether a third door changes rule #6's own **enumeration**. ⚠ **That second one is coupled to CG-80's D2** — under a stdio shim it would unambiguously not be a third path; under the mounted route it bites harder, so choosing D2(a) makes this **sharper, not softer**. ⚠ `aitrader` is untouched mechanically and **not** contractually: `aitrader.md` §8's four-row *"locked out of every part of it"* table gains a **fifth row in the same PR**, on CG-75's precedent. ⚠ **And nothing fixes the real limitation:** MCP servers cannot push at all, so this could only ever be polling a model must remember to do — strictly worse than the `callback_url` jobhunt already uses. [spec §7](superpowers/specs/2026-08-06-mcp-server-surface-design.md) |
 
 **Recommended order is the table order, and it is NOT the order the arc was
 briefed in.** The brief had deploy first. Three rows move ahead of it:
@@ -4768,6 +4849,208 @@ inverted its own evidence. What a 72 h soak **can** establish is that the sweepe
 is a **liveness** claim, not a deletion claim; say which one the run has. ⚠ **And
 do not shorten the window to make the soak produce a deletion** — tuning an
 instrument until it reports what the experiment wanted is not evidence.
+
+---
+
+### CG-80 · The gateway becomes an MCP server — send-only  📋 queued · ✅ **specced + planned 2026-08-06** · **8 decisions await the user**
+
+| | |
+|---|---|
+| **Origin** | filed by Planner 2026-08-06, from the *inverse* of the question that prompted it — research established that **consuming** a third-party Google Chat MCP server helps this project not at all; **exposing** one is additive |
+| **Depends on** | nothing in code. ⚠ **Sequenced after CG-59's soak** — see *Deploy coupling* below |
+| **Touches** | **new** `src/chat_gateway/mcp.py` + `tests/test_mcp.py`; `service.py` (router mount + one `/healthz` field), `__main__.py` (one env flag), `.env.example`, `config/registry.example.yaml`, `README.md`, `docs/integration-guide.md`, `docs/deploy/nas.md` §5, `CLAUDE.md` |
+| **Merge gate** | **no** — but **do not merge before the 8 decisions in spec §14 are answered**; three of them change what gets built |
+| **Falsifies** | nothing. Additive throughout: no existing route's behaviour changes, and `POST /v1/messages` is pinned unchanged by a non-regression test |
+| **Spec** | [design](superpowers/specs/2026-08-06-mcp-server-surface-design.md) |
+| **Plan** | [implementation](superpowers/plans/2026-08-06-mcp-server-surface.md) — 8 tasks, one PR |
+
+**An MCP server surface is another ingress to the send path this gateway already
+has.** `POST /mcp` → the same `authenticate()`, the same
+`registry.identity_for`, the same adapter. Everything below the tool call is
+unchanged code, which is the whole architectural claim and is what makes hard
+rule #4 hold **by reuse** rather than by a second implementation that can drift.
+
+**The research verdict has ONE home and it is the spec's §1** — no Google Chat
+MCP server exists from Google; zero MCP servers subscribe to Chat events; the
+three inbound "Chat channel" bridges all ride a Claude-Code-proprietary
+extension rather than standard MCP; `mcp.so` returned 403 and **remains an
+unsearched gap, recorded rather than papered over**. Do not restate any of it
+here or in `CLAUDE.md`.
+
+**Three findings from the planning are worth the row's space, because each one
+changed the design:**
+
+1. ⚠ **The protocol broke nine days before this row was written, and picking
+   wrong makes the endpoint SILENTLY UNREACHABLE.** Revision `2026-07-28` is not
+   a point release — it deletes `initialize`, `notifications/initialized`, `ping`
+   and `Mcp-Session-Id`, and adds `server/discover`, per-request `_meta`, three
+   required headers and `resultType`/`ttlMs`/`cacheScope`. **Modern client →
+   legacy server fails, and legacy client → modern server fails.** Filed as
+   decision **D4a**; the recommendation is dual-era on one endpoint, and it
+   roughly **doubles the protocol layer**. ⚠ *The spec's §16 sizing was drafted
+   before this finding arrived and now says so, rather than leaving the earlier
+   estimate standing — CG-69 category (b).*
+2. ⚠ **`cacheScope` must be `"private"`, and that is a hard rule #4 control
+   rather than a performance knob.** `"public"` asserts a response carries no
+   user-specific data and MAY be cached **across authorization contexts** — and
+   this server's tool list **does** vary by API key, because `identity`'s enum is
+   that app's allowlist. `"public"` would let an intermediary serve one tenant's
+   identity allowlist to another: **a rule #4 violation delivered by a cache
+   header**, and invisible to a review that is looking at the auth check.
+3. ⚠ **A pydantic detail that would have been a silent global breach.**
+   `send_message_schema` mutates the dict `model_json_schema()` returns. Had
+   pydantic handed back a **cached** dict, one app's identity enum would persist
+   into the next caller's schema *and* into `/openapi.json`, which serves the
+   same model to every unauthenticated reader of `/docs`. **Measured: it does
+   not**, and the plan pins it, because the failure mode is silent and an upgrade
+   could introduce it.
+
+**Hard rule #1 gets a mechanical answer, not a reassurance.** A tool
+`inputSchema` is a schema and a tool `description` is a **prompt**, so both are
+places app-domain knowledge leaks in — invisibly, because it reads as
+helpfulness. The discriminator is whether a human typed a property name, so the
+schema is **generated** from `OutboundMessage.model_json_schema()` and a test
+compares it for equality against a fresh generation. Verified during planning
+that the guard **catches** a hand-edit to `cards.items`; a guard that does not is
+worth nothing. `cards` therefore stays an opaque array — **a card-builder tool is
+the thing rule #1 exists to refuse**, and it is the first thing anyone will want.
+
+**Hard rule #5: one field, no counters, and the verdict is reasoned rather than
+reflexive.** `mcp: {enabled, tools}` — never an input to `status`, never a
+`reasons` entry at any value. Every counter this repo has guards a loop, thread,
+queue or disk write; `/mcp` is synchronous, so a failure is loud in the same
+round trip and there is no silent state for a counter to catch. What the field
+**is** for is CG-59's lesson one turn later: a deployed container answered `200`
+to `?strict=1` because FastAPI ignores an undeclared query parameter, so an
+operator could not tell a rebuilt image from a stale one by probing. It discloses
+strictly **less** than `registry.health()` already does on the same
+unauthenticated response.
+
+⚠ **No ⚠ verification-ledger flag is cleared, added, re-priced or reworded**, and
+the spec says so in the ledger's own terms rather than by silence. This sits
+above `adapters/` and makes no Google call of its own. **The temptation is named
+because a Builder will meet it:** a live round-trip through the MCP tool will
+*look* like fresh Google evidence. It is not — the same bytes from a different
+caller, and a clear earned that way is the same category error as claiming one
+from an offline replay.
+
+#### Deploy coupling — read before scheduling this
+
+⚠ **The redeploy this row needs is also the vehicle that finally lands CG-59's
+`?strict=1` on the box, and the ORDER is not this row's to invent.**
+`docs/deploy/nas.md` §9 hazard 1 sets it: **rebuild + `app.redeploy` → verify
+`?strict=1` returns 503 on a degraded boot → only then repoint the Homepage
+tile** (a homelab change). The running container predates `?strict=1` and answers
+**200** to it today, so repointing first *changes nothing while looking exactly
+like the fix*.
+
+⚠ **Not before CG-59's soak finishes.** A rebuild restarts the container, and
+that container's uninterrupted uptime **is** the evidence the soak is accruing.
+The constraint has a documented expiry — the soak stops on its own 72 h after
+`2026-08-05T16:34:10Z` — so this is a **sequencing note, not a blocker**.
+
+✅ **Two things this row does NOT cost, both checked against the runbook rather
+than assumed:** no second deploy artifact (it mounts on the process already
+running — spec §4 tabulates what a second container would cost on a box with no
+registry, and it is disqualifying), and **no new secret**: `GATEWAY_ENABLE_MCP`
+holds no credential, so there is no new `.env` key, no new stdin transport and
+**no new `SECRETS.template.md` row** — nas.md §6's three-row set is unchanged.
+Bonus: it is the **first real exercise of `app.redeploy`**, which nas.md §10
+deviation 6 records as documented-but-untested.
+
+#### ⚠ Merging is not finishing — the operator action this PR cannot perform
+
+**The surface ships with no caller.** An agent tenant needs a minted key, an app
+entry in the **gitignored** `config/registry.yaml`, and a
+`CHAT_GATEWAY_API_KEY__AGENT_MCP` line in the box `.env`. **A PR cannot touch any
+of those.** `registry.example.yaml` gains the template and nothing more. This is
+**CG-61's lesson restated** — *merged* and *in effect* are two different facts in
+this repo and always will be — and the row is not ✅ until an operator has acted
+or the user has said the template is enough.
+
+#### The 8 decisions, all open — [spec §14](superpowers/specs/2026-08-06-mcp-server-surface-design.md)
+
+Three were **settled by the user in the brief** and are not re-asked: audience is
+*both* (one surface, no distinction), and inbound scope + process model were
+explicitly **delegated to the Planner** — so D1 and D2 below are answers, not
+re-asks.
+
+| # | Question | Planner's recommendation |
+|---|---|---|
+| D1 | inbound scope | **send-only** — `read_inbox` designed in full and filed as **CG-81**, not queued |
+| D2 | process model | **(a)** mounted route on the existing FastAPI app |
+| D3 | how many tools | **one**, `send_message` |
+| D4a | which protocol era | **dual** |
+| D4 | hand-rolled or the `mcp` SDK | **hand-rolled**, no new dependency — ⚠ D4a makes this closer than it looked |
+| D5 | feature flag | **`GATEWAY_ENABLE_MCP`, default OFF** |
+| D6 | `/healthz` | **`mcp: {enabled, tools}`, no counters, never affects `status`** |
+| D7 | a registry `allow_mcp: false` opt-out | **no** — ⚠ but this is the knob if the user wants one for `aitrader`; see below |
+| D8 | agent tenant onboarding | **own app id + identity, as an operator action** |
+
+⚠ **One consequence flagged rather than reopened, because it follows from a
+settled decision and a real-money tenant is on the other end of it.** *One
+surface, no distinction* means **every registered identity becomes
+model-addressable to whoever holds the key** — including `aitrader-alerts` and
+`aitrader-reports`. That is strictly **outbound**; hard rule #6 and
+`docs/consumers/aitrader.md` §8's four-row guarantee are **untouched**. It is
+still a new fact about that deployment, and **D7 is the knob** if the user wants
+belt-and-braces. Under D2(a) such a flag *is* enforceable, because MCP is a
+distinguishable route.
+
+---
+
+### CG-81 · An MCP `read_inbox` tool  🚫 **FILED, NOT QUEUED** · **needs user sign-off naming hard rule #6**
+
+| | |
+|---|---|
+| **Origin** | designed in full by CG-80's Planner, 2026-08-06, and deliberately **withheld from the queue** |
+| **Depends on** | **CG-56** (hard), and **CG-80**, and the user's explicit sign-off |
+| **Touches** | `mcp.py`, `docs/consumers/aitrader.md` §8 (**a fifth row, in the same PR**), `docs/integration-guide.md` |
+| **Merge gate** | **yes** |
+| **Design** | [spec §7](superpowers/specs/2026-08-06-mcp-server-surface-design.md) — the rule #6 analysis, argued **both ways** |
+
+**Do not fold this into CG-80.** Folding a good idea into an open row is the
+scope creep this queue keeps correcting, and here it would also ship a **data
+loss**.
+
+**Why it is not queued — one reason is dispositive on its own and is not a
+policy question.** `Inbox.poll` **drains**: it clears the app's queue, closes the
+journal ids and compacts. At-most-once by design; **CG-56 is the row that would
+change that and CG-56 has not shipped.** So an MCP `read_inbox` and a tenant's
+production poller would be **competing destructive consumers of one queue** — a
+model calling it out of curiosity would *silently delete* replies jobhunt's
+poller was about to collect, and jobhunt could not detect it, because the audit
+trail records what **arrived**, never what left.
+
+**Two further holes, of two different kinds, and neither is settled here.** The
+*consumer* of the data changes even though the *authorization* does not — the
+same bytes land in a model's context window and, from there, a transcript — and
+whether a third door changes rule #6's own **enumeration** (*"Two opt-in paths
+exist…"*) is genuinely arguable. ⚠ **It is arguable in a way that is coupled to
+CG-80's D2:** under a stdio shim, `read_inbox` would unambiguously *not* be a
+third path; under the mounted route CG-80 recommends, the gateway grows a new
+authenticated route that reads the inbox and **the enumeration argument bites
+harder**. Choosing D2(a) makes this question sharper, not softer. Both sides are
+in spec §7.3–7.4 — **do not summarize them here, and do not decide them in a
+Builder cycle.**
+
+⚠ **`aitrader` is untouched mechanically and NOT untouched contractually.**
+`allow_inbound: false` means the tool never appears in its `tools/list` and is
+refused if called anyway. But `docs/consumers/aitrader.md` §8 is a **four-row
+enumeration** framed as *"the mechanism exists, and this app is locked out of
+every part of it"*, explicitly chosen because it *"survives the gateway growing
+more inbound features."* This **is** the gateway growing one. That table gains a
+**fifth row in the same PR** — not a follow-up, on CG-75's precedent that rule #5
+does not permit leaving a false statement standing for the duration of a second
+PR.
+
+**⚠ And one thing this row would NOT fix, because nothing can.** MCP servers
+cannot send requests, cannot send unsolicited notifications and cannot cause a
+model turn — `2026-07-28` removed server-initiated requests outright and deleted
+the GET stream. So `read_inbox` can only ever be **polling a model must remember
+to do**, which is strictly worse than the `callback_url` push jobhunt already
+uses. That is the honest case against building it at all, and it is recorded here
+rather than discovered after sign-off.
 
 ---
 

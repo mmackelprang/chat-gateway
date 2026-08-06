@@ -64,7 +64,7 @@ Every task's requirements implicitly include all of these.
 8. **No new runtime dependency.** `pyproject.toml`'s `dependencies` list is
    unchanged.
 9. **The suite stays offline.** No network in any test. Use the `FakeAdapter`
-   idiom from `tests/test_service.py:27`.
+   idiom from `tests/test_service.py::FakeAdapter`.
 10. **Test command:** `python3 -m pytest` on POSIX, `python -m pytest` on the
     Windows dev box (its msys `python3` has no pytest).
 11. **Branch policy:** all work on `feat/cg-80-mcp-server-surface`. Never commit
@@ -152,7 +152,7 @@ OTHER_AUTH = {"Authorization": "Bearer cgk_other_key"}
 
 
 class FakeAdapter:
-    """Records sends; can be told to raise. Mirrors tests/test_service.py:27."""
+    """Records sends; can be told to raise. Mirrors tests/test_service.py::FakeAdapter."""
 
     def __init__(self):
         self.sent = []
@@ -1638,7 +1638,7 @@ header rules."
 
 **Files:**
 - Modify: `src/chat_gateway/__main__.py`
-- Modify: `src/chat_gateway/service.py:584` region (the `/healthz` `body` dict)
+- Modify: `src/chat_gateway/service.py` — `create_app::healthz`'s `body` dict
 - Modify: `tests/test_mcp.py`
 
 **Interfaces:**
