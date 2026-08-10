@@ -253,6 +253,32 @@ def test_the_rule_1_guard_CATCHES_a_hand_written_enum_on_a_non_identity_property
     assert _strip(poisoned) != _strip(generated)
 
 
+def test_the_inputSchema_carries_NO_top_level_title_or_description(env):
+    """⚠ THE ONE HOLE THE OTHER TWO GUARDS CANNOT SEE, and it is a prompt slot.
+
+    `_strip` drops the top-level `title`/`description` from BOTH sides, and the
+    per-property guard below never looks above `properties` — so a hand-written
+    top-level `description` on the inputSchema is invisible to both. Measured
+    during CG-80's pre-merge review: of six candidate hand-edits, the repaired
+    guards caught five and this one slipped.
+
+    It is not a leftover corner. §3's whole argument is that a tool
+    `description` is a PROMPT, and the inputSchema's own top-level description
+    is a second prompt slot pointed at the same model — the natural home for
+    exactly the sentence rule #1 refuses (*"Post a trade alert to the risk
+    desk"*). The other two guards are equality comparisons and cannot assert
+    this, because the thing they must not compare is the thing being guarded.
+
+    So it is asserted directly instead: `send_message_schema_base` pops both
+    keys, and this pins that it keeps doing so. The tool object carries its own
+    `title` and `description` (`tools_for`), which is where a transport-level
+    description belongs and where a reviewer will look for it.
+    """
+    schema = send_message_schema(_registry_of(env), "aiteam-harness")
+    assert "description" not in schema
+    assert "title" not in schema
+
+
 def test_every_non_identity_property_is_byte_identical_to_the_generated_one(env):
     """The same guarantee stated positively, and independent of `_strip`.
 
