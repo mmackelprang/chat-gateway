@@ -261,7 +261,8 @@ construction rather than by trusting someone else's redactor.
     "CHAT_GATEWAY_REGISTRY": "/config/registry.yaml",
     "CHAT_GATEWAY_STATE_DIR": "/data/state",
     "CHAT_GATEWAY_INBOX_DIR": "/data/inbox",
-    "GATEWAY_ENABLE_PUBSUB": "1"
+    "GATEWAY_ENABLE_PUBSUB": "1",
+    "GATEWAY_ENABLE_MCP": "1"
   },
   "image": "chat-gateway:local",
   "mem_limit": "512m",
@@ -304,6 +305,18 @@ With the flag on, a missing `CHAT_GATEWAY_PUBSUB_SUBSCRIPTION` or
 naming the fault. Without it, the copied dev-box default `0` wins by the loader's
 own *environment wins* rule and the gateway boots **healthy with no subscriber at
 all** — the exact shape hard rule #5 exists to prevent. See §6.
+
+**`GATEWAY_ENABLE_MCP: "1"` (CG-80) sits in the compose for the same reason its
+sibling does:** it is **non-secret and captured**, so a stale `.env` cannot leave
+the surface silently in the wrong state. It differs in one way worth naming — it
+has **no companion credential**, so there is nothing for it to fail closed on and
+no startup check to add. Adding it changes **nothing** about the secret set: no
+new `.env` key, no new stdin transport, and **no new `SECRETS.template.md` row**
+(§6's three-row set is unchanged). ⚠ **The flag arms the endpoint; it does not
+give it a caller.** `POST /mcp` authenticates with an ordinary per-app key, and
+the `agent-mcp` tenant exists only in `registry.example.yaml` — the live
+`config/registry.yaml` is gitignored, so minting the key and writing that entry
+is an operator action this or any PR cannot perform.
 
 **House style, matched:** `restart: unless-stopped`, `pull_policy: missing`, `TZ`
 set, bind mounts under `/mnt/datapool/apps/<app>/`, **no** `container_name`

@@ -68,6 +68,33 @@ apps:
     key_env: CHAT_GATEWAY_API_KEY__JOB_HUNTER
     identities: [job-hunter]
 
+  # An "agent" tenant for the MCP surface (CG-80): an ordinary registered app
+  # whose key lives in an MCP client's config rather than in a program. It is a
+  # tenant like any other — per-app key, explicit identity allowlist, hard rule
+  # #4 unchanged. The MCP tool's `identity` enum is built from the list below,
+  # so an agent cannot even FORM a call naming an identity not written here.
+  #
+  # `allow_inbound: false` and it is WRITTEN, not defaulted (CG-61's lesson).
+  # There is no MCP inbound tool, so inbound would be unreachable through that
+  # surface anyway; saying it explicitly means the registry states the intent
+  # rather than leaving it to a loader default.
+  #
+  # ⚠ REGISTERING THIS FOR REAL IS AN OPERATOR ACTION, NOT A PR. The live
+  # `config/registry.yaml` is gitignored and the key is a new secret, so this
+  # example is a template and nothing more. Until an operator mints a key,
+  # writes the entry and restarts, the MCP surface has no caller.
+  #
+  # ⚠ And choose the `identities:` list deliberately rather than by copying.
+  # Every identity granted here becomes model-addressable to whoever holds this
+  # key — which is why this example grants ONE, and not, say, an aitrader
+  # identity. That consequence is recorded in the CG-80 spec §7.5 and D7; it is
+  # outbound only and touches no inbound guarantee, but it is a real choice and
+  # this line is where it gets made.
+  agent-mcp:
+    key_env: CHAT_GATEWAY_API_KEY__AGENT_MCP
+    identities: [pm-familyworkspace]
+    allow_inbound: false
+
   # The aitrader consumer contract (docs/consumers/aitrader.md):
   # notify + dead-man only; NO inbound control path — enforced, not omitted.
   aitrader:

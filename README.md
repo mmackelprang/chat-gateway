@@ -80,6 +80,7 @@ curl -s localhost:8085/v1/messages \
 | `GET /v1/deliveries` | Per-source delivery log: `enqueued → retrying* → delivered/failed` (+ `deduped`). Titles only, never bodies |
 | `GET /v1/inbox` | Poll replies routed to your app (tier 2). Apps with `allow_inbound: false` get a hard 403 — the **no-inbound-control** contract is enforced, and no gateway mechanism ever turns Chat input into a call against a consumer |
 | `GET /v1/identities` | The identities your key may use, with readiness |
+| `POST /mcp` | **MCP server surface** (opt-in, `GATEWAY_ENABLE_MCP=1`): a Model Context Protocol endpoint so agents send through the gateway with the same per-app key, identity allowlist and audit trail. Send-only — one `send_message` tool, whose schema is generated from the envelope and whose `identity` enum is exactly your key's allowlist. Dual-era (`2025-11-25` + `2026-07-28`) |
 | `GET /healthz` | **Honest** health: per-identity env resolution, key status, queue depth, heartbeat + subscriber liveness — never a hardcoded OK |
 | `GET /docs` | OpenAPI UI |
 
