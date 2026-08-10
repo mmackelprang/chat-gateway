@@ -19,7 +19,15 @@ SILENTLY UNREACHABLE to clients speaking the other, which is the one outcome
 the design was trying to avoid. The spec sanctions serving both on one
 endpoint; `_era_of` is the discriminator and it is the outermost seam in this
 file, so dropping an era later is deleting a branch rather than unpicking a
-design.
+design. ⚠ Read `_era_of`'s own docstring before touching it: MISCLASSIFYING A
+MODERN CLIENT AS LEGACY reproduces the silent unreachability inside the module
+that exists to prevent it, and CG-80's pre-merge review measured three ways it
+did exactly that.
+
+WHERE THE WORK RUNS. `POST /mcp` reads its body on the event loop and then
+hands the whole of the rest to `run_in_threadpool` — `_serve` and everything
+under it are PLAIN SYNC. That is a hard rule #5 control, not a style choice,
+and `mcp_post`'s docstring is its one home.
 
 WHAT THIS MODULE MUST NEVER LEARN (hard rule #1). A tool's `inputSchema` is a
 schema and its `description` is a PROMPT, so both are places app-domain
@@ -56,6 +64,8 @@ from typing import Any
 
 from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from . import __version__
 from .auth import AuthError, authenticate
@@ -157,6 +167,64 @@ def jsonrpc_error(rid: Any, code: int, message: str,
 
 def jsonrpc_result(rid: Any, result: dict) -> dict:
     return {"jsonrpc": "2.0", "id": rid, "result": result}
+
+
+def _short(value: Any, limit: int = 60) -> str:
+    """One caller-supplied scalar, rendered into an error message and BOUNDED.
+
+    Not a hard rule #2 control — a `method` name is the caller's own bytes
+    coming straight back to the caller, never a credential this gateway holds,
+    so `describe_exception` is the wrong instrument here (it is for exceptions,
+    and this is not one). It is a bound: a 4KB `method` string echoed verbatim
+    into a response body turns a small request into a large one for no reason.
+    CG-80 pre-merge review, L2.
+    """
+    text = repr(value)
+    return text if len(text) <= limit else text[:limit] + "…(truncated)"
+
+
+def _validate_envelope(payload: dict) -> None:
+    """The JSON-RPC frame itself, checked ONCE for every method and every era.
+
+    ⚠ CENTRAL ON PURPOSE (CG-80 pre-merge review, H1/L1/L2). Each of these three
+    used to be either unchecked or checked per-branch, and the per-branch shape
+    is what produced the measured inconsistency: `{"method": "tools/call",
+    "params": "notadict"}` reached `params.get(...)` and 500'd with a traceback,
+    while the same body on `tools/list` answered 200 because that branch never
+    reads `params`. A malformed frame must get the same loud answer whatever
+    method it names, and the only way to keep that true is to answer before any
+    method branch exists.
+
+    ⚠ `params: null` is treated as ABSENT rather than refused, and that is a
+    deliberate narrowing of "present and not an object". JSON-RPC's `params`
+    "MAY be omitted", and a null is how a great many serializers omit it; a
+    string, a number or an array is a genuinely malformed frame. Refusing null
+    would make this gateway unreachable to conformant-enough clients for no
+    safety gain — the silent-unreachability failure this whole module exists to
+    avoid, delivered loudly instead of silently.
+    """
+    if payload.get("jsonrpc") != "2.0":
+        # L1. Unvalidated until CG-80's pre-merge review: a body with no
+        # `jsonrpc` at all, and one claiming `"1.0"`, both answered 200. This
+        # module's entire subject is conformance, so accepting a frame that
+        # names a protocol we do not speak is the one thing it must not do.
+        raise _McpRequestError(
+            400, INVALID_REQUEST,
+            'jsonrpc must be "2.0"; got '
+            + _short(payload.get("jsonrpc")))
+    method = payload.get("method")
+    if not isinstance(method, str):
+        # L2. This was reaching the unimplemented-method branch and answering
+        # -32601 "method not found: None" — but a missing member is a malformed
+        # REQUEST, not a request for a method that happens not to exist, and a
+        # client told -32601 goes looking for a method name it never sent.
+        raise _McpRequestError(400, INVALID_REQUEST,
+                               "method must be a string; got " + _short(method))
+    if "params" in payload and payload["params"] is not None \
+            and not isinstance(payload["params"], dict):
+        raise _McpRequestError(
+            400, INVALID_PARAMS,
+            "params must be an object; got " + _short(payload["params"]))
 
 
 def _check_origin(origin: str | None) -> None:
@@ -262,6 +330,48 @@ def _text_result(text: str, is_error: bool) -> dict:
     return {"content": [{"type": "text", "text": text}], "isError": is_error}
 
 
+def _validation_detail(exc: ValidationError) -> str:
+    """Field-level argument errors, rendered for a model to SELF-CORRECT with.
+
+    ⚠ THE ONE NARROW EXCEPTION TO "EVERY EXCEPTION GOES THROUGH
+    `describe_exception`", and its narrowness is the whole of its safety (CG-80
+    pre-merge review, M5). It applies to `pydantic.ValidationError` and to
+    nothing else. It is not a second allowlist, it does not touch
+    `errors.py`, and it is deliberately NOT reachable from the adapter path
+    below — that is where the real credential hazard lives (CG-23's measured
+    403 put a webhook's `key` and `token` into three artifacts), and it keeps
+    `describe_exception` exactly as it was.
+
+    WHY IT EARNS THE EXCEPTION. Spec §6.5 quotes the protocol at length on this
+    one point — *"Otherwise, the LLM would not be able to see that an error
+    occurred and self-correct"* — and `call_tool`'s docstring repeats it. But
+    `describe_exception` prints an unmarked class by TYPE ALONE, so every bad
+    argument shape, from a missing `text` to a malformed card, collapsed to the
+    single string `invalid arguments for send_message: ValidationError`. That
+    carries strictly less than "something was wrong": a model cannot tell which
+    field to fix, and the self-correction the whole error taxonomy is built
+    around cannot happen.
+
+    WHY IT IS SAFE. Exactly three members are emitted, and none of them is the
+    caller's data:
+
+    * `type` — pydantic's own error-kind literal (`missing`, `string_too_short`);
+    * `loc`  — OUR field names, from `OutboundMessage`;
+    * `msg`  — pydantic's rendering of `type`, or, for a `value_error`, the text
+      of a validator authored in `envelope.py`.
+
+    `include_input=False` is what keeps the offending VALUE out — that member is
+    the hard-rule-#2 hazard `errors.py`'s docstring names in its first paragraph
+    — and `include_url=False` drops the docs link, which is noise in a context
+    window.
+    """
+    parts = []
+    for err in exc.errors(include_input=False, include_url=False):
+        loc = ".".join(str(p) for p in err.get("loc", ())) or "(root)"
+        parts.append(f"{loc}: {err.get('msg')} [{err.get('type')}]")
+    return f"ValidationError: {'; '.join(parts)}"
+
+
 def call_tool(registry: Registry, adapters: dict[str, Any], app_id: str,
               name: str, arguments: dict,
               delivery_log: DeliveryLog | None = None,
@@ -292,16 +402,29 @@ def call_tool(registry: Registry, adapters: dict[str, Any], app_id: str,
     keeps every caller that does not have one — the unit tests that drive this
     function directly — working unchanged. When a router passes one, this path
     writes the same two rows `POST /v1/messages` writes; see the `record` call
-    sites below for why that is not optional.
+    sites below for why that is not optional. ⚠ Both real call sites pass it BY
+    KEYWORD, and that is the drift CG-80's pre-merge review closed (L5): they
+    passed it positionally while this paragraph called it a keyword argument,
+    which is exactly the comment/code disagreement this repo treats as a defect.
     """
     if name not in TOOL_NAMES:
-        return None, {"code": INVALID_PARAMS, "message": f"unknown tool: {name}"}
+        return None, {"code": INVALID_PARAMS,
+                      "message": "unknown tool: " + _short(name)}
     try:
         message = OutboundMessage(**(arguments or {}))
-    except Exception as exc:  # noqa: BLE001 — pydantic ValidationError and friends
-        # ValidationError embeds the offending INPUT, which is the caller's own
-        # bytes rather than a credential — but it is not a class this repo
-        # authored, so it goes through the same allowlist as everything else.
+    except ValidationError as exc:
+        # ⚠ THE ONE NARROW EXCEPTION to "every exception reaching this text goes
+        # through `describe_exception`" — for this class only, and for the
+        # self-correction reason `_validation_detail` states in full. The
+        # offending INPUT is what makes a ValidationError dangerous and
+        # `include_input=False` is what removes it; nothing else about hard rule
+        # #2 moves, and the adapter path below is untouched.
+        return _text_result(
+            f"invalid arguments for send_message: {_validation_detail(exc)}",
+            True), None
+    except Exception as exc:  # noqa: BLE001 — e.g. a non-mapping `arguments`
+        # Everything that is NOT a ValidationError still gets the type name and
+        # nothing else. The allowlist is unchanged and this is its default.
         return _text_result(
             f"invalid arguments for send_message: {describe_exception(exc)}",
             True), None
@@ -358,6 +481,46 @@ def build_router(registry: Registry, adapters: dict[str, Any],
     async def mcp_post(request: Request,
                        authorization: str | None = Header(default=None),
                        origin: str | None = Header(default=None)):
+        """Read the body on the loop, then leave the loop.
+
+        ⚠ THE `run_in_threadpool` HOP IS NOT STYLE — IT IS HARD RULE #5 (CG-80
+        pre-merge review, H2). Everything below this line can block: the send
+        path ends in `adapter.send`, a SYNCHRONOUS `httpx.Client` with a 30s
+        timeout, and `DeliveryLog.record` writes a file. Run those on the
+        asyncio loop thread and a single hung webhook stalls EVERY concurrent
+        request in the process — including `/healthz`, whose entire reason to
+        exist is answering honestly while something else is broken. An honest
+        health endpoint that cannot be reached is worth exactly as much as the
+        hardcoded OK rule #5 was written after.
+
+        `POST /v1/messages` gets this for free by being declared `def`, so
+        Starlette hands it to the threadpool itself. This route cannot: it needs
+        `await request.body()`. So it awaits the ONE thing that requires a loop
+        and dispatches the rest explicitly — which makes the asymmetry between
+        the two routes' declarations deliberate rather than an accident a reader
+        is invited to "tidy up".
+
+        `_handle`, `_handle_legacy` and `_handle_modern` are therefore PLAIN
+        SYNC functions and must stay that way. `request` may be passed into
+        them — headers are available synchronously — but nothing down there may
+        `await`.
+        """
+        body = await request.body()
+        return await run_in_threadpool(_serve, body, request, authorization,
+                                       origin)
+
+    def _serve(body: bytes, request: Request, authorization: str | None,
+               origin: str | None) -> JSONResponse | Response:
+        # ⚠ `rid` starts as None and is bound only once the body has parsed as a
+        # JSON-RPC object (CG-80 pre-merge review, M1). Everything raised BEFORE
+        # that point genuinely has no knowable id — the Origin 403, the parse
+        # error, the batch array and the scalar body — and JSON-RPC permits a
+        # null id in exactly that case. Everything raised AFTER it does have one,
+        # and answering `id: null` there is a real defect: a client running
+        # concurrent requests correlates by id and cannot match the response.
+        # "Always echo the id" would be the wrong generalisation; this is why the
+        # binding sits where it sits rather than at the top.
+        rid: Any = None
         try:
             _check_origin(origin)
             try:
@@ -373,20 +536,37 @@ def build_router(registry: Registry, adapters: dict[str, Any],
                     headers={"WWW-Authenticate": "Bearer"},
                     content=jsonrpc_error(None, INVALID_REQUEST, str(exc)))
             try:
-                payload = json.loads(await request.body())
-            except (ValueError, UnicodeDecodeError):
+                payload = json.loads(body)
+            except (ValueError, UnicodeDecodeError, RecursionError):
+                # ⚠ `RecursionError` is a `RuntimeError`, NOT a `ValueError`, so
+                # the first two alone missed it (CG-80 pre-merge review, M6):
+                # 30 000 levels of nesting produced a 500 with a traceback rather
+                # than the -32700 that every other unparseable body gets.
                 raise _McpRequestError(400, PARSE_ERROR, "invalid JSON")
-            if not isinstance(payload, dict):
+            if isinstance(payload, list):
                 raise _McpRequestError(
                     400, INVALID_REQUEST,
                     "the POST body must be a single JSON-RPC request or "
                     "notification; batching was removed from the protocol")
-            return await _handle(registry, adapters, app_id, payload, request,
-                                 delivery_log)
+            if not isinstance(payload, dict):
+                # SPLIT FROM THE ARRAY CASE (CG-80 pre-merge review, L3). A body
+                # of `null`, `42` or `"hi"` used to be told batching had been
+                # removed from the protocol, which sends a reader looking for a
+                # batching bug they do not have.
+                raise _McpRequestError(
+                    400, INVALID_REQUEST,
+                    "the POST body must be a JSON object carrying a single "
+                    "JSON-RPC request or notification; got " + _short(payload))
+            rid = payload.get("id")
+            _validate_envelope(payload)
+            if "id" not in payload or payload["method"].startswith("notifications/"):
+                return _notification_response(payload)
+            return _handle(registry, adapters, app_id, payload, request,
+                           delivery_log)
         except _McpRequestError as exc:
             return JSONResponse(
                 status_code=exc.http_status,
-                content=jsonrpc_error(None, exc.code, exc.message, exc.data))
+                content=jsonrpc_error(rid, exc.code, exc.message, exc.data))
 
     @router.get("/mcp")
     @router.delete("/mcp")
@@ -404,7 +584,41 @@ def build_router(registry: Registry, adapters: dict[str, Any],
     return router
 
 
-def _era_of(payload: dict) -> str:
+def _notification_response(payload: dict) -> Response:
+    """A JSON-RPC NOTIFICATION, answered the same way in either era.
+
+    ⚠ NOTIFICATION-NESS IS THE ABSENCE OF AN `id`, NEVER A METHOD NAME (CG-80
+    pre-merge review, M2). Keying on the name got three things wrong at once,
+    all measured: legacy `ping` with no `id` answered `200 {"id": null,
+    "result": {}}` and modern `tools/list` with no `id` answered a full result
+    body — responses to messages that MUST NOT get one — while
+    `notifications/cancelled`, which real clients emit on a cancellation or a
+    timeout, fell through to the unimplemented-method rule and got a **404 with
+    a JSON-RPC error body** in both eras. The 404 rule is for an unimplemented
+    REQUEST; a notification we do not act on is not an error at all, it is a
+    message we are entitled to ignore.
+
+    So: no id, any method, either era → 202 and an EMPTY body. A JSON `null`
+    body would itself be a response.
+
+    The remaining case is a `notifications/*` method that DOES carry an id, and
+    it is answered rather than dropped. That is a deviation from "any
+    `notifications/*` gets 202", taken deliberately: 202-with-no-body leaves a
+    client that asked a question waiting for an answer that will never come,
+    which is the same hang the review flagged. It is a malformed frame — a
+    notification method sent as a request — so it gets the Invalid Request its
+    shape earns, WITH its id echoed, and never the -32601 that would send the
+    client looking for a method name it did send.
+    """
+    if "id" not in payload:
+        return Response(status_code=202)
+    raise _McpRequestError(
+        400, INVALID_REQUEST,
+        f"{_short(payload['method'])} is a notification and MUST NOT carry an "
+        "id; send it without one, or call a request method")
+
+
+def _era_of(payload: dict, request: Request) -> str:
     """Which protocol era this single request belongs to.
 
     THE OUTERMOST SEAM IN THIS FILE, and deliberately so: if an era is ever
@@ -412,14 +626,44 @@ def _era_of(payload: dict) -> str:
 
     Per-request rather than per-connection, which is safe because modern MCP is
     stateless by definition and legacy's era is already established by its own
-    handshake. A legacy client's post-handshake `tools/list` carries no `_meta`
-    and lands on the legacy branch; a modern client's carries one and does not.
+    handshake.
+
+    ⚠ IT KEYS ON THREE SIGNALS, NOT ONE, AND THE REASON IS THE DIRECTION OF THE
+    MISTAKE (CG-80 pre-merge review, H3). This used to read `params._meta` and
+    nothing else, which is fine for a modern `tools/call` and wrong for
+    everything else a modern client sends:
+
+    * a modern `tools/list` carries no `params` at all, so it was served as
+      LEGACY — HTTP 200, a legacy-shaped body, no `resultType`/`ttlMs`/
+      `cacheScope`, and not one word saying so;
+    * a modern `tools/call` with its `_meta` omitted was likewise served as
+      legacy, which meant §6.3 requirement 2's header MUST was skipped
+      entirely — deliberately mismatched `Mcp-Method`/`Mcp-Name` headers
+      DELIVERED THE MESSAGE — and §6.3 requirement 4's "missing `_meta` →
+      -32602" could not exist at all, because a missing `_meta` was
+      indistinguishable from a legacy request.
+
+    Both failures point modern→legacy and both are SILENT, which is precisely
+    the outcome this module's docstring says the dual-era design exists to
+    avoid. So the discriminator now reads every modern-only signal actually on
+    the wire, and a request only has to carry one of them.
+
+    `Mcp-Method` is the strongest of the three because it has NO legacy
+    analogue — it was added by `2026-07-28` — so keying on its presence yields
+    no false positives. `MCP-Protocol-Version` is compared for EQUALITY with
+    the modern revision rather than for presence, because that header does have
+    a legacy analogue: `2025-06-18` introduced it, and a conformant legacy
+    client sends it carrying a legacy revision.
     """
     params = payload.get("params")
     if isinstance(params, dict):
         meta = params.get("_meta")
         if isinstance(meta, dict) and META_PROTOCOL_VERSION in meta:
             return "modern"
+    if request.headers.get("Mcp-Method") is not None:
+        return "modern"
+    if request.headers.get("MCP-Protocol-Version") == MODERN_PROTOCOL_VERSION:
+        return "modern"
     return "legacy"
 
 
@@ -427,11 +671,17 @@ def _server_info() -> dict:
     return {"name": "chat-gateway", "version": __version__}
 
 
-async def _handle(registry: Registry, adapters: dict[str, Any], app_id: str,
-                  payload: dict, request: Request,
-                  delivery_log: DeliveryLog | None = None
-                  ) -> JSONResponse | Response:
-    if _era_of(payload) == "modern":
+def _handle(registry: Registry, adapters: dict[str, Any], app_id: str,
+            payload: dict, request: Request,
+            delivery_log: DeliveryLog | None = None
+            ) -> JSONResponse | Response:
+    """⚠ PLAIN SYNC, deliberately — see `mcp_post`'s docstring. Everything below
+    here may block (a 30s `httpx` send, a delivery-log file write) and is reached
+    through `run_in_threadpool`; an `await` anywhere in this subtree would put it
+    back on the loop thread and take `/healthz` down with the next hung webhook.
+    `request` is read for HEADERS ONLY, which is synchronous.
+    """
+    if _era_of(payload, request) == "modern":
         return _handle_modern(registry, adapters, app_id, payload, request,
                               delivery_log)
     return _handle_legacy(registry, adapters, app_id, payload, delivery_log)
@@ -440,7 +690,12 @@ async def _handle(registry: Registry, adapters: dict[str, Any], app_id: str,
 def _handle_legacy(registry: Registry, adapters: dict[str, Any], app_id: str,
                    payload: dict, delivery_log: DeliveryLog | None = None
                    ) -> JSONResponse | Response:
-    """The handshake era (`2025-11-25` and earlier)."""
+    """The handshake era (`2025-11-25` and earlier). Plain sync — `mcp_post`.
+
+    Notifications never reach here: `_serve` answers anything without an `id`
+    with 202 before the era is even decided (M2), which is why `ping` and
+    `tools/list` below may assume they were asked a question.
+    """
     rid = payload.get("id")
     method = payload.get("method")
     params = payload.get("params") or {}
@@ -452,19 +707,31 @@ def _handle_legacy(registry: Registry, adapters: dict[str, Any], app_id: str,
         # with another protocol version it supports. This SHOULD be the latest
         # version supported by the server." Echoing back whatever was asked for
         # is the dishonest negotiation that rule exists to prevent.
+        #
+        # ⚠ THE FALLBACK IS THE LEGACY REVISION, NOT `SUPPORTED_PROTOCOL_VERSIONS[0]`
+        # (CG-80 pre-merge review, M3), and the SHOULD above is what is being
+        # traded away on purpose. `initialize` exists in ONE era: only a legacy
+        # client ever sends it, because `2026-07-28` deleted the method. Answering
+        # it with the modern revision therefore hands a client a version it cannot
+        # speak by construction — and the legacy spec says a client SHOULD
+        # disconnect when it cannot support the version it was given. The server
+        # would be telling exactly the clients it can serve to go away, which is
+        # the D4a failure mode dual-era exists to prevent, produced by the
+        # dual-era code itself.
+        #
+        # "SHOULD be the latest version supported by the server" is not a MUST,
+        # and this reads it as the latest version supported IN THE ERA THIS
+        # HANDSHAKE BELONGS TO — which is what makes the answer useful rather
+        # than merely maximal. `server/discover` publishes the full list
+        # verbatim, so nothing is hidden from a client that can ask.
         version = (requested if requested in SUPPORTED_PROTOCOL_VERSIONS
-                   else SUPPORTED_PROTOCOL_VERSIONS[0])
+                   else LEGACY_PROTOCOL_VERSION)
         return JSONResponse(jsonrpc_result(rid, {
             "protocolVersion": version,
             "capabilities": {"tools": {}},
             "serverInfo": _server_info(),
             "instructions": _INSTRUCTIONS,
         }))
-
-    if method == "notifications/initialized":
-        # A notification has no id and MUST NOT get a response. 202 with an
-        # EMPTY body — a JSON `null` body would be a response.
-        return Response(status_code=202)
 
     if method == "ping":
         return JSONResponse(jsonrpc_result(rid, {}))
@@ -476,7 +743,7 @@ def _handle_legacy(registry: Registry, adapters: dict[str, Any], app_id: str,
     if method == "tools/call":
         result, err = call_tool(registry, adapters, app_id,
                                 params.get("name"), params.get("arguments") or {},
-                                delivery_log)
+                                delivery_log=delivery_log)
         if err is not None:
             # HTTP 200: `tools/call` IS implemented; only the tool name is
             # wrong. The 404 rule below is for an unimplemented METHOD.
@@ -489,7 +756,7 @@ def _handle_legacy(registry: Registry, adapters: dict[str, Any], app_id: str,
     return JSONResponse(
         status_code=404,
         content=jsonrpc_error(rid, METHOD_NOT_FOUND,
-                              f"method not found: {method}"))
+                              "method not found: " + _short(method)))
 
 
 def decode_header_value(raw: str) -> str:
@@ -534,7 +801,7 @@ def _require_header(request: Request, name: str, expected: Any,
 def _handle_modern(registry: Registry, adapters: dict[str, Any], app_id: str,
                    payload: dict, request: Request,
                    delivery_log: DeliveryLog | None = None) -> JSONResponse:
-    """The stateless era (`2026-07-28`).
+    """The stateless era (`2026-07-28`). Plain sync — see `mcp_post`.
 
     Everything the legacy branch gets from a handshake, this branch gets from
     the request in front of it — which is the whole point of the revision:
@@ -544,8 +811,20 @@ def _handle_modern(registry: Registry, adapters: dict[str, Any], app_id: str,
     rid = payload.get("id")
     method = payload.get("method")
     params = payload.get("params") or {}
-    meta = params.get("_meta") or {}
+    meta = params.get("_meta")
 
+    # §6.3 requirement 4's other half: missing `_meta` → 400 + -32602. ⚠ THIS
+    # BRANCH WAS UNREACHABLE UNTIL CG-80's pre-merge review fixed `_era_of`
+    # (H3) — with the discriminator keyed only on `_meta`, a request without one
+    # was indistinguishable from a legacy request and was quietly served as one,
+    # so the requirement could not fail and could not pass either. Checked
+    # SEPARATELY from the two keys below so the message names the thing that is
+    # actually missing rather than blaming one member of a container that is not
+    # there.
+    if not isinstance(meta, dict):
+        raise _McpRequestError(
+            400, INVALID_PARAMS,
+            "params._meta is required on every modern-era request")
     version = meta.get(META_PROTOCOL_VERSION)
     if META_CLIENT_CAPABILITIES not in meta:
         raise _McpRequestError(
@@ -583,10 +862,12 @@ def _handle_modern(registry: Registry, adapters: dict[str, Any], app_id: str,
         name = params.get("name")
         _require_header(request, "Mcp-Name", name, "params.name")
         result, err = call_tool(registry, adapters, app_id, name,
-                                params.get("arguments") or {}, delivery_log)
+                                params.get("arguments") or {},
+                                delivery_log=delivery_log)
         if err is not None:
             return JSONResponse(jsonrpc_error(rid, err["code"], err["message"]))
         return JSONResponse(jsonrpc_result(rid, {"resultType": "complete",
                                                  **result}))
 
-    raise _McpRequestError(404, METHOD_NOT_FOUND, f"method not found: {method}")
+    raise _McpRequestError(404, METHOD_NOT_FOUND,
+                           "method not found: " + _short(method))
