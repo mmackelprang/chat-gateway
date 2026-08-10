@@ -275,6 +275,13 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                # `dispatcher` and `subscriber`: every offline test builds an app
                # without one, and /healthz must answer 200 for those (audit F0).
                sweeper: Any | None = None,
+               # CG-80. Default OFF, the same posture GATEWAY_ENABLE_PUBSUB
+               # takes for a new surface: an operator arms it deliberately, and
+               # /healthz then says whether the running image both HAS it and
+               # HAS IT ON — two separate facts, which is the lesson CG-59 paid
+               # for when a deployed container answered 200 to a query parameter
+               # it did not have.
+               mcp_enabled: bool = False,
                monitor_interval: float = 60.0) -> FastAPI:
     """`adapters` maps identity mode -> adapter with .send(identity, message)."""
 
@@ -363,6 +370,16 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     app.state.delivery_log = log
     app.state.heartbeats = checks
     app.state.sweeper = sweeper
+
+    # CG-80. Mounted, not always-on: `/mcp` is a new authenticated surface and
+    # this repo's posture on those is conservative. The router depends on the
+    # SAME authenticate() every /v1/ route depends on — hard rule #4 satisfied
+    # by reuse rather than by a second implementation that could drift.
+    app.state.mcp_enabled = mcp_enabled
+    if mcp_enabled:
+        from .mcp import build_router
+
+        app.include_router(build_router(registry, adapters))
 
     # -- raw envelope send (synchronous; aiteam notify.py path) ---------------
     @app.post("/v1/messages", response_model=DeliveryResult)
