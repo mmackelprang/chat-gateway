@@ -365,3 +365,113 @@ def test_a_mode_with_no_adapter_is_a_tool_error(env):
     assert err is None
     assert result["isError"] is True
     assert "no adapter" in result["content"][0]["text"]
+
+
+# ---------------------------------------------------------------- group 2 ---
+from chat_gateway.mcp import LEGACY_PROTOCOL_VERSION, MODERN_PROTOCOL_VERSION  # noqa: E402
+
+
+def test_legacy_initialize_returns_a_version_capabilities_and_serverinfo(env):
+    client, _ = env
+    r = rpc(client, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                     "params": {"protocolVersion": LEGACY_PROTOCOL_VERSION,
+                                "capabilities": {},
+                                "clientInfo": {"name": "t", "version": "1"}}})
+    assert r.status_code == 200
+    res = r.json()["result"]
+    assert res["protocolVersion"] == LEGACY_PROTOCOL_VERSION
+    assert res["capabilities"] == {"tools": {}}
+    assert res["serverInfo"]["name"] == "chat-gateway"
+
+
+def test_legacy_initialize_with_an_unknown_version_answers_with_ours(env):
+    """The spec: if the server does not support the requested version it MUST
+    respond with one it does, and that SHOULD be its latest. Echoing back
+    whatever was asked for is the dishonest negotiation this rule prevents."""
+    client, _ = env
+    r = rpc(client, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                     "params": {"protocolVersion": "1900-01-01",
+                                "capabilities": {}}})
+    assert r.json()["result"]["protocolVersion"] == MODERN_PROTOCOL_VERSION
+
+
+def test_notifications_initialized_is_202_with_an_EMPTY_body(env):
+    """A notification has no id and MUST NOT get a response. 202 + empty, not
+    202 + `null` — a JSON `null` body is a response."""
+    client, _ = env
+    r = rpc(client, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+    assert r.status_code == 202
+    assert r.content == b""
+
+
+def test_legacy_ping_returns_an_empty_result(env):
+    client, _ = env
+    r = rpc(client, {"jsonrpc": "2.0", "id": 9, "method": "ping"})
+    assert r.status_code == 200
+    assert r.json()["result"] == {}
+
+
+def test_legacy_tools_list_returns_the_one_tool(env):
+    client, _ = env
+    r = rpc(client, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    assert r.status_code == 200
+    tools = r.json()["result"]["tools"]
+    assert [t["name"] for t in tools] == ["send_message"]
+
+
+def test_legacy_tools_call_delivers(env):
+    client, adapter = env
+    r = rpc(client, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                     "params": {"name": "send_message",
+                                "arguments": {"identity": "pm-familyworkspace",
+                                              "text": "from legacy"}}})
+    assert r.status_code == 200
+    assert r.json()["result"]["isError"] is False
+    assert adapter.sent[0][1].text == "from legacy"
+
+
+def test_legacy_tools_call_with_an_unknown_tool_is_200_with_a_protocol_error(env):
+    """HTTP 200, not 404. The 404 rule is for an unimplemented METHOD;
+    `tools/call` IS implemented, the tool name is just wrong."""
+    client, _ = env
+    r = rpc(client, {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                     "params": {"name": "nope", "arguments": {}}})
+    assert r.status_code == 200
+    assert r.json()["error"]["code"] == -32602
+
+
+def test_an_unimplemented_method_is_404_with_minus_32601(env):
+    """Unusual — JSON-RPC's reflex is 200 with an error body. 2026-07-28 makes
+    it a 404 specifically so a dual-era client probe can tell a modern server
+    from a legacy HTTP+SSE one."""
+    client, _ = env
+    r = rpc(client, {"jsonrpc": "2.0", "id": 5, "method": "resources/list"})
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == -32601
+
+
+def test_an_mcp_send_is_written_to_the_delivery_log(env):
+    """⚠ DEVIATION FROM THE PLAN, and this test is why it was needed.
+
+    The spec's §2 table lists exactly two properties an MCP `send_message`
+    inherits from `POST /v1/messages`, and the second is *audit / delivery
+    log — ✅ `DeliveryLog.record`*. The plan's `call_tool` took no log and
+    recorded nothing, so that claim — and the plan's own Goal line, and the
+    UAT step that asks for "the `/v1/deliveries` row" as proof a message
+    arrived — would all have been untrue of the shipped code: an MCP send
+    would have left no trace in the delivery log or the on-disk audit trail.
+
+    Driven end to end through the HTTP surface rather than against
+    `call_tool`, because what has to hold is that the log the ROUTER was
+    built with is the one `GET /v1/deliveries` reads.
+    """
+    client, _ = env
+    r = rpc(client, {"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                     "params": {"name": "send_message",
+                                "arguments": {"identity": "pm-familyworkspace",
+                                              "text": "audited"}}})
+    assert r.json()["result"]["isError"] is False
+    rows = client.get("/v1/deliveries", headers=AUTH).json()["deliveries"]
+    assert [(row["source"], row["kind"], row["title"], row["status"])
+            for row in rows] == [("aiteam-harness", "message", "audited",
+                                  "delivered")]

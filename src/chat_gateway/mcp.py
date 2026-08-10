@@ -112,6 +112,17 @@ ALLOWED_ORIGINS_ENV = "CHAT_GATEWAY_MCP_ALLOWED_ORIGINS"
 #: `send_message`'s schema does.
 TOOL_NAMES = ("send_message",)
 
+#: Optional natural-language guidance published on the handshake. TRANSPORT
+#: ONLY — it says what this server is and how identity works, never when to use
+#: it. "Use this to notify the team when a build fails" would be an occasion,
+#: and an occasion is app domain (hard rule #1).
+_INSTRUCTIONS = (
+    "This server delivers messages to Google Chat as pre-registered "
+    "identities. Your API key determines which identities you may send as; "
+    "the send_message tool's schema lists exactly those and reports whether "
+    "each is configured."
+)
+
 _SENTINEL_PREFIX = "=?base64?"
 _SENTINEL_SUFFIX = "?="
 
@@ -393,11 +404,89 @@ def build_router(registry: Registry, adapters: dict[str, Any],
     return router
 
 
+def _era_of(payload: dict) -> str:
+    """Which protocol era this single request belongs to.
+
+    THE OUTERMOST SEAM IN THIS FILE, and deliberately so: if an era is ever
+    dropped, that is deleting a branch rather than unpicking a design.
+
+    Per-request rather than per-connection, which is safe because modern MCP is
+    stateless by definition and legacy's era is already established by its own
+    handshake. A legacy client's post-handshake `tools/list` carries no `_meta`
+    and lands on the legacy branch; a modern client's carries one and does not.
+    """
+    params = payload.get("params")
+    if isinstance(params, dict):
+        meta = params.get("_meta")
+        if isinstance(meta, dict) and META_PROTOCOL_VERSION in meta:
+            return "modern"
+    return "legacy"
+
+
+def _server_info() -> dict:
+    return {"name": "chat-gateway", "version": __version__}
+
+
 async def _handle(registry: Registry, adapters: dict[str, Any], app_id: str,
                   payload: dict, request: Request,
-                  delivery_log: DeliveryLog | None = None) -> JSONResponse:
-    """Placeholder dispatch — Tasks 4 and 5 fill in the two eras."""
+                  delivery_log: DeliveryLog | None = None
+                  ) -> JSONResponse | Response:
+    if _era_of(payload) == "modern":
+        return _handle_modern(registry, adapters, app_id, payload, request,
+                              delivery_log)
+    return _handle_legacy(registry, adapters, app_id, payload, delivery_log)
+
+
+def _handle_legacy(registry: Registry, adapters: dict[str, Any], app_id: str,
+                   payload: dict, delivery_log: DeliveryLog | None = None
+                   ) -> JSONResponse | Response:
+    """The handshake era (`2025-11-25` and earlier)."""
+    rid = payload.get("id")
+    method = payload.get("method")
+    params = payload.get("params") or {}
+
+    if method == "initialize":
+        requested = params.get("protocolVersion")
+        # "If the server supports the requested protocol version, it MUST
+        # respond with the same version. Otherwise, the server MUST respond
+        # with another protocol version it supports. This SHOULD be the latest
+        # version supported by the server." Echoing back whatever was asked for
+        # is the dishonest negotiation that rule exists to prevent.
+        version = (requested if requested in SUPPORTED_PROTOCOL_VERSIONS
+                   else SUPPORTED_PROTOCOL_VERSIONS[0])
+        return JSONResponse(jsonrpc_result(rid, {
+            "protocolVersion": version,
+            "capabilities": {"tools": {}},
+            "serverInfo": _server_info(),
+            "instructions": _INSTRUCTIONS,
+        }))
+
+    if method == "notifications/initialized":
+        # A notification has no id and MUST NOT get a response. 202 with an
+        # EMPTY body — a JSON `null` body would be a response.
+        return Response(status_code=202)
+
+    if method == "ping":
+        return JSONResponse(jsonrpc_result(rid, {}))
+
+    if method == "tools/list":
+        return JSONResponse(jsonrpc_result(
+            rid, {"tools": tools_for(registry, app_id)}))
+
+    if method == "tools/call":
+        result, err = call_tool(registry, adapters, app_id,
+                                params.get("name"), params.get("arguments") or {},
+                                delivery_log)
+        if err is not None:
+            # HTTP 200: `tools/call` IS implemented; only the tool name is
+            # wrong. The 404 rule below is for an unimplemented METHOD.
+            return JSONResponse(jsonrpc_error(rid, err["code"], err["message"]))
+        return JSONResponse(jsonrpc_result(rid, result))
+
+    # 404, not the JSON-RPC reflex of 200-with-an-error-body. `2026-07-28` makes
+    # this a MUST so a dual-era client probe can tell a modern server from a
+    # legacy HTTP+SSE one, and answering 200 here misclassifies us.
     return JSONResponse(
-        content=jsonrpc_error(payload.get("id"), METHOD_NOT_FOUND,
-                              f"method not found: {payload.get('method')}"),
-        status_code=404)
+        status_code=404,
+        content=jsonrpc_error(rid, METHOD_NOT_FOUND,
+                              f"method not found: {method}"))
