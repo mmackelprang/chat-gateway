@@ -708,10 +708,25 @@ to the model, so it cannot self-correct.
 | delivery failed | HTTP 200, `isError: true` |
 | unknown tool name | HTTP 200, JSON-RPC `-32602` |
 | unimplemented RPC method | HTTP **404**, `-32601` |
+| body is not JSON, or is nested past Python's recursion limit | HTTP **400**, `-32700` |
+| body is an array (batching), or a bare scalar | HTTP **400**, `-32600` |
+| `jsonrpc` missing or not `"2.0"`; `method` missing or not a string | HTTP **400**, `-32600` |
+| `params` present and not an object | HTTP **400**, `-32602` |
+| a **notification** — any message with no `id`, any method, either era | HTTP **202**, **empty body** |
 
 An identity refusal is deliberately a *tool* error: you asked a legitimate
 question and got a legitimate refusal naming the alternatives, which is
 something an agent can act on.
+
+Two shapes worth calling out because clients get them wrong. A `params` of
+`null` is treated as *absent*, not as malformed — a great many serializers emit
+it that way. And a `notifications/*` method that carries an `id` is a `-32600`
+rather than a `202`: it is a notification sent as a request, and answering it is
+better than leaving the caller waiting for a reply that is never coming.
+
+An argument-validation failure names the **field**: `invalid arguments for
+send_message: ValidationError: text: Field required [missing]`. The offending
+*value* is deliberately never echoed back.
 
 ### `/healthz` says whether it is armed
 
@@ -747,7 +762,15 @@ Streamable HTTP on a single endpoint, stateless, tools-only, JSON only —
 `GET /mcp` and `DELETE /mcp` are `405`, because there is no stream and no
 session. **Dual-era**: both the `2025-11-25` handshake protocol and the
 `2026-07-28` stateless one are served on the same URL, because a client
-speaking one cannot talk to a server speaking only the other. Authentication is
+speaking one cannot talk to a server speaking only the other. The era is
+decided per request from modern-only signals — the `_meta` protocol version,
+the `Mcp-Method` header, or an `MCP-Protocol-Version` header naming the modern
+revision — so a modern client is never quietly served a legacy-shaped answer.
+An `initialize` naming a version we do not support is answered with
+**`2025-11-25`**, not the newest we speak: `initialize` exists only in the
+legacy era, so the newest revision would be a version the asking client cannot
+speak by construction. `server/discover` publishes the full list.
+Authentication is
 a static per-app bearer key, not OAuth; a `401` carries a bare
 `WWW-Authenticate: Bearer` with no `resource_metadata` pointer, because there is
 no authorization server to discover.
