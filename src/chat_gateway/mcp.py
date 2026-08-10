@@ -490,3 +490,103 @@ def _handle_legacy(registry: Registry, adapters: dict[str, Any], app_id: str,
         status_code=404,
         content=jsonrpc_error(rid, METHOD_NOT_FOUND,
                               f"method not found: {method}"))
+
+
+def decode_header_value(raw: str) -> str:
+    """Decode MCP's base64 sentinel form, `=?base64?<b64>?=`, if present.
+
+    Clients use it for header values outside the header-safe character set.
+    Our only tool name is `send_message`, which never needs it — but the CLIENT
+    decides, so the decoder exists regardless. A comparison against the raw
+    sentinel string would reject a perfectly conformant request.
+    """
+    if raw.startswith(_SENTINEL_PREFIX) and raw.endswith(_SENTINEL_SUFFIX):
+        payload = raw[len(_SENTINEL_PREFIX):-len(_SENTINEL_SUFFIX)]
+        try:
+            return base64.b64decode(payload, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            raise _McpRequestError(
+                400, HEADER_MISMATCH,
+                "a base64 sentinel header value did not decode") from None
+    return raw
+
+
+def _require_header(request: Request, name: str, expected: Any,
+                    label: str) -> None:
+    """One header, cross-checked against the body it duplicates.
+
+    The duplication is the protocol's, not ours: `Mcp-Method` and `Mcp-Name`
+    exist so an intermediary can route without parsing a body. That makes a
+    MISMATCH a real hazard — the router and the executor would disagree about
+    what is being called — which is why the spec makes rejecting one a MUST
+    rather than a preference.
+    """
+    raw = request.headers.get(name)
+    if raw is None:
+        raise _McpRequestError(400, HEADER_MISMATCH,
+                               f"required header {name} is missing")
+    if decode_header_value(raw) != expected:
+        raise _McpRequestError(
+            400, HEADER_MISMATCH,
+            f"header {name} does not match the request's {label}")
+
+
+def _handle_modern(registry: Registry, adapters: dict[str, Any], app_id: str,
+                   payload: dict, request: Request,
+                   delivery_log: DeliveryLog | None = None) -> JSONResponse:
+    """The stateless era (`2026-07-28`).
+
+    Everything the legacy branch gets from a handshake, this branch gets from
+    the request in front of it — which is the whole point of the revision:
+    "A server processes each request independently; no state should be inferred
+    from previous requests, even those on the same connection or stream."
+    """
+    rid = payload.get("id")
+    method = payload.get("method")
+    params = payload.get("params") or {}
+    meta = params.get("_meta") or {}
+
+    version = meta.get(META_PROTOCOL_VERSION)
+    if META_CLIENT_CAPABILITIES not in meta:
+        raise _McpRequestError(
+            400, INVALID_PARAMS,
+            f"_meta.{META_CLIENT_CAPABILITIES} is required on every request")
+    _require_header(request, "MCP-Protocol-Version", version,
+                    "_meta protocol version")
+    _require_header(request, "Mcp-Method", method, "method")
+    if version not in SUPPORTED_PROTOCOL_VERSIONS:
+        raise _McpRequestError(
+            400, UNSUPPORTED_PROTOCOL_VERSION, "unsupported protocol version",
+            {"supported": SUPPORTED_PROTOCOL_VERSIONS, "requested": version})
+
+    if method == "server/discover":
+        return JSONResponse(jsonrpc_result(rid, {
+            "resultType": "complete",
+            "supportedVersions": SUPPORTED_PROTOCOL_VERSIONS,
+            "capabilities": {"tools": {}},
+            "instructions": _INSTRUCTIONS,
+            "ttlMs": TOOLS_TTL_MS,
+            "cacheScope": CACHE_SCOPE,
+            "_meta": {META_SERVER_INFO: _server_info()},
+        }))
+
+    if method == "tools/list":
+        return JSONResponse(jsonrpc_result(rid, {
+            "resultType": "complete",
+            "tools": tools_for(registry, app_id),
+            "ttlMs": TOOLS_TTL_MS,
+            "cacheScope": CACHE_SCOPE,
+            "_meta": {META_SERVER_INFO: _server_info()},
+        }))
+
+    if method == "tools/call":
+        name = params.get("name")
+        _require_header(request, "Mcp-Name", name, "params.name")
+        result, err = call_tool(registry, adapters, app_id, name,
+                                params.get("arguments") or {}, delivery_log)
+        if err is not None:
+            return JSONResponse(jsonrpc_error(rid, err["code"], err["message"]))
+        return JSONResponse(jsonrpc_result(rid, {"resultType": "complete",
+                                                 **result}))
+
+    raise _McpRequestError(404, METHOD_NOT_FOUND, f"method not found: {method}")

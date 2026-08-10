@@ -475,3 +475,158 @@ def test_an_mcp_send_is_written_to_the_delivery_log(env):
     assert [(row["source"], row["kind"], row["title"], row["status"])
             for row in rows] == [("aiteam-harness", "message", "audited",
                                   "delivered")]
+
+
+# --------------------------------------------------------- groups 3, 4, 5, 6 -
+import base64  # noqa: E402
+
+from chat_gateway.mcp import CACHE_SCOPE, decode_header_value  # noqa: E402
+
+
+def modern(method, params=None, version=MODERN_PROTOCOL_VERSION, rid=1):
+    """A modern-era request body: _meta is REQUIRED on every request."""
+    p = dict(params or {})
+    p["_meta"] = {"io.modelcontextprotocol/protocolVersion": version,
+                  "io.modelcontextprotocol/clientCapabilities": {}}
+    return {"jsonrpc": "2.0", "id": rid, "method": method, "params": p}
+
+
+def modern_headers(method, name=None, version=MODERN_PROTOCOL_VERSION):
+    h = {"MCP-Protocol-Version": version, "Mcp-Method": method}
+    if name is not None:
+        h["Mcp-Name"] = name
+    return h
+
+
+def test_server_discover_carries_every_required_field(env):
+    client, _ = env
+    r = rpc(client, modern("server/discover"),
+            headers=modern_headers("server/discover"))
+    assert r.status_code == 200
+    res = r.json()["result"]
+    for field in ("resultType", "supportedVersions", "capabilities",
+                  "ttlMs", "cacheScope"):
+        assert field in res, field
+    assert res["resultType"] == "complete"
+    assert res["capabilities"] == {"tools": {}}
+    assert MODERN_PROTOCOL_VERSION in res["supportedVersions"]
+    assert res["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "chat-gateway"
+
+
+def test_modern_tools_list_carries_resulttype_ttl_and_cachescope(env):
+    client, _ = env
+    r = rpc(client, modern("tools/list"), headers=modern_headers("tools/list"))
+    res = r.json()["result"]
+    assert res["resultType"] == "complete"
+    assert isinstance(res["ttlMs"], int)
+    assert [t["name"] for t in res["tools"]] == ["send_message"]
+
+
+def test_cachescope_is_private_because_the_tool_list_varies_by_api_key(env):
+    """⚠ Hard rule #4 delivered by a cache header. `public` asserts the
+    response carries no user-specific data and MAY be cached ACROSS
+    authorization contexts — and this tool list DOES vary by key, because
+    identity's enum is that app's allowlist. `public` would let an
+    intermediary serve one tenant's allowlist to another, and that is
+    invisible to a review looking at the auth check."""
+    client, _ = env
+    assert CACHE_SCOPE == "private"
+    for method in ("tools/list", "server/discover"):
+        r = rpc(client, modern(method), headers=modern_headers(method))
+        assert r.json()["result"]["cacheScope"] == "private", method
+
+
+def test_the_same_tools_call_works_in_BOTH_eras_on_one_endpoint(env):
+    """The test that proves dual-era is real rather than aspirational."""
+    client, adapter = env
+    legacy = rpc(client, {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                          "params": {"name": "send_message",
+                                     "arguments": {"identity": "pm-familyworkspace",
+                                                   "text": "legacy"}}})
+    mod = rpc(client, modern("tools/call",
+                             {"name": "send_message",
+                              "arguments": {"identity": "pm-familyworkspace",
+                                            "text": "modern"}}),
+              headers=modern_headers("tools/call", "send_message"))
+    assert legacy.json()["result"]["isError"] is False
+    assert mod.json()["result"]["isError"] is False
+    assert "resultType" not in legacy.json()["result"]
+    assert mod.json()["result"]["resultType"] == "complete"
+    assert [m.text for _, m in adapter.sent] == ["legacy", "modern"]
+
+
+def test_a_modern_request_missing_required_meta_fields_is_400(env):
+    client, _ = env
+    body = modern("tools/list")
+    del body["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]
+    r = rpc(client, body, headers=modern_headers("tools/list"))
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == -32602
+
+
+def test_a_legacy_request_is_NOT_held_to_the_modern_header_rules(env):
+    """Era isolation in the other direction: a legacy client sends none of
+    these headers and must not be 400'd for it."""
+    client, _ = env
+    r = rpc(client, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert r.status_code == 200
+
+
+def test_a_missing_protocol_version_header_on_a_modern_request_is_400(env):
+    client, _ = env
+    r = rpc(client, modern("tools/list"), headers={"Mcp-Method": "tools/list"})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == -32020
+
+
+def test_mcp_method_header_disagreeing_with_the_body_is_400(env):
+    client, _ = env
+    r = rpc(client, modern("tools/list"), headers=modern_headers("tools/call"))
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == -32020
+
+
+def test_mcp_name_header_disagreeing_with_params_name_is_400(env):
+    client, _ = env
+    r = rpc(client, modern("tools/call",
+                           {"name": "send_message",
+                            "arguments": {"identity": "pm-familyworkspace",
+                                          "text": "x"}}),
+            headers=modern_headers("tools/call", "something_else"))
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == -32020
+
+
+def test_protocol_version_header_disagreeing_with_meta_is_400(env):
+    client, _ = env
+    r = rpc(client, modern("tools/list", version=MODERN_PROTOCOL_VERSION),
+            headers=modern_headers("tools/list", version=LEGACY_PROTOCOL_VERSION))
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == -32020
+
+
+def test_a_base64_sentinel_header_value_is_decoded_before_comparison(env):
+    client, adapter = env
+    encoded = ("=?base64?" + base64.b64encode(b"send_message").decode() + "?=")
+    r = rpc(client, modern("tools/call",
+                           {"name": "send_message",
+                            "arguments": {"identity": "pm-familyworkspace",
+                                          "text": "sentinel"}}),
+            headers=modern_headers("tools/call", encoded))
+    assert r.status_code == 200
+    assert r.json()["result"]["isError"] is False
+
+
+def test_decode_header_value_passes_a_plain_value_through(env):
+    assert decode_header_value("send_message") == "send_message"
+
+
+def test_an_unsupported_protocol_version_is_400_with_the_supported_list(env):
+    client, _ = env
+    r = rpc(client, modern("tools/list", version="1900-01-01"),
+            headers=modern_headers("tools/list", version="1900-01-01"))
+    assert r.status_code == 400
+    body = r.json()["error"]
+    assert body["code"] == -32022
+    assert MODERN_PROTOCOL_VERSION in body["data"]["supported"]
+    assert body["data"]["requested"] == "1900-01-01"
