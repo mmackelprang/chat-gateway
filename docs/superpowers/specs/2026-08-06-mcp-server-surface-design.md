@@ -20,9 +20,14 @@ shipped false claims here before.
 ⚠ **This spec was written by a Planner that could not ask questions.** Every
 place a Planner would normally have stopped and asked is a numbered entry in
 **§14, Decisions for the user**, with a recommendation and the reasoning behind
-it. Nothing in §14 is settled. Three things *were* settled before this document
-was written — by the user, in the brief — and they are marked as such in §14's
-preamble so they are not re-litigated.
+it. ~~Nothing in §14 is settled.~~ ✅ **EVERYTHING in §14 is now settled — all
+eight signed off 2026-08-10 at the recommendation, D4a included.** The struck
+sentence was true on 2026-08-06 and false four days later; it is corrected *here*,
+at the top, because a reader meets it long before reaching §14 and this spec's own
+§14 heading was already correct while this line was still lying. Three further
+things were settled *before* this document was written — by the user, in the
+brief — and they are marked as such in §14's preamble so they are not
+re-litigated.
 
 ---
 
@@ -236,6 +241,18 @@ constraint has a **documented expiry**: the soak stops on its own 72 h after
 specced, planned, built, reviewed and merged. So it is a **sequencing note in the
 queue row, not a blocker** — and the row must say so explicitly rather than
 leaving a Builder to discover it.
+
+⚠ **CORRECTED 2026-08-10 — the paragraph above reasoned correctly to an answer
+that was right for the wrong reason, and the difference is load-bearing.** It
+predicted the constraint would expire *on schedule*. It did not expire; **it
+broke** — the `/healthz` sampling stopped on `2026-08-06T21:02:42Z`, a day into a
+three-day run (CG-82). The conclusion (*"sequencing note, not a blocker"*) survives
+untouched. ⚠ **What does NOT survive is the implied safety of rebuilding freely:**
+the container's `RestartCount: 0` since `2026-08-05T16:34:10Z` is now the **only**
+long-run evidence that exists, it is ~5 days — longer than the soak ever asked for
+— and this row's rebuild ends it. **Capture it first: CG-82 task 1, one `docker
+inspect`.** The distinction that matters: what died was the *sampling*, not the
+*uptime*, and a reader who collapses those two will throw the survivor away.
 
 **Two things that fall out of that redeploy, and both are bonuses the row should
 claim:**

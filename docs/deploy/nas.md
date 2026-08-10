@@ -699,11 +699,18 @@ repointing anything:
    same silent-green shape, now wearing a URL that reads as remediated. **Order:
    rebuild + redeploy (§4, §7), verify `?strict=1` returns 503 on a degraded
    boot, and only then repoint the tile.**
-2. ⚠ **The redeploy is NOT scheduled by this row, deliberately.** A rebuild
-   restarts the container, and the container's uninterrupted uptime **is** the
-   evidence CG-59's soak is accruing (§11). Restarting the gateway to install a
-   dashboard fix would spend the thing the same row is measuring. The endpoint
-   waits for the next redeploy that happens for its own reasons.
+2. ⚠ **The redeploy is NOT scheduled by this row, deliberately** — ⚠ **and the
+   reason CHANGED on 2026-08-10 without the conclusion changing.** A rebuild
+   restarts the container. This hazard read *"the container's uninterrupted uptime
+   **is** the evidence CG-59's soak is accruing (§11). Restarting the gateway to
+   install a dashboard fix would spend the thing the same row is measuring."*
+   **The soak's sampling stopped on 2026-08-06 (§11, CG-82), so that sentence no
+   longer describes anything** — but the *uptime itself* is still accruing and is
+   still spent by a restart, and it is now the **only** surviving evidence of the
+   kind CG-59 wanted. ⚠ **So the hazard stands, harder rather than softer:**
+   before any rebuild, capture `docker inspect`'s `StartedAt` and `RestartCount`
+   (**CG-82 task 1**). The endpoint still waits for the next redeploy that happens
+   for its own reasons — CG-80's, as it turns out.
 3. **The URL is `?strict=1` exactly.** `strict` is a boolean query parameter: a
    bare `?strict` or an empty `?strict=` is a **422** once the new image is
    running — non-200, so the tile would read DOWN on a healthy gateway. That is
@@ -976,16 +983,25 @@ tailnet subnet route re-opens the question (CG-55's row, decision 1's contingenc
 ## §11 · Observation — the CG-59 soak
 
 ⚠ **STOPPED — this section said `RUNNING` for four days after it was not.**
-Started 2026-08-05 by Builder over SSH (CG-59); the dev-box `/healthz` stream's
-last sample is **`2026-08-06T21:02:42Z`** — **24 h 12 m, 2886 samples, ~34 % of the
-72 h target** — with no sampler process alive since. Measured 2026-08-10 by reading
-the file rather than this paragraph. The cause is the limitation already stated
-below: a bare background process, **no systemd unit and no cron** (both on the
-standing rules' 🛑 list), does not survive the dev box going down. ⚠ **≥24 h was
+Started 2026-08-05 by Builder over SSH (CG-59); the dev-box `/healthz` stream ran
+**24 h 12 m of its 72 h target** and no sampler process has been alive since.
+Measured 2026-08-10 by reading the file rather than this paragraph. ⚠ **≥24 h was
 the design floor (plan Part G §G2), so the run is not void — it is *at* the floor
 with no margin**, and the 72 h every downstream plan assumes is not what exists.
-**Findings live in CG-82, not here**, including a `degraded` window nobody read;
-this section keeps the design and the artifact locations only.
+**Exact sample count, the stop timestamp, and every finding — including a
+`degraded` window nobody read — live in CG-82, which is their one home.** Numbers
+are deliberately not repeated here; this section keeps the design and the artifact
+locations, which are unaffected.
+
+⚠ **Why it stopped is an INFERENCE, and this paragraph will not upgrade it.** The
+*likely* cause is the limitation documented below — a bare background process with
+**no systemd unit and no cron** (both on the standing rules' 🛑 list) does not
+survive its host going down. ⚠ **But that limitation is written about the NAS-side
+`soak/mem_sampler.py`, a different process on a different host.** The dev-box
+sampler's own launch mechanism is documented nowhere in this repo, so applying it
+here is **an analogy, not a measurement** — what was actually observed is only *no
+live process, and a file four days cold*. No dev-box outage was independently
+confirmed.
 
 **Results are NOT in this section yet, and this section says so rather than being
 written ahead of them.** The design — why ≥24 h is the floor, what a pass is, and how a quiet

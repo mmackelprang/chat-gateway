@@ -2174,9 +2174,20 @@ Neither is work this PR can do. Both belong in the queue row's exit notes.
    degraded boot → **only then** repoint the Homepage tile (a homelab change).
    Two things to note in the row while doing it: this is the **first real
    exercise of `app.redeploy`**, which nas.md §10 deviation 6 records as
-   documented-but-untested; and the rebuild must not happen until **CG-59's soak
-   has finished**, because the container's uninterrupted uptime *is* the evidence
-   that soak is accruing.
+   documented-but-untested; and ⚠ **CAPTURE `docker inspect`'s `StartedAt` and
+   `RestartCount` BEFORE the rebuild** — CG-82 task 1.
+
+   ⚠ **CORRECTED 2026-08-10, and this clause is why the correction matters.** It
+   read: *"the rebuild must not happen until **CG-59's soak has finished**, because
+   the container's uninterrupted uptime is the evidence that soak is accruing."*
+   **That is an instruction which can never be satisfied** — the soak stopped on
+   `2026-08-06T21:02:42Z` and will not finish (CG-82). A Builder following this
+   plan literally, as a Builder should, would have waited forever or quietly
+   decided the instruction was stale — and this repo has a commit named for exactly
+   that failure (`613e372`, *"a plan telling its executor to claim what the deploy
+   disproved"*). ⚠ **Do not read the correction as "the constraint is gone":** the
+   *uptime* is real, is ~5 days, is longer than the soak ever asked for, and the
+   rebuild spends it. What died was the **sampling**. Capture first, then rebuild.
 
 ---
 
