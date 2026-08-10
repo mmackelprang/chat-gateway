@@ -724,6 +724,17 @@ repointing anything:
    before any rebuild, capture `docker inspect`'s `StartedAt` and `RestartCount`
    (**CG-82 task 1**). The endpoint still waits for the next redeploy that happens
    for its own reasons — CG-80's, as it turns out.
+   ⚠ **AMENDED 2026-08-10, the day CG-80 merged: that redeploy did NOT happen, and
+   the sentence above would otherwise read as though it had.** CG-80 shipped its
+   code and **deliberately stopped short of the box** — the rebuild was excluded
+   from its scope precisely because this hazard's own ordering constraint
+   (capture `RestartCount` first, CG-82 task 1) had not been discharged and
+   reaching the box was not authorized. So the endpoint waits still, and the
+   queue now has **two** rows whose merge does not put them in production:
+   CG-59's `?strict=1` and CG-80's `/mcp`, both riding the same next redeploy.
+   That is a heavier handoff than either row planned for on its own, and it is
+   recorded here rather than in either row because **this** is the document the
+   person doing the redeploy reads.
 3. **The URL is `?strict=1` exactly.** `strict` is a boolean query parameter: a
    bare `?strict` or an empty `?strict=` is a **422** once the new image is
    running — non-200, so the tile would read DOWN on a healthy gateway. That is

@@ -103,7 +103,7 @@ Every task's requirements implicitly include all of these.
   helpers `jsonrpc_error(rid, code, message, data=None) -> dict`,
   `jsonrpc_result(rid, result) -> dict`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_mcp.py`:
 
@@ -285,12 +285,12 @@ def test_an_unparseable_body_is_a_parse_error(env):
     assert r.json()["error"]["code"] == -32700
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: FAIL — `create_app() got an unexpected keyword argument 'mcp_enabled'`.
 
-- [ ] **Step 3: Create `src/chat_gateway/mcp.py`**
+- [x] **Step 3: Create `src/chat_gateway/mcp.py`**
 
 ```python
 """The MCP (Model Context Protocol) server surface — another ingress to the
@@ -525,7 +525,7 @@ async def _handle(registry: Registry, adapters: dict[str, Any], app_id: str,
         status_code=404)
 ```
 
-- [ ] **Step 4: Mount it behind the flag in `service.py`**
+- [x] **Step 4: Mount it behind the flag in `service.py`**
 
 In `src/chat_gateway/service.py`, add `mcp_enabled` to `create_app`'s signature.
 Modify the signature block (currently ending `monitor_interval: float = 60.0`):
@@ -556,19 +556,19 @@ Then, immediately after the `app.state.sweeper = sweeper` line, add:
         app.include_router(build_router(registry, adapters))
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: PASS (9 tests). The `ping` calls land on the placeholder `_handle` and
 return 404, which none of Task 1's assertions contradict — they assert on 401,
 403, 405, and 400 only.
 
-- [ ] **Step 6: Run the whole suite**
+- [x] **Step 6: Run the whole suite**
 
 Run: `python3 -m pytest -q`
 Expected: **399 passed** (390 baseline + 9). Record the real number.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/chat_gateway/mcp.py src/chat_gateway/service.py tests/test_mcp.py
@@ -603,7 +603,7 @@ discovery path that dead-ends."
 - Produces: `send_message_schema(registry, app_id) -> dict`;
   `tools_for(registry, app_id) -> list[dict]`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_mcp.py`:
 
@@ -724,12 +724,12 @@ def _registry_of(env):
 And expose it: in `create_app`, beside the other `app.state` assignments, add
 `app.state.registry = registry`.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: FAIL — `cannot import name 'send_message_schema'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `src/chat_gateway/mcp.py`, after `_check_origin`:
 
@@ -811,12 +811,12 @@ def tools_for(registry: Registry, app_id: str) -> list[dict]:
     }]
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: PASS (16 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/chat_gateway/mcp.py src/chat_gateway/service.py tests/test_mcp.py
@@ -858,7 +858,7 @@ saying no."
   returning `(call_tool_result, protocol_error_fields)` — exactly one is non-`None`.
   `protocol_error_fields` is `{"code": int, "message": str}`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_mcp.py`:
 
@@ -959,12 +959,12 @@ def test_a_mode_with_no_adapter_is_a_tool_error(env):
     assert "no adapter" in result["content"][0]["text"]
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: FAIL — `cannot import name 'call_tool'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `src/chat_gateway/mcp.py`, after `tools_for`:
 
@@ -1032,12 +1032,12 @@ def call_tool(registry: Registry, adapters: dict[str, Any], app_id: str,
     return _text_result(json.dumps(result.model_dump(mode="json")), False), None
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: PASS (23 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/chat_gateway/mcp.py tests/test_mcp.py
@@ -1078,7 +1078,7 @@ not enforcing, because a client may call a tool it never listed."
 - Produces: `_era_of(payload) -> str` returning `"modern"` or `"legacy"`;
   `_handle_legacy(registry, adapters, app_id, payload) -> JSONResponse`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_mcp.py`:
 
@@ -1166,12 +1166,12 @@ def test_an_unimplemented_method_is_404_with_minus_32601(env):
     assert r.json()["error"]["code"] == -32601
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: FAIL — `initialize` currently returns 404 from the placeholder.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Replace the placeholder `_handle` in `src/chat_gateway/mcp.py` with:
 
@@ -1274,12 +1274,12 @@ _INSTRUCTIONS = (
 )
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: PASS (31 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/chat_gateway/mcp.py tests/test_mcp.py
@@ -1317,7 +1317,7 @@ server from a legacy HTTP+SSE one. An unknown TOOL is different: 200 with
 - Produces: `decode_header_value(raw) -> str`;
   `_handle_modern(registry, adapters, app_id, payload, request) -> JSONResponse`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_mcp.py`:
 
@@ -1477,12 +1477,12 @@ def test_an_unsupported_protocol_version_is_400_with_the_supported_list(env):
     assert body["data"]["requested"] == "1900-01-01"
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: FAIL — `cannot import name 'decode_header_value'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add to `src/chat_gateway/mcp.py`, after `_handle_legacy`:
 
@@ -1590,17 +1590,17 @@ def _handle_modern(registry: Registry, adapters: dict[str, Any], app_id: str,
 caught by the `except` block in `mcp_post` from Task 1 — verify that block still
 wraps the `await _handle(...)` call. It does, as written.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: PASS (44 tests).
 
-- [ ] **Step 5: Run the whole suite**
+- [x] **Step 5: Run the whole suite**
 
 Run: `python3 -m pytest -q`
 Expected: **434 passed**. Record the real number.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/chat_gateway/mcp.py tests/test_mcp.py
@@ -1646,7 +1646,7 @@ header rules."
 - Produces: `/healthz` field `mcp: {"enabled": bool, "tools": list[str]}`;
   env var `GATEWAY_ENABLE_MCP`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_mcp.py`:
 
@@ -1716,12 +1716,12 @@ def test_mounting_the_router_does_not_disturb_the_existing_surface(env):
     assert client.get("/healthz").status_code == 200
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: FAIL — `KeyError: 'mcp'`.
 
-- [ ] **Step 3: Add the `/healthz` field**
+- [x] **Step 3: Add the `/healthz` field**
 
 In `src/chat_gateway/service.py`, inside `healthz`, the `body` dict currently
 begins:
@@ -1784,7 +1784,7 @@ from .mcp import TOOL_NAMES as MCP_TOOL_NAMES
 module scope is therefore fine, and importing only the name constant keeps
 `/healthz` honest on a build where the router was never mounted.
 
-- [ ] **Step 4: Wire the env flag in `__main__.py`**
+- [x] **Step 4: Wire the env flag in `__main__.py`**
 
 In `src/chat_gateway/__main__.py`, in the `serve` branch, change the
 `create_app(...)` call to pass the flag:
@@ -1812,12 +1812,12 @@ CHAT_GATEWAY_STATE_DIR, GATEWAY_ENABLE_PUBSUB, GATEWAY_ENABLE_MCP,
 CHAT_GATEWAY_MCP_ALLOWED_ORIGINS,
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `python3 -m pytest tests/test_mcp.py -q`
 Expected: PASS (48 tests).
 
-- [ ] **Step 6: Run the whole suite**
+- [x] **Step 6: Run the whole suite**
 
 Run: `python3 -m pytest -q`
 Expected: **438 passed**. Record the real number.
@@ -1827,7 +1827,7 @@ fail here. Fix the test by adding `mcp`, not by removing the field — and note
 which test it was in the PR body, because a body-shape assertion catching this
 is that test working.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/chat_gateway/service.py src/chat_gateway/__main__.py tests/test_mcp.py
@@ -1871,7 +1871,7 @@ registry.health() two lines below it already does."
 - Modify: `docs/deploy/nas.md` (§5 compose only)
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: `.env.example`**
+- [x] **Step 1: `.env.example`**
 
 Add a new block after the tier-2 block, before `GATEWAY_GCP_BILLING`:
 
@@ -1890,7 +1890,7 @@ GATEWAY_ENABLE_MCP=0                         # 1 to mount POST /mcp
 CHAT_GATEWAY_MCP_ALLOWED_ORIGINS=
 ```
 
-- [ ] **Step 2: `config/registry.example.yaml` — the example agent tenant**
+- [x] **Step 2: `config/registry.example.yaml` — the example agent tenant**
 
 Add an app entry, using whatever identity the example file already defines for
 FamilyWorkspace. Copy the surrounding block's comment style:
@@ -1921,7 +1921,7 @@ Add the matching name-only line to `.env.example`'s per-app key block:
 CHAT_GATEWAY_API_KEY__AGENT_MCP=
 ```
 
-- [ ] **Step 3: `README.md` — one API-table row**
+- [x] **Step 3: `README.md` — one API-table row**
 
 After the `GET /v1/identities` row, add:
 
@@ -1929,7 +1929,7 @@ After the `GET /v1/identities` row, add:
 | `POST /mcp` | **MCP server surface** (opt-in, `GATEWAY_ENABLE_MCP=1`): a Model Context Protocol endpoint so agents send through the gateway with the same per-app key, identity allowlist and audit trail. Send-only — one `send_message` tool, whose schema is generated from the envelope and whose `identity` enum is exactly your key's allowlist. Dual-era (`2025-11-25` + `2026-07-28`) |
 ```
 
-- [ ] **Step 4: `docs/integration-guide.md` — a new section**
+- [x] **Step 4: `docs/integration-guide.md` — a new section**
 
 Insert after the `## Identities + health` section:
 
@@ -1996,7 +1996,7 @@ a static per-app bearer key, not OAuth; a `401` carries a bare
 no authorization server to discover.
 ````
 
-- [ ] **Step 5: `docs/deploy/nas.md` §5 — the compose `environment:` block**
+- [x] **Step 5: `docs/deploy/nas.md` §5 — the compose `environment:` block**
 
 Add one key to the compose document in §5, and one line of prose beneath it:
 
@@ -2014,7 +2014,7 @@ Prose to add under the existing `GATEWAY_ENABLE_PUBSUB` note:
 > stdin transport, and **no new `SECRETS.template.md` row** (§6's three-row set
 > is unchanged).
 
-- [ ] **Step 6: `CLAUDE.md` — one bullet, pointing rather than restating**
+- [x] **Step 6: `CLAUDE.md` — one bullet, pointing rather than restating**
 
 Add to the status section, after the `__cg_action__` bullet:
 
@@ -2048,7 +2048,7 @@ Add to the status section, after the `__cg_action__` bullet:
   bytes from a different caller and clears nothing.
 ```
 
-- [ ] **Step 7: Verify no secret value landed anywhere**
+- [x] **Step 7: Verify no secret value landed anywhere**
 
 Run:
 
@@ -2059,7 +2059,7 @@ git diff main -- .env.example config/registry.example.yaml docs/ README.md CLAUD
 
 Expected: **no output.** Every added line names an env var, never a value.
 
-- [ ] **Step 8: Run the whole suite and commit**
+- [x] **Step 8: Run the whole suite and commit**
 
 Run: `python3 -m pytest -q` — expected unchanged from Task 6.
 
