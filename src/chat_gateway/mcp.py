@@ -59,6 +59,7 @@ from fastapi.responses import JSONResponse
 
 from . import __version__
 from .auth import AuthError, authenticate
+from .delivery import DeliveryLog
 from .envelope import OutboundMessage
 from .errors import describe_exception
 from .registry import Registry, RegistryError
@@ -246,7 +247,100 @@ def tools_for(registry: Registry, app_id: str) -> list[dict]:
     }]
 
 
-def build_router(registry: Registry, adapters: dict[str, Any]) -> APIRouter:
+def _text_result(text: str, is_error: bool) -> dict:
+    return {"content": [{"type": "text", "text": text}], "isError": is_error}
+
+
+def call_tool(registry: Registry, adapters: dict[str, Any], app_id: str,
+              name: str, arguments: dict,
+              delivery_log: DeliveryLog | None = None,
+              ) -> tuple[dict | None, dict | None]:
+    """Execute one tool call. Returns `(result, protocol_error)`; exactly one
+    is non-None.
+
+    THE SPLIT IS THE POINT, and the spec is unusually direct about why: "Any
+    errors that originate from the tool SHOULD be reported inside the result
+    object, with isError set to true, not as an MCP protocol-level error
+    response. Otherwise, the LLM would not be able to see that an error
+    occurred and self-correct."
+
+    So an identity refusal is a TOOL error carrying the registry's own message —
+    the model asked a legitimate question, got a legitimate refusal naming what
+    it MAY use, and can correct itself. Only "which tool?" is a protocol error,
+    because no rewording of the arguments fixes it.
+
+    ⚠ Every exception message that reaches the returned text goes through
+    `describe_exception` (hard rule #2, CG-29's allowlist). This is a print site
+    and arguably the most dangerous one in this repo: its destination is a
+    model's context window and, from there, a transcript. Do not build a second
+    allowlist here, and do not interpolate `str(exc)` directly — that is exactly
+    the `resp.text[:200]` shape CG-23 removed from two adapters after a real 403
+    put a webhook's key and token into three artifacts.
+
+    `delivery_log` is a KEYWORD ARGUMENT WITH A DEFAULT, and the default is what
+    keeps every caller that does not have one — the unit tests that drive this
+    function directly — working unchanged. When a router passes one, this path
+    writes the same two rows `POST /v1/messages` writes; see the `record` call
+    sites below for why that is not optional.
+    """
+    if name not in TOOL_NAMES:
+        return None, {"code": INVALID_PARAMS, "message": f"unknown tool: {name}"}
+    try:
+        message = OutboundMessage(**(arguments or {}))
+    except Exception as exc:  # noqa: BLE001 — pydantic ValidationError and friends
+        # ValidationError embeds the offending INPUT, which is the caller's own
+        # bytes rather than a credential — but it is not a class this repo
+        # authored, so it goes through the same allowlist as everything else.
+        return _text_result(
+            f"invalid arguments for send_message: {describe_exception(exc)}",
+            True), None
+    try:
+        identity = registry.identity_for(app_id, message.identity)
+    except RegistryError as exc:
+        # Hard rule #4's refusal. RegistryError is not marked, so the message is
+        # rebuilt here from the registry's own allowlist rather than printed —
+        # the app's granted identities are what it is already being told in the
+        # tool schema, so this discloses nothing new.
+        allowed = ", ".join(registry.apps[app_id].identities) or "(none)"
+        return _text_result(
+            f"app {app_id!r} may not send as {message.identity!r} "
+            f"(allowed: {allowed})", True), None
+    adapter = adapters.get(identity.mode)
+    if adapter is None:
+        return _text_result(
+            f"no adapter for mode {identity.mode!r} — that tier is not enabled "
+            "on this deployment", True), None
+    try:
+        result = adapter.send(identity, message)
+    except Exception as exc:  # noqa: BLE001
+        # THIS PAIR OF `record` CALLS IS WHAT MAKES THE SPEC'S §2 TABLE TRUE.
+        # That table lists exactly two properties `send_message` inherits from
+        # `POST /v1/messages` — the rule #4 identity allowlist, and the audit /
+        # delivery log — and the second one is not inherited by being on the
+        # same code path, because `call_tool` is a second ingress rather than a
+        # call into the route. Without these two lines an MCP send is invisible
+        # in `GET /v1/deliveries` and in the on-disk audit trail: the row this
+        # gateway's own UAT asks for as proof a message arrived would not exist.
+        #
+        # ⚠ `describe_exception`, NOT the `str(exc)[:200]` its `/v1/messages`
+        # sibling uses. That sibling predates CG-29's allowlist and is
+        # deliberately left alone here (out of scope), but this is a NEW write
+        # site, and what it writes is persisted to disk AND served back over
+        # `GET /v1/deliveries` — so hard rule #2 applies to it exactly as it
+        # applies to the tool result three lines down. One allowlist, both
+        # destinations.
+        if delivery_log is not None:
+            delivery_log.record(app_id, "message", message.text[:80], "failed",
+                                describe_exception(exc))
+        return _text_result(f"delivery failed: {describe_exception(exc)}",
+                            True), None
+    if delivery_log is not None:
+        delivery_log.record(app_id, "message", message.text[:80], "delivered")
+    return _text_result(json.dumps(result.model_dump(mode="json")), False), None
+
+
+def build_router(registry: Registry, adapters: dict[str, Any],
+                 delivery_log: DeliveryLog | None = None) -> APIRouter:
     router = APIRouter()
 
     @router.post("/mcp")
@@ -276,7 +370,8 @@ def build_router(registry: Registry, adapters: dict[str, Any]) -> APIRouter:
                     400, INVALID_REQUEST,
                     "the POST body must be a single JSON-RPC request or "
                     "notification; batching was removed from the protocol")
-            return await _handle(registry, adapters, app_id, payload, request)
+            return await _handle(registry, adapters, app_id, payload, request,
+                                 delivery_log)
         except _McpRequestError as exc:
             return JSONResponse(
                 status_code=exc.http_status,
@@ -299,7 +394,8 @@ def build_router(registry: Registry, adapters: dict[str, Any]) -> APIRouter:
 
 
 async def _handle(registry: Registry, adapters: dict[str, Any], app_id: str,
-                  payload: dict, request: Request) -> JSONResponse:
+                  payload: dict, request: Request,
+                  delivery_log: DeliveryLog | None = None) -> JSONResponse:
     """Placeholder dispatch — Tasks 4 and 5 fill in the two eras."""
     return JSONResponse(
         content=jsonrpc_error(payload.get("id"), METHOD_NOT_FOUND,

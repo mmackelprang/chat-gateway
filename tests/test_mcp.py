@@ -269,3 +269,99 @@ def test_narrowing_the_schema_cannot_poison_the_envelope_for_everyone_else(env):
     assert "enum" not in fresh["properties"]["identity"]
     assert fresh["properties"]["identity"]["description"] == (
         "registered identity to send as (e.g. pm-familyworkspace)")
+
+
+# --------------------------------------------------------- groups 11, 12 ----
+from chat_gateway.errors import GatewayAuthoredError  # noqa: E402
+from chat_gateway.mcp import call_tool  # noqa: E402
+
+
+class _LeakyError(Exception):
+    """Unmarked, so describe_exception must print its TYPE only."""
+
+
+def test_a_successful_call_reaches_the_real_adapter(env):
+    client, adapter = env
+    result, err = call_tool(_registry_of(env), {"webhook": adapter},
+                            "aiteam-harness", "send_message",
+                            {"identity": "pm-familyworkspace", "text": "hi"})
+    assert err is None
+    assert result["isError"] is False
+    assert adapter.sent[0][0] == "pm-familyworkspace"
+    assert adapter.sent[0][1].text == "hi"
+
+
+def test_an_ungranted_identity_is_a_TOOL_error_not_a_protocol_error(env):
+    """The model asked a legitimate question and got a legitimate refusal
+    naming what it MAY use, so it can self-correct. A protocol error would be
+    invisible to it. Note this fires even though the enum would have hidden the
+    name: hiding is not enforcing."""
+    client, adapter = env
+    result, err = call_tool(_registry_of(env), {"webhook": adapter},
+                            "aiteam-harness", "send_message",
+                            {"identity": "other-only", "text": "hi"})
+    assert err is None
+    assert result["isError"] is True
+    assert "may not send as" in result["content"][0]["text"]
+    assert adapter.sent == []
+
+
+def test_invalid_arguments_are_a_tool_error(env):
+    client, adapter = env
+    result, err = call_tool(_registry_of(env), {"webhook": adapter},
+                            "aiteam-harness", "send_message",
+                            {"identity": "pm-familyworkspace", "text": ""})
+    assert err is None
+    assert result["isError"] is True
+
+
+def test_an_unknown_tool_is_a_PROTOCOL_error(env):
+    """-32602 (invalid params), NOT -32601. That code is reserved for an
+    unimplemented RPC method and now carries an HTTP 404."""
+    client, adapter = env
+    result, err = call_tool(_registry_of(env), {"webhook": adapter},
+                            "aiteam-harness", "no_such_tool", {})
+    assert result is None
+    assert err["code"] == -32602
+
+
+def test_an_unmarked_adapter_exception_never_leaks_its_message(env):
+    """Hard rule #2 at a NEW print site, and the most dangerous one this repo
+    has: an MCP tool result lands in a model's context window and, from there,
+    in a transcript that leaves the building. describe_exception prints an
+    unmarked exception by TYPE alone."""
+    client, adapter = env
+    adapter.raises = _LeakyError("https://chat.googleapis.com/v1/spaces/X?key=SEKRIT&token=NOPE")
+    result, err = call_tool(_registry_of(env), {"webhook": adapter},
+                            "aiteam-harness", "send_message",
+                            {"identity": "pm-familyworkspace", "text": "hi"})
+    assert err is None
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "SEKRIT" not in text and "token=" not in text and "chat.googleapis" not in text
+    assert "_LeakyError" in text
+
+
+def test_a_marked_adapter_exception_keeps_its_message(env):
+    """The other half of the allowlist: a class this repo authored every byte
+    of prints in full, which is what makes the refusal legible."""
+    class _Authored(GatewayAuthoredError, RuntimeError):
+        pass
+
+    client, adapter = env
+    adapter.raises = _Authored("webhook returned HTTP 403 Forbidden")
+    result, err = call_tool(_registry_of(env), {"webhook": adapter},
+                            "aiteam-harness", "send_message",
+                            {"identity": "pm-familyworkspace", "text": "hi"})
+    assert result["isError"] is True
+    assert "403 Forbidden" in result["content"][0]["text"]
+
+
+def test_a_mode_with_no_adapter_is_a_tool_error(env):
+    client, adapter = env
+    result, err = call_tool(_registry_of(env), {}, "aiteam-harness",
+                            "send_message",
+                            {"identity": "pm-familyworkspace", "text": "hi"})
+    assert err is None
+    assert result["isError"] is True
+    assert "no adapter" in result["content"][0]["text"]

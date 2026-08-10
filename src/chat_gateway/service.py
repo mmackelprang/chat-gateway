@@ -380,7 +380,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     if mcp_enabled:
         from .mcp import build_router
 
-        app.include_router(build_router(registry, adapters))
+        # `log`, not a second DeliveryLog: spec §2's table lists the audit /
+        # delivery log as one of exactly two properties an MCP `send_message`
+        # inherits from `POST /v1/messages`, and a second ingress inherits it
+        # only by being handed the same log this app already writes and serves
+        # at `GET /v1/deliveries`.
+        app.include_router(build_router(registry, adapters, delivery_log=log))
 
     # -- raw envelope send (synchronous; aiteam notify.py path) ---------------
     @app.post("/v1/messages", response_model=DeliveryResult)
