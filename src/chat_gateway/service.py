@@ -32,7 +32,7 @@ from .heartbeat import (
     DEFAULT_TZ, HeartbeatError, HeartbeatMonitor, HeartbeatStore,
 )
 from .inbox import Inbox
-from .mcp import TOOL_NAMES as MCP_TOOL_NAMES
+from .mcp import TOOL_NAMES as MCP_TOOL_NAMES, build_router as build_mcp_router
 from .notifications import Deduper, Notification, render
 from .registry import Registry, RegistryError
 from .retention import SWEEP_STALE_INTERVAL_MULTIPLE, window_for
@@ -377,16 +377,21 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     # this repo's posture on those is conservative. The router depends on the
     # SAME authenticate() every /v1/ route depends on — hard rule #4 satisfied
     # by reuse rather than by a second implementation that could drift.
+    # ⚠ `build_mcp_router` is imported at MODULE SCOPE, beside `TOOL_NAMES`.
+    # This used to be a lazy `from .mcp import build_router` right here, which
+    # implied a laziness that was not real: `TOOL_NAMES` already comes from the
+    # same module at module scope, so `mcp` is imported before `create_app` is
+    # ever called and the cost is paid whatever this line does. There is no
+    # import cycle to break either. A deferral that defers nothing tells the
+    # next reader a cycle exists (CG-80 pre-merge review, L4).
     app.state.mcp_enabled = mcp_enabled
     if mcp_enabled:
-        from .mcp import build_router
-
         # `log`, not a second DeliveryLog: spec §2's table lists the audit /
         # delivery log as one of exactly two properties an MCP `send_message`
         # inherits from `POST /v1/messages`, and a second ingress inherits it
         # only by being handed the same log this app already writes and serves
         # at `GET /v1/deliveries`.
-        app.include_router(build_router(registry, adapters, delivery_log=log))
+        app.include_router(build_mcp_router(registry, adapters, delivery_log=log))
 
     # -- raw envelope send (synchronous; aiteam notify.py path) ---------------
     @app.post("/v1/messages", response_model=DeliveryResult)
@@ -636,9 +641,16 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             # Disclosure: strictly LESS than this endpoint already publishes —
             # `registry.health()` two lines down carries every app id and every
             # identity name on the same unauthenticated response.
-            "mcp": {"enabled": bool(getattr(app.state, "mcp_enabled", False)),
-                    "tools": list(MCP_TOOL_NAMES)
-                             if getattr(app.state, "mcp_enabled", False) else []},
+            # Read straight off `app.state`, with NO `getattr` default: the
+            # attribute is set unconditionally a hundred lines above, so a
+            # default here could never be reached and a defaulted read claims a
+            # robustness it does not have (CG-80 pre-merge review, L6). This is
+            # NOT the `getattr` idiom its neighbours use — those guard INJECTED
+            # objects that a test may duck-type without the attribute (CG-68
+            # audit F0), and this one is a local flag set by this function.
+            "mcp": {"enabled": bool(app.state.mcp_enabled),
+                    "tools": list(MCP_TOOL_NAMES) if app.state.mcp_enabled
+                             else []},
             "registry": registry.health(),
             "inbox": {"pending": inbox.pending_counts(), "dropped": inbox.dropped,
                       "replayed_at_boot": getattr(inbox, "replayed", 0),
