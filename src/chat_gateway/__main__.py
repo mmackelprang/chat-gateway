@@ -6,7 +6,8 @@
 
 Env (see .env.example): CHAT_GATEWAY_ENV_FILE, CHAT_GATEWAY_REGISTRY,
 CHAT_GATEWAY_PORT, CHAT_GATEWAY_INBOX_DIR, CHAT_GATEWAY_INBOX_RETENTION_DAYS,
-CHAT_GATEWAY_STATE_DIR, GATEWAY_ENABLE_PUBSUB,
+CHAT_GATEWAY_STATE_DIR, GATEWAY_ENABLE_PUBSUB, GATEWAY_ENABLE_MCP,
+CHAT_GATEWAY_MCP_ALLOWED_ORIGINS,
 CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, GOOGLE_APPLICATION_CREDENTIALS.
 """
 
@@ -196,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
             dispatcher=dispatcher,
             heartbeats=HeartbeatStore(Path(state_dir) / "heartbeats.json"),
             sweeper=sweeper,
+            # CG-80. Default OFF, the posture GATEWAY_ENABLE_PUBSUB set for a
+            # new surface. Unlike that flag this one has NO companion
+            # requirement — it needs no credential, so there is nothing to fail
+            # closed on and no startup check to add.
+            mcp_enabled=os.environ.get("GATEWAY_ENABLE_MCP", "0") == "1",
         )
         app.state.dispatcher.start()
         app.state.monitor.start()

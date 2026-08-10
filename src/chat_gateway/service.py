@@ -32,6 +32,7 @@ from .heartbeat import (
     DEFAULT_TZ, HeartbeatError, HeartbeatMonitor, HeartbeatStore,
 )
 from .inbox import Inbox
+from .mcp import TOOL_NAMES as MCP_TOOL_NAMES
 from .notifications import Deduper, Notification, render
 from .registry import Registry, RegistryError
 from .retention import SWEEP_STALE_INTERVAL_MULTIPLE, window_for
@@ -606,6 +607,38 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         hb_all = [c for s in registry.apps for c in checks.list_for(s)]
         body = {
             "version": __version__,
+            # CG-80. A CONFIG ECHO, not a counter — and the distinction is
+            # decided rather than assumed, per this repo's standing requirement
+            # that every /healthz field's degrade-or-not verdict is reasoned one
+            # at a time.
+            #
+            # NOT an input to `status` and never a `reasons` entry, at any
+            # value: a surface being switched off is a configuration, not a
+            # fault. That is the verdict `suppressed_opt_out` got, for the same
+            # reason — degrading on a system working as designed teaches an
+            # operator that "degraded" is the normal reading, and an ignored
+            # warning is the failure this endpoint exists because of.
+            #
+            # And NO counters at all. Every counter here guards a loop, a
+            # thread, a queue or a disk write — something that can fail while
+            # nobody is looking. `/mcp` is synchronous request/response: if it
+            # breaks, the caller learns in the same round trip. There is no
+            # state in which it is quietly not working while this endpoint says
+            # otherwise, so a counter would publish traffic volume on an
+            # UNAUTHENTICATED endpoint for no diagnostic gain — the trade CG-12
+            # already rejected.
+            #
+            # What it IS for: CG-59 shipped `?strict=1` and the deployed
+            # container went on answering 200 to it, because FastAPI ignores an
+            # undeclared query parameter. An operator could not tell a rebuilt
+            # image from a stale one by probing. This field says so in words.
+            #
+            # Disclosure: strictly LESS than this endpoint already publishes —
+            # `registry.health()` two lines down carries every app id and every
+            # identity name on the same unauthenticated response.
+            "mcp": {"enabled": bool(getattr(app.state, "mcp_enabled", False)),
+                    "tools": list(MCP_TOOL_NAMES)
+                             if getattr(app.state, "mcp_enabled", False) else []},
             "registry": registry.health(),
             "inbox": {"pending": inbox.pending_counts(), "dropped": inbox.dropped,
                       "replayed_at_boot": getattr(inbox, "replayed", 0),

@@ -630,3 +630,68 @@ def test_an_unsupported_protocol_version_is_400_with_the_supported_list(env):
     assert body["code"] == -32022
     assert MODERN_PROTOCOL_VERSION in body["data"]["supported"]
     assert body["data"]["requested"] == "1900-01-01"
+
+
+# ------------------------------------------------------- groups 13, 14, 15 --
+def test_healthz_publishes_the_mcp_surface_when_it_is_on(env):
+    """CG-59's lesson, one turn later: the deployed container is not
+    necessarily running the code you think. A container answered 200 to
+    `?strict=1` because FastAPI ignores an undeclared query parameter, so
+    'repointing the tile before the image is rebuilt changes nothing while
+    looking exactly like the fix.' This field lets an operator confirm a
+    rebuild landed by READING rather than by inferring from behaviour that
+    fails identically either way."""
+    client, _ = env
+    body = client.get("/healthz").json()
+    assert body["mcp"] == {"enabled": True, "tools": ["send_message"]}
+
+
+def test_the_mcp_field_is_NOT_an_input_to_status(env, monkeypatch, tmp_path):
+    """Rule #5, decided explicitly per this repo's standing requirement. A
+    surface being on or off is a CONFIGURATION, not a fault — the verdict
+    suppressed_opt_out got, for the same stated reason: degrading on a system
+    working as designed teaches an operator that 'degraded' is the normal
+    reading, and an ignored warning is the failure rule #5 was written after."""
+    client, _ = env
+    on = client.get("/healthz").json()
+
+    monkeypatch.setenv("SVC_KEY_AITEAM", "cgk_test_key")
+    monkeypatch.setenv("SVC_KEY_JOBHUNT", "cgk_other_key")
+    monkeypatch.setenv("SVC_HOOK_FW", "https://x.example/hook")
+    monkeypatch.setenv("SVC_HOOK_OTHER", "https://y.example/hook")
+    monkeypatch.delenv("SVC_HOOK_AGENT", raising=False)
+    p = tmp_path / "r2.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+    off_app = create_app(load_registry(p), Inbox(), {"webhook": FakeAdapter()})
+    off = TestClient(off_app).get("/healthz").json()
+
+    assert off["mcp"] == {"enabled": False, "tools": []}
+    # Turning the surface on or off moves NOTHING else about health.
+    assert on["reasons"] == off["reasons"]
+    assert on["status"] == off["status"]
+
+
+def test_the_endpoint_is_absent_when_the_surface_is_off(env, tmp_path,
+                                                        monkeypatch):
+    monkeypatch.setenv("SVC_KEY_AITEAM", "cgk_test_key")
+    monkeypatch.setenv("SVC_KEY_JOBHUNT", "cgk_other_key")
+    monkeypatch.setenv("SVC_HOOK_FW", "https://x.example/hook")
+    monkeypatch.setenv("SVC_HOOK_OTHER", "https://y.example/hook")
+    p = tmp_path / "r3.yaml"
+    p.write_text(REGISTRY_YAML, encoding="utf-8")
+    app = create_app(load_registry(p), Inbox(), {"webhook": FakeAdapter()})
+    c = TestClient(app)
+    assert c.post("/mcp", headers=AUTH,
+                  json={"jsonrpc": "2.0", "id": 1, "method": "ping"}).status_code == 404
+
+
+def test_mounting_the_router_does_not_disturb_the_existing_surface(env):
+    """Non-regression. The MCP surface is another ingress to the send path,
+    not a change to it."""
+    client, adapter = env
+    r = client.post("/v1/messages", headers=AUTH,
+                    json={"identity": "pm-familyworkspace", "text": "still works"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "delivered"
+    assert client.get("/v1/identities", headers=AUTH).status_code == 200
+    assert client.get("/healthz").status_code == 200
