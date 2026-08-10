@@ -169,6 +169,83 @@ def _check_origin(origin: str | None) -> None:
                                "origin not allowed")
 
 
+def send_message_schema(registry: Registry, app_id: str) -> dict:
+    """The tool's `inputSchema` — GENERATED, never hand-written (hard rule #1).
+
+    Two mutations are applied to the generated schema and only two, both
+    narrowing `identity` against data this gateway definitively owns:
+
+    * `enum` — exactly the identities the registry grants this app. Defence in
+      depth, not enforcement: `registry.identity_for` still runs at call time
+      and still refuses, because a client may call a tool it never listed.
+      Hiding is not enforcing.
+    * `description` — each identity's display name, mode and live readiness,
+      rendered from `Identity.env_resolved()`. That is the SAME function
+      `/healthz` reads, which is why the tool schema and the health endpoint
+      cannot disagree about whether an identity works.
+
+    `title` and the model's docstring are dropped because the tool carries its
+    own `title` and `description`; keeping both would show a model two
+    competing descriptions of the same thing.
+
+    ⚠ Do not add, remove or rewrite any other property. The generated schema is
+    measurably FLAT — no `$defs`, no `$ref` — so no flattening pass is needed,
+    and a flattening pass is precisely where hand-editing would start.
+    """
+    schema = send_message_schema_base()
+    app = registry.apps[app_id]
+    granted = [n for n in app.identities if n in registry.identities]
+    rows = []
+    for name in granted:
+        ident = registry.identities[name]
+        rows.append(f"{name} ({ident.display}; {ident.mode}; "
+                    f"{'ready' if ident.env_resolved() else 'NOT CONFIGURED'})")
+    schema["properties"]["identity"]["enum"] = granted
+    schema["properties"]["identity"]["description"] = (
+        "which registered identity to send as. Your API key grants exactly "
+        "these: " + "; ".join(rows))
+    return schema
+
+
+def send_message_schema_base() -> dict:
+    """The generated schema, with the envelope's own titles stripped."""
+    schema = OutboundMessage.model_json_schema()
+    schema.pop("title", None)
+    schema.pop("description", None)
+    return schema
+
+
+def tools_for(registry: Registry, app_id: str) -> list[dict]:
+    """The tool list for one authenticated app.
+
+    Varies by caller — which is exactly why `CACHE_SCOPE` is "private"; read
+    that constant's comment before changing anything here.
+
+    The `description` describes TRANSPORT, not occasions. "Deliver a message to
+    Google Chat as one of the identities your API key allows" is transport;
+    "use this to notify the team when a build fails" would be an occasion, and
+    an occasion is app domain (hard rule #1).
+    """
+    return [{
+        "name": "send_message",
+        "title": "Send a Google Chat message",
+        "description": (
+            "Deliver a message to Google Chat as one of the identities your "
+            "API key is allowed to send as. You supply the rendered content; "
+            "this gateway owns identity, delivery and threading."
+        ),
+        "inputSchema": send_message_schema(registry, app_id),
+        # The spec's defaults would give these same four values —
+        # `destructiveHint` and `openWorldHint` both default to true. Declared
+        # anyway: a tool that posts irreversibly into a human's chat space, and
+        # posts twice if called twice, should say so rather than have a reader
+        # derive it from a default table. Same reasoning as `thread_started`
+        # sitting beside `thread_alive` at /healthz.
+        "annotations": {"readOnlyHint": False, "destructiveHint": True,
+                        "idempotentHint": False, "openWorldHint": True},
+    }]
+
+
 def build_router(registry: Registry, adapters: dict[str, Any]) -> APIRouter:
     router = APIRouter()
 

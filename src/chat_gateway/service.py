@@ -365,6 +365,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     monitor = HeartbeatMonitor(checks, _monitor_notify, interval_seconds=monitor_interval)
 
     # expose the moving parts for __main__ and tests
+    app.state.registry = registry
     app.state.dispatcher = dispatch
     app.state.monitor = monitor
     app.state.delivery_log = log

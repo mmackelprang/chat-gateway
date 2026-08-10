@@ -165,3 +165,107 @@ def test_an_allowlisted_origin_is_accepted(env, monkeypatch):
     r = rpc(client, {"jsonrpc": "2.0", "id": 1, "method": "ping"},
             headers={"Origin": "https://also-ok.example"})
     assert r.status_code != 403
+
+
+# ---------------------------------------------------------- groups 9, 10 ----
+from chat_gateway.envelope import OutboundMessage  # noqa: E402
+from chat_gateway.mcp import send_message_schema, tools_for  # noqa: E402
+
+
+def _strip(schema):
+    """Remove exactly the two things we are allowed to narrow, so the rest can
+    be compared for equality against the generated schema."""
+    out = {k: v for k, v in schema.items() if k not in ("title", "description")}
+    props = {}
+    for name, prop in out["properties"].items():
+        props[name] = {k: v for k, v in prop.items()
+                       if k not in ("enum", "description", "title")}
+    out["properties"] = props
+    return out
+
+
+def test_the_tool_schema_is_GENERATED_not_hand_written(env):
+    """Hard rule #1, mechanically.
+
+    A tool inputSchema is a schema and a tool description is a prompt, so both
+    are places app-domain knowledge leaks in. What separates a legitimate
+    re-serialization of `OutboundMessage` from the gateway owning a second
+    schema is exactly one thing: whether a human typed a property name. This
+    test fails the moment one does.
+
+    Same idiom as tests/test_error_surfaces.py — guard a property that
+    otherwise lives only in prose.
+    """
+    registry_schema = OutboundMessage.model_json_schema()
+    tool_schema = send_message_schema(_registry_of(env), "aiteam-harness")
+    assert _strip(tool_schema) == _strip(registry_schema)
+
+
+def test_cards_stays_an_opaque_array_of_objects(env):
+    """Rule #1 corollary. The gateway's total knowledge of Cards v2 is one
+    validator asserting `"card" in entry`. A richer cards schema here would be
+    the gateway learning a channel's content format."""
+    schema = send_message_schema(_registry_of(env), "aiteam-harness")
+    assert schema["properties"]["cards"]["items"] == {
+        "additionalProperties": True, "type": "object"}
+
+
+def test_the_identity_enum_is_exactly_this_apps_allowlist(env):
+    """Rule #4, defence in depth: a model cannot even FORM a call naming
+    another tenant's identity, because the schema it was given lacks one."""
+    reg = _registry_of(env)
+    mine = send_message_schema(reg, "aiteam-harness")["properties"]["identity"]
+    theirs = send_message_schema(reg, "job-hunter")["properties"]["identity"]
+    assert mine["enum"] == ["pm-familyworkspace", "agent-notes"]
+    assert theirs["enum"] == ["other-only"]
+    assert "other-only" not in mine["enum"]
+
+
+def test_the_identity_description_reports_live_readiness(env):
+    """The tool schema and /healthz must agree, and they do because they read
+    the same Identity.env_resolved(). SVC_HOOK_AGENT is unset in the fixture."""
+    d = send_message_schema(_registry_of(env),
+                            "aiteam-harness")["properties"]["identity"]["description"]
+    assert "pm-familyworkspace" in d and "ready" in d
+    assert "agent-notes" in d and "NOT CONFIGURED" in d
+
+
+def test_the_tool_declares_all_four_annotations_explicitly(env):
+    """The spec's defaults would produce these same values. Declaring them is
+    deliberate: a tool that posts irreversibly into a human's chat space, twice
+    if called twice, should SAY so rather than have a reader derive it from a
+    default table."""
+    tool = tools_for(_registry_of(env), "aiteam-harness")[0]
+    assert tool["annotations"] == {"readOnlyHint": False, "destructiveHint": True,
+                                   "idempotentHint": False, "openWorldHint": True}
+
+
+def test_the_tool_name_needs_no_base64_sentinel_in_a_header(env):
+    """Modern MCP requires an `Mcp-Name` header matching params.name. A name
+    outside the header-safe set forces clients into the base64 sentinel form;
+    ours does not."""
+    import re
+    for name in [t["name"] for t in tools_for(_registry_of(env), "aiteam-harness")]:
+        assert re.fullmatch(r"[A-Za-z0-9_.\-]{1,128}", name), name
+
+
+def test_narrowing_the_schema_cannot_poison_the_envelope_for_everyone_else(env):
+    """⚠ A pydantic implementation detail this code DEPENDS on, pinned because
+    its failure mode is silent and global.
+
+    `send_message_schema` mutates the dict `model_json_schema()` hands back. If
+    pydantic ever returned a CACHED dict instead of a fresh one, that mutation
+    would persist — one app's identity enum would leak into the next caller's
+    schema (a hard rule #4 breach), and into `/openapi.json`, which serves the
+    same model to every unauthenticated reader of `/docs`.
+
+    Measured on pydantic v2 today: each call returns a fresh, deeply
+    independent dict. This test is what notices if an upgrade changes that.
+    """
+    reg = _registry_of(env)
+    send_message_schema(reg, "aiteam-harness")
+    send_message_schema(reg, "job-hunter")
+    fresh = OutboundMessage.model_json_schema()
+    assert "enum" not in fresh["properties"]["identity"]
+    assert fresh["properties"]["identity"]["description"] == (
+        "registered identity to send as (e.g. pm-familyworkspace)")
