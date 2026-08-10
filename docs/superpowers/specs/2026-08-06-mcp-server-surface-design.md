@@ -905,12 +905,32 @@ one. It is the row's exit condition.
 
 ---
 
-## 14. Decisions for the user
+## 14. Decisions for the user — ✅ ALL EIGHT SIGNED OFF 2026-08-10
 
-**Settled already, by the user, in the brief — not reopened here:**
+⚠ **This heading read *"Decisions for the user"* with eight rows open, and the
+queue row read *"⚠ 8 decisions open"*, until 2026-08-10.** The user signed off
+every one **at the Planner's recommendation** — *"I'm fine with the defaults
+above"* — **D4a included**, which is the one that resized this row (§16). The
+three design calls made without asking (below) were presented in the same breath
+and **none was overruled**.
+
+**The table is kept exactly as written rather than collapsed into a verdict
+column.** A Builder needs the *reasoning*, not the outcome; a row reduced to
+"approved" strands the next reader with a decision and no argument.
+
+**Settled earlier, by the user, in the brief — not reopened here:**
 (i) audience is *both*, one surface, no distinction; (ii) inbound scope was
 explicitly delegated to the Planner (D1 is the answer, not a re-ask); (iii)
 process model was explicitly delegated to the Planner (D2 likewise).
+
+⚠ **D7 is DECIDED, but its flagged consequence is not thereby retired — it
+MOVES, onto the operator step in D8.** Accepting *no `allow_mcp` flag* means
+`aitrader-alerts` and `aitrader-reports` become model-addressable the moment an
+operator grants an agent tenant those identities (§7.5). Nobody has decided that
+*about aitrader*; it would follow from a default — the same shape as CG-61's
+`allow_inbound`, where a default nobody chose governed a live tenant for weeks.
+Recorded here so that granting those two identities is a deliberate act with this
+paragraph attached rather than a line in a YAML file.
 
 | # | Decision | Recommendation | One-line reasoning |
 |---|---|---|---|

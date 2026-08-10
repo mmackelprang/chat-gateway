@@ -975,9 +975,20 @@ tailnet subnet route re-opens the question (CG-55's row, decision 1's contingenc
 
 ## §11 · Observation — the CG-59 soak
 
-**Started 2026-08-05 by Builder over SSH (CG-59). RUNNING; results are NOT in
-this section yet, and this section says so rather than being written ahead of
-them.** The design — why ≥24 h is the floor, what a pass is, and how a quiet
+⚠ **STOPPED — this section said `RUNNING` for four days after it was not.**
+Started 2026-08-05 by Builder over SSH (CG-59); the dev-box `/healthz` stream's
+last sample is **`2026-08-06T21:02:42Z`** — **24 h 12 m, 2886 samples, ~34 % of the
+72 h target** — with no sampler process alive since. Measured 2026-08-10 by reading
+the file rather than this paragraph. The cause is the limitation already stated
+below: a bare background process, **no systemd unit and no cron** (both on the
+standing rules' 🛑 list), does not survive the dev box going down. ⚠ **≥24 h was
+the design floor (plan Part G §G2), so the run is not void — it is *at* the floor
+with no margin**, and the 72 h every downstream plan assumes is not what exists.
+**Findings live in CG-82, not here**, including a `degraded` window nobody read;
+this section keeps the design and the artifact locations only.
+
+**Results are NOT in this section yet, and this section says so rather than being
+written ahead of them.** The design — why ≥24 h is the floor, what a pass is, and how a quiet
 network is told apart from a wedged loop — has **one home**, plan Part G §G2. Do
 not restate it here.
 
