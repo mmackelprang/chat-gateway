@@ -647,3 +647,136 @@ the Google Chat console, dated 2026-07-31**, which this repo cannot verify; see
 [`google-cloud-setup.md`](google-cloud-setup.md) step 6). The rename changes only
 the string a reader sees in the space: the gateway never reads `displayName`, and
 "one sender for every tier-2 identity" is the part that matters here.
+
+---
+
+## MCP server surface — `POST /mcp` (opt-in)
+
+The gateway is also a Model Context Protocol server, so an MCP-speaking agent
+sends through it with the same per-app key, the same identity allowlist and the
+same delivery log as any other consumer. Off unless the operator sets
+`GATEWAY_ENABLE_MCP=1`.
+
+**It is another ingress to the send path above, not a new capability.** A
+`send_message` tool call reaches the same `identity_for` check and the same
+adapter that `POST /v1/messages` does, and writes the same `GET /v1/deliveries`
+row. Nothing below the tool call is different code.
+
+**One tool, `send_message`.** Its `inputSchema` is generated from the same
+envelope `POST /v1/messages` takes, and its `identity` property carries an
+`enum` of exactly the identities your key is allowed to use — so an agent
+cannot form a call naming someone else's identity. That is defence in depth:
+the same `identity_for` check still runs at call time, because a client may
+call a tool it never listed. The enum's description reports each identity's
+live readiness from the same function `/healthz` reads, so the two cannot
+disagree about whether an identity is configured.
+
+Claude Code, project scope (`.mcp.json`) — keep the key in the environment,
+not in the file:
+
+```json
+{
+  "mcpServers": {
+    "chat-gateway": {
+      "type": "http",
+      "url": "http://<gateway-host>:8085/mcp",
+      "headers": {"Authorization": "Bearer ${CHAT_GATEWAY_API_KEY}"}
+    }
+  }
+}
+```
+
+Or by hand:
+
+```bash
+curl -s $GW/mcp -H "$AUTH" -H "$JSON" -d '{
+  "jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+### Errors you will see, and which kind they are
+
+MCP separates a **protocol** error (a JSON-RPC `error` — the request was
+malformed) from a **tool** error (a normal `result` with `isError: true` — the
+tool ran and refused). The split is not cosmetic: a protocol error is invisible
+to the model, so it cannot self-correct.
+
+| What happened | What you get |
+|---|---|
+| bad or absent bearer key | HTTP **401**, bare `WWW-Authenticate: Bearer` |
+| your key is not granted that identity | HTTP 200, `isError: true`, text naming what you **may** use |
+| arguments fail envelope validation | HTTP 200, `isError: true` |
+| delivery failed | HTTP 200, `isError: true` |
+| unknown tool name | HTTP 200, JSON-RPC `-32602` |
+| unimplemented RPC method | HTTP **404**, `-32601` |
+| body is not JSON, or is nested past Python's recursion limit | HTTP **400**, `-32700` |
+| body is an array (batching), or a bare scalar | HTTP **400**, `-32600` |
+| `jsonrpc` missing or not `"2.0"`; `method` missing or not a string | HTTP **400**, `-32600` |
+| `params` present and not an object | HTTP **400**, `-32602` |
+| a **notification** — any message with no `id`, any method, either era | HTTP **202**, **empty body** |
+
+An identity refusal is deliberately a *tool* error: you asked a legitimate
+question and got a legitimate refusal naming the alternatives, which is
+something an agent can act on.
+
+Two shapes worth calling out because clients get them wrong. A `params` of
+`null` is treated as *absent*, not as malformed — a great many serializers emit
+it that way. And a `notifications/*` method that carries an `id` is a `-32600`
+rather than a `202`: it is a notification sent as a request, and answering it is
+better than leaving the caller waiting for a reply that is never coming.
+
+An argument-validation failure names the **field**: `invalid arguments for
+send_message: ValidationError: text: Field required [missing]`. The offending
+*value* is deliberately never echoed back.
+
+### `/healthz` says whether it is armed
+
+`GET /healthz` gains one field — `mcp: {"enabled": <bool>, "tools": [...]}` — and
+it is a **config echo, not a counter**. It is never an input to `status` and
+never adds a `reasons` entry at any value: a surface being switched off is a
+configuration, not a fault. What it is *for* is telling an operator that the
+running image both **has** this surface and **has it on**, which is two facts
+you otherwise cannot get by probing.
+
+### What it does NOT do, and why
+
+**There is no inbound tool, and there will not be one that works the way you
+would want.** MCP gives a server no way to push: a server cannot send a request,
+cannot send an unsolicited notification, and cannot cause a model turn. An
+inbound MCP tool could only ever be polling that an agent remembers to do. If
+you need to react to a human's reply, use the per-tenant `callback_url` push or
+`GET /v1/inbox` — both are better at it, and both are covered above.
+
+**It is send-only in another sense too:** no `notify`, no `heartbeat`, no
+delivery-log tool. `POST /v1/messages` is synchronous, so an agent gets an
+answer it can act on; `POST /v1/notify` returns `202 enqueued`, which it cannot.
+Dead-man checks are deliberately absent — a check registered by an agent session
+goes missed the moment that session ends, and then pages a human daily.
+
+**`cards` is an opaque array here exactly as it is on `POST /v1/messages`.** The
+gateway does not build cards and does not describe their structure to a model;
+render your own and pass them through.
+
+### Protocol notes
+
+Streamable HTTP on a single endpoint, stateless, tools-only, JSON only —
+`GET /mcp` and `DELETE /mcp` are `405`, because there is no stream and no
+session. **Dual-era**: both the `2025-11-25` handshake protocol and the
+`2026-07-28` stateless one are served on the same URL, because a client
+speaking one cannot talk to a server speaking only the other. The era is
+decided per request from modern-only signals — the `_meta` protocol version,
+the `Mcp-Method` header, or an `MCP-Protocol-Version` header naming the modern
+revision — so a modern client is never quietly served a legacy-shaped answer.
+An `initialize` naming a version we do not support is answered with
+**`2025-11-25`**, not the newest we speak: `initialize` exists only in the
+legacy era, so the newest revision would be a version the asking client cannot
+speak by construction. `server/discover` publishes the full list.
+Authentication is
+a static per-app bearer key, not OAuth; a `401` carries a bare
+`WWW-Authenticate: Bearer` with no `resource_metadata` pointer, because there is
+no authorization server to discover.
+
+A present-but-unrecognised `Origin` header is refused with **403** — a protocol
+MUST, and it fails closed because this server has no browser client.
+`CHAT_GATEWAY_MCP_ALLOWED_ORIGINS` widens it if you ever need one. A request
+with **no** `Origin`, which is what every non-browser MCP client sends, is
+unaffected.

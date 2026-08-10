@@ -55,12 +55,13 @@ agentic applications; aiteam's harness is the first consumer, not the owner.
 
 `src/chat_gateway/` — envelope / registry / auth / inbox / service / client,
 one concern each, plus `errors.py`, which owns which exception messages may be
-printed in full (see below); `adapters/` — webhook (tier 1), chat_api + pubsub
-(tier 2);
+printed in full (see below), and `mcp.py`, the opt-in MCP server surface (CG-80)
+— a second ingress to `service.py`'s send path, not a second send path;
+`adapters/` — webhook (tier 1), chat_api + pubsub (tier 2);
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 390 passing.
+`python` is 3.13.7) — offline, 491 passing.
 
 ## Current status (2026-07-31)
 
@@ -364,6 +365,52 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   what made the migration cost zero producer card changes. Same support-both
   posture as the two envelope formats — **do not rip it out**, but do not
   justify it as load-bearing either.
+- **The gateway is an MCP server too, since CG-80 (2026-08-10) — send-only, and
+  that is a decision rather than a stage.** `POST /mcp` is another ingress to the
+  path `POST /v1/messages` already uses: same `authenticate()`, same
+  `registry.identity_for`, same adapter, **same `DeliveryLog` row**. Default OFF
+  behind `GATEWAY_ENABLE_MCP` (env-var NAME; it holds no credential, so it is a
+  compose value rather than a secret). **Hard rule #1 holds mechanically, not by
+  taste** — the one tool's `inputSchema` is GENERATED from
+  `OutboundMessage.model_json_schema()` and a test compares it for equality, so a
+  hand-edited property turns the suite red. `cards` stays an opaque array; a
+  card-builder tool is the thing rule #1 exists to refuse.
+  ⚠ **The audit row is the one place the plan's code contradicted the plan's own
+  goal, and it was caught in build rather than in review.** The spec's §2 table
+  and the plan's Goal line both promise an MCP caller inherits audit journalling;
+  the plan's `call_tool` took no `DeliveryLog` and wrote nothing. Fixed in the
+  shipping code with `describe_exception` on the failure detail rather than the
+  `str(exc)[:200]` its `/v1/messages` sibling still uses — **a new write site gets
+  the current rule, and the old one was deliberately not touched** (spec §15
+  forbids changing that route).
+  **There is no inbound tool and the reason is protocol-level, not a backlog
+  item:** MCP servers cannot send requests, cannot send unsolicited notifications
+  and cannot cause a model turn, so an inbound tool could only be polling. It is
+  also blocked on `Inbox.poll` draining — until CG-56, an MCP reader and a
+  tenant's poller are competing DESTRUCTIVE consumers of one queue. **Do not
+  restate the rule #6 argument here; it is argued both ways in
+  `docs/superpowers/specs/2026-08-06-mcp-server-surface-design.md` §7**, and
+  `read_inbox` is filed as CG-81 needing the user's explicit sign-off.
+  ⚠ **Dual-era, and that is load-bearing rather than belt-and-braces.** Revision
+  `2026-07-28` deleted `initialize`, `ping` and sessions; a modern client cannot
+  talk to a legacy server and a legacy client cannot talk to a modern one, so
+  serving one era would make this endpoint **silently unreachable** to the other.
+  Which revision is "current" is a moving external fact and gets **no copy here**
+  — the two dated identifiers are pinned as constants in `mcp.py` and nowhere
+  else.
+  ⚠ **`CACHE_SCOPE` is `"private"` and it is a hard rule #4 control, not a
+  performance knob** — the tool list varies by API key, so `"public"` would let
+  an intermediary serve one tenant's identity allowlist to another. Reasoning
+  has one home, that constant's own comment.
+  ⚠ **Merged is not in effect, again.** The surface ships with **no caller**:
+  `registry.example.yaml` gains an `agent-mcp` template, but minting the key and
+  writing the app into the gitignored `config/registry.yaml` is an operator
+  action. CG-61's lesson, and **it is not deployed** — this row was merged
+  deliberately without a rebuild, because the rebuild spends uptime evidence
+  CG-82 task 1 must capture first.
+  **No ⚠ verification-ledger flag moved.** This sits above `adapters/` and makes
+  no Google call of its own; a live round-trip through the tool is the same bytes
+  from a different caller and clears nothing.
 - **Card `parameters` shapes — outbound is fixed, inbound is a property of the
   RUNTIME.** Confusing them ships a broken card.
 

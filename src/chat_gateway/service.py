@@ -32,6 +32,7 @@ from .heartbeat import (
     DEFAULT_TZ, HeartbeatError, HeartbeatMonitor, HeartbeatStore,
 )
 from .inbox import Inbox
+from .mcp import TOOL_NAMES as MCP_TOOL_NAMES, build_router as build_mcp_router
 from .notifications import Deduper, Notification, render
 from .registry import Registry, RegistryError
 from .retention import SWEEP_STALE_INTERVAL_MULTIPLE, window_for
@@ -275,6 +276,13 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                # `dispatcher` and `subscriber`: every offline test builds an app
                # without one, and /healthz must answer 200 for those (audit F0).
                sweeper: Any | None = None,
+               # CG-80. Default OFF, the same posture GATEWAY_ENABLE_PUBSUB
+               # takes for a new surface: an operator arms it deliberately, and
+               # /healthz then says whether the running image both HAS it and
+               # HAS IT ON — two separate facts, which is the lesson CG-59 paid
+               # for when a deployed container answered 200 to a query parameter
+               # it did not have.
+               mcp_enabled: bool = False,
                monitor_interval: float = 60.0) -> FastAPI:
     """`adapters` maps identity mode -> adapter with .send(identity, message)."""
 
@@ -358,11 +366,32 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     monitor = HeartbeatMonitor(checks, _monitor_notify, interval_seconds=monitor_interval)
 
     # expose the moving parts for __main__ and tests
+    app.state.registry = registry
     app.state.dispatcher = dispatch
     app.state.monitor = monitor
     app.state.delivery_log = log
     app.state.heartbeats = checks
     app.state.sweeper = sweeper
+
+    # CG-80. Mounted, not always-on: `/mcp` is a new authenticated surface and
+    # this repo's posture on those is conservative. The router depends on the
+    # SAME authenticate() every /v1/ route depends on — hard rule #4 satisfied
+    # by reuse rather than by a second implementation that could drift.
+    # ⚠ `build_mcp_router` is imported at MODULE SCOPE, beside `TOOL_NAMES`.
+    # This used to be a lazy `from .mcp import build_router` right here, which
+    # implied a laziness that was not real: `TOOL_NAMES` already comes from the
+    # same module at module scope, so `mcp` is imported before `create_app` is
+    # ever called and the cost is paid whatever this line does. There is no
+    # import cycle to break either. A deferral that defers nothing tells the
+    # next reader a cycle exists (CG-80 pre-merge review, L4).
+    app.state.mcp_enabled = mcp_enabled
+    if mcp_enabled:
+        # `log`, not a second DeliveryLog: spec §2's table lists the audit /
+        # delivery log as one of exactly two properties an MCP `send_message`
+        # inherits from `POST /v1/messages`, and a second ingress inherits it
+        # only by being handed the same log this app already writes and serves
+        # at `GET /v1/deliveries`.
+        app.include_router(build_mcp_router(registry, adapters, delivery_log=log))
 
     # -- raw envelope send (synchronous; aiteam notify.py path) ---------------
     @app.post("/v1/messages", response_model=DeliveryResult)
@@ -583,6 +612,45 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         hb_all = [c for s in registry.apps for c in checks.list_for(s)]
         body = {
             "version": __version__,
+            # CG-80. A CONFIG ECHO, not a counter — and the distinction is
+            # decided rather than assumed, per this repo's standing requirement
+            # that every /healthz field's degrade-or-not verdict is reasoned one
+            # at a time.
+            #
+            # NOT an input to `status` and never a `reasons` entry, at any
+            # value: a surface being switched off is a configuration, not a
+            # fault. That is the verdict `suppressed_opt_out` got, for the same
+            # reason — degrading on a system working as designed teaches an
+            # operator that "degraded" is the normal reading, and an ignored
+            # warning is the failure this endpoint exists because of.
+            #
+            # And NO counters at all. Every counter here guards a loop, a
+            # thread, a queue or a disk write — something that can fail while
+            # nobody is looking. `/mcp` is synchronous request/response: if it
+            # breaks, the caller learns in the same round trip. There is no
+            # state in which it is quietly not working while this endpoint says
+            # otherwise, so a counter would publish traffic volume on an
+            # UNAUTHENTICATED endpoint for no diagnostic gain — the trade CG-12
+            # already rejected.
+            #
+            # What it IS for: CG-59 shipped `?strict=1` and the deployed
+            # container went on answering 200 to it, because FastAPI ignores an
+            # undeclared query parameter. An operator could not tell a rebuilt
+            # image from a stale one by probing. This field says so in words.
+            #
+            # Disclosure: strictly LESS than this endpoint already publishes —
+            # `registry.health()` two lines down carries every app id and every
+            # identity name on the same unauthenticated response.
+            # Read straight off `app.state`, with NO `getattr` default: the
+            # attribute is set unconditionally a hundred lines above, so a
+            # default here could never be reached and a defaulted read claims a
+            # robustness it does not have (CG-80 pre-merge review, L6). This is
+            # NOT the `getattr` idiom its neighbours use — those guard INJECTED
+            # objects that a test may duck-type without the attribute (CG-68
+            # audit F0), and this one is a local flag set by this function.
+            "mcp": {"enabled": bool(app.state.mcp_enabled),
+                    "tools": list(MCP_TOOL_NAMES) if app.state.mcp_enabled
+                             else []},
             "registry": registry.health(),
             "inbox": {"pending": inbox.pending_counts(), "dropped": inbox.dropped,
                       "replayed_at_boot": getattr(inbox, "replayed", 0),
