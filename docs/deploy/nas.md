@@ -676,6 +676,22 @@ so they are named here for the user to pick up:
 (`feat/chat-gateway-service-artifacts`) — service doc, restore wrapper, tile,
 `DASHBOARDS.md` entry and the `SECRETS.template.md` rows (**three**, per §6).
 
+⚠ **CORRECTED 2026-08-11 by measuring the box — the tile was WRITTEN, and it was
+never LIVE.** `/mnt/datapool/apps/homepage/config/services.yaml` on the NAS
+carried **eight** tiles in its NAS group and **chat-gateway was not one of them**.
+Whether homelab PR #21 merged is not readable from this repo and is not asserted
+here; what *is* measured is that the config Homepage actually serves did not
+contain the row. **So for six days the sentence *"the tile ships a known-wrong
+verdict"* described a tile that was not probing anything at all** — a different
+and quieter failure than the one the paragraph below warns about, and the reason
+that paragraph is kept rather than rewritten: it was correct about the artifact
+in the PR, and the artifact in the PR was not the artifact in production.
+✅ **A tile now exists on the box, created 2026-08-11 and pointed at `?strict=1`
+from birth** — see §10's 2026-08-11 entry. It was created directly in that file,
+which means the **homelab repo does not yet record it**: `capture.sh` has not been
+re-run since. That is an outstanding cross-repo handoff and this repo cannot
+discharge it.
+
 ⚠ **One of them ships a known-wrong verdict, and it is named here rather than
 left to be discovered.** The Homepage tile's `siteMonitor` probes **plain
 `/healthz`**, which returns **200 whenever `reasons` is non-empty** — including
@@ -703,15 +719,33 @@ form is untouched and still answers 200 while degraded, by decision.
 measured on this box rather than reasoned about.** Read all three before
 repointing anything:
 
-1. **The running container does not have it yet, and it answers 200 to
-   `?strict=1` today.** Measured 2026-08-05 against the deployed instance: plain
-   → `200`, `?strict=1` → `200`, bare `?strict` → `200`. FastAPI ignores a query
-   parameter the deployed handler does not declare, so the strict URL is
-   **inert** on the image now serving. **Repointing the tile before the image is
-   rebuilt therefore changes nothing while looking exactly like the fix** — the
-   same silent-green shape, now wearing a URL that reads as remediated. **Order:
-   rebuild + redeploy (§4, §7), verify `?strict=1` returns 503 on a degraded
-   boot, and only then repoint the tile.**
+1. ~~**The running container does not have it yet, and it answers 200 to
+   `?strict=1` today.**~~ ✅ **DISCHARGED 2026-08-11 — the image was rebuilt and
+   redeployed; `?strict=1` is live and the tile now exists pointed at it.** The
+   original text, which was true from 2026-08-05 to 2026-08-11, follows because
+   its lesson is the durable part: *"Measured 2026-08-05 against the deployed
+   instance: plain → `200`, `?strict=1` → `200`, bare `?strict` → `200`. FastAPI
+   ignores a query parameter the deployed handler does not declare, so the strict
+   URL is **inert** on the image now serving. **Repointing the tile before the
+   image is rebuilt therefore changes nothing while looking exactly like the
+   fix** — the same silent-green shape, now wearing a URL that reads as
+   remediated. **Order: rebuild + redeploy (§4, §7), verify `?strict=1` returns
+   503 on a degraded boot, and only then repoint the tile.**"*
+
+   ⚠ **The premise under that hazard was WRONG in a way that made it milder than
+   written, and saying so is the point of keeping it.** *"Repointing the tile"*
+   presupposes a tile to repoint, and there was none in the config Homepage
+   serves (see the correction above). The hazard described a **silent-green
+   dashboard row that did not exist**; what actually existed was **no dashboard
+   signal at all**, which is the same blindness by a shorter route. ⚠ **The
+   ORDER it prescribes is still exactly right and was followed on 2026-08-11** —
+   rebuild, verify, then create the tile against the endpoint that now exists —
+   so the instruction survives its own premise being falsified. ⚠ **One step of
+   it was NOT satisfied and must not be read as done:** *"verify `?strict=1`
+   returns 503 on a degraded boot"* has still never happened on this box. A
+   genuine degraded window did occur after the 2026-08-11 restart and cleared
+   before a `?strict=1` sample could be taken (§10, 2026-08-11). The 503 path is
+   proven only in CG-59's driven local test.
 2. ⚠ **The redeploy is NOT scheduled by this row, deliberately** — ⚠ **and the
    reason CHANGED on 2026-08-10 without the conclusion changing.** A rebuild
    restarts the container. This hazard read *"the container's uninterrupted uptime
@@ -735,6 +769,25 @@ repointing anything:
    That is a heavier handoff than either row planned for on its own, and it is
    recorded here rather than in either row because **this** is the document the
    person doing the redeploy reads.
+
+   ⛔ **THE EVIDENCE THIS HAZARD PROTECTED IS GONE, AND NOT BECAUSE A REBUILD
+   SPENT IT — corrected 2026-08-11.** Everything above reasons about *spending*
+   `RestartCount: 0` deliberately, in exchange for a deploy. That is not what
+   happened. **`dockerd` on this box died on 2026-08-10 and the container did not
+   survive it** (§10, 2026-08-11). The last moment the streak was **observed**
+   alive is the NAS soak stream's final sample, **`2026-08-06T22:29:53Z`** —
+   `restart_count: 0`, `started_at: 2026-08-05T16:34:10.039455732Z`, `status:
+   running`, so roughly **25 h of witnessed uptime, not the ~5 days repeatedly
+   claimed**, and nothing observed the four days between that sample and the
+   outage. **CG-82 task 1 is therefore MOOT: it cannot be discharged, and the
+   distinction is the whole point of that task — the evidence was LOST, not
+   SPENT.** Spent would have bought a deploy; lost bought nothing. ⚠ **Both
+   halves of this hazard's ordering constraint are now void** (there is nothing
+   left to capture) **while the redeploy it gated has since happened for its own
+   reasons.** Do not resurrect a `docker inspect`-first instruction from this
+   paragraph. New baselines, both measured 2026-08-11: `StartedAt
+   2026-08-11T14:46:00.906461422Z` after the daemon recovery, then
+   `2026-08-11T14:56:49.752003098Z` after the redeploy, `RestartCount: 0`.
 3. **The URL is `?strict=1` exactly.** `strict` is a boolean query parameter: a
    bare `?strict` or an empty `?strict=` is a **422** once the new image is
    running — non-200, so the tile would read DOWN on a healthy gateway. That is
@@ -742,12 +795,32 @@ repointing anything:
    widened (`docs/integration-guide.md`, *"`?strict=1` — for readers that judge
    by status code"*), but it is a real way to get the handoff wrong.
 
+   ✅ **Confirmed on the box 2026-08-11, and the 422 turned out to be a TOOL** —
+   this is the useful half of an inconvenience. Because the pre-2026-08-11 image
+   did not declare `strict`, it answered **200 to any value**; the current image
+   declares it as a bool and answers **422 to `?strict=banana`**. So a
+   deliberately-invalid value is a **one-request discriminator for which image is
+   live**, and it obtains that answer **without degrading production and without
+   waiting for a fault** — you are asking the parser a question, not the gateway.
+   Measured both sides of the redeploy: before, `?strict=1` → `200` and no `mcp`
+   field; after, `?strict=banana` → **`422`**, `?strict=1` → `200` while healthy,
+   `mcp` field present. ⚠ **Do not point a probe at it.** It is a hand-run
+   diagnostic; a monitor on `?strict=banana` reads DOWN forever by design. The
+   tile's URL is `?strict=1`, exactly as this hazard says.
+
 ---
 
 ## §10 · Executed
 
 **Run 2026-08-05 by Builder over SSH (CG-55). The gateway is deployed and
 serving.** This section read *"Empty. Nothing here has been run"* until then.
+
+⚠ **This section now holds TWO dated runs and they must not be read as one.** The
+2026-08-05 entry below is CG-55's first deploy and is left exactly as it was
+written. A second entry — **2026-08-11**, an unplanned 23-hour outage, its
+recovery, the first upgrade redeploy, and MCP's enablement — is appended at the
+end of the section. **Where the two disagree the later one wins, and it says so
+at each site**; nothing in the 2026-08-05 entry has been rewritten to match.
 
 Public-repo discipline (top of this file) applies to this section too: the LAN
 address, the tailnet address and the SSH destination are **measured values that
@@ -958,8 +1031,15 @@ tailnet subnet route re-opens the question (CG-55's row, decision 1's contingenc
    *environment wins* and the file's copy is skipped. §5 put it there so a stale
    `.env` could not leave inbound off; the count is the proof it did.
 6. **Restart used `docker kill` + `midclt app.start`, not §4's `app.redeploy`** —
-   because fact 4 needed a **crash**, not a tidy restart. `app.redeploy` remains
-   the documented upgrade step and is untested by this run.
+   because fact 4 needed a **crash**, not a tidy restart. ~~`app.redeploy` remains
+   the documented upgrade step and is untested by this run.~~ ✅ **STILL untested
+   by *this* run — and no longer untested at all. `app.redeploy` was exercised for
+   real on 2026-08-11** (`sudo midclt call app.redeploy chat-gateway` → job
+   **3112** → **SUCCESS**), picking up a locally rebuilt image on a box with no
+   registry, which is the case §4 documents and nothing had ever run. **It works.**
+   The dated sentence above is kept because it correctly describes 2026-08-05;
+   what expired is the *"and is untested"* half, and it expired on the entry
+   below rather than on this one.
 7. ⚠ **`iac/chat-gateway-sa.json` — the dead key — was STILL PRESENT in the repo
    on the day of this deploy.** It was **not** used; `chat-gateway-sa-gw.json`
    was, and both files' `project_id` fields were read to confirm which is which
@@ -1004,6 +1084,185 @@ tailnet subnet route re-opens the question (CG-55's row, decision 1's contingenc
 
 ---
 
+### Run 2026-08-11 — a 23-hour outage nobody detected, then the first upgrade redeploy
+
+**Four separable things happened on one day**, and they are kept separate because
+only the second and third were planned: a **platform outage** that had already
+been running for most of a day when it was found, its **recovery**, the **first
+real upgrade redeploy** (CG-80's `/mcp` and CG-59's `?strict=1`, which had both
+been merged and neither in production), and the **operator actions** that gave
+the MCP surface its first caller.
+
+#### The outage — measured, and its cause is NOT known
+
+| | |
+|---|---|
+| `dockerd` failed | **2026-08-10 10:17:35 EDT**, killed by **SIGKILL one second after a start attempt** |
+| what kept it down | systemd latched: *"Start request repeated too quickly"* — so a **one-second** failure became a **~23 hour** outage |
+| blast radius | **`app.query` returned `[]` for EVERY app** — all **11** stacks, not only chat-gateway |
+| not the cause | **no kernel OOM.** `datapool` **ONLINE**, 38 % capacity, clean scrub, zero errors; `docker.config` correctly pointed at `datapool/ix-apps` |
+| data | intact — `.env`, `config`, `secrets`, `state`, `soak`, `inbox-data`, `src` all survived |
+| recovery | **2026-08-11**: `systemctl reset-failed docker.service docker.socket`, then `systemctl start docker`. **16 containers returned** |
+
+⛔ **What was fixed is the LATCH, not the CAUSE. The original SIGKILL is
+unexplained and may recur.** Everything in the table above rules something *out*;
+nothing in it explains what sent the signal. `reset-failed` clears systemd's
+refusal to keep retrying — it says nothing about why the first attempt died one
+second in. **Record this as open.** It is also, deliberately, **not a queue row
+in this repo**: the daemon is host configuration, and the standing rules put
+writes outside `/mnt/datapool/apps/chat-gateway/**` on the 🛑 list. What this
+repo owns is the consequence in the next paragraph.
+
+⛔ **THE FINDING THAT OUTRANKS BOTH ROWS DEPLOYED TODAY: the gateway was down
+23+ hours and NOTHING TOLD ANYONE.** This project has a dead-man switch — a
+careful one, six of whose failure doors were found and closed in CG-76 — and it
+watches **tenants'** silence. It has **no monitor for its own absence**, and it
+structurally cannot have one built the same way: **`/healthz` cannot report that
+it is not answering.** Every liveness signal this gateway publishes is published
+*by the process whose liveness is in question*, so the one failure mode that
+matters most is the one mode where every signal is simply absent rather than
+alarming. Hard rule #5 made the endpoint honest; honesty is not availability.
+**Filed as CG-84** — as a row, not as a paragraph, because a gap recorded only in
+a runbook's incident write-up is a gap nobody will work.
+
+#### The redeploy
+
+| Step | Result |
+|---|---|
+| source on box `52710df` → **`1f2d886`** | `git fetch` + `git checkout <pinned>` — §4's upgrade procedure, first real use |
+| `docker build -t chat-gateway:local .` | image **`sha256:a1611d399d28274c40ba914a736b377fa0b59b5c07aa9aea780a5e740ee1fc48`** |
+| `sudo midclt call app.redeploy chat-gateway` | job **3112** → **SUCCESS** |
+| compose gained `GATEWAY_ENABLE_MCP: "1"` via `sudo midclt call app.update` | job **3180** → **SUCCESS** |
+
+✅ **First real exercise of `app.redeploy`** — §10 deviation 6 recorded it as
+documented-but-untested since 2026-08-05. It works, against a locally built image
+on a box with no registry. That deviation is updated rather than left standing.
+
+**Which image is live — proven by the parser, not by the gateway.** Before, on
+the old image: `/healthz?strict=1` → **200**, no `mcp` field. After:
+`?strict=banana` → **422**, `?strict=1` → **200** while healthy, `mcp` field
+present. ⚠ **The 422 is the load-bearing discriminator and is worth carrying as a
+technique**, not just as a result: the old handler did not declare `strict` so it
+returned **200 for any value**, and the new one declares it as a bool. A
+deliberately-invalid value therefore separates the two images **in one request,
+without degrading production and without waiting for a fault** — see §9 hazard 3.
+
+**Body byte-identity re-confirmed on the box:** plain and `?strict=1` are
+identical once volatile counters are ignored, which is CG-59's contract holding on
+real hardware rather than in a driven local test.
+
+⛔ **STILL UNVERIFIED ON THE BOX: `?strict=1` returning 503.** A genuine transient
+degraded window *did* occur after the restart — `reasons: ["subscriber is enabled
+but has never completed a poll — inbound has never worked on this process"]`, the
+same string §10 fact 1 recorded in 2026-08-05 — **and it cleared before a
+`?strict=1` sample could be taken.** So the 503 path remains proven **only** in
+CG-59's driven local test and has never been observed on the deployed instance.
+Say it that way; a redeploy that verified the 200 half is not a redeploy that
+verified the endpoint.
+
+#### MCP enablement — the operator actions a PR cannot perform
+
+CG-80 shipped a surface with **no caller** (its own *"merging is not finishing"*
+note). These are the acts that gave it one. **Env-var NAMES only below; no value
+of any kind is recorded in this repo.**
+
+- **A key was minted** — 32 random bytes, hex — and appended to
+  `/mnt/datapool/apps/chat-gateway/.env` **over stdin**, never argv (rule #2,
+  §6's transport). Mode `600 root:root` preserved; **four** `CHAT_GATEWAY_API_KEY__*`
+  names are now present in that file.
+- **`config/registry.yaml` on the box gained `agent-mcp`** — `key_env:
+  CHAT_GATEWAY_API_KEY__AGENT_MCP`, `identities: [pm-familyworkspace]`,
+  `allow_inbound: false`. Backup at `.bak-20260811`; the file was re-parsed and
+  asserted after writing, not assumed.
+- ⚠ **`aitrader-alerts` and `aitrader-reports` were deliberately NOT granted, and
+  the identity list is the ONLY control that exists.** Spec §14 **D7** declined a
+  registry `allow_mcp` flag, so there is no MCP-specific opt-out to fall back on:
+  what an MCP caller may send as is exactly what its app's `identities` list says,
+  and nothing else narrows it. Withholding those two was therefore **an act**, not
+  a default — and it is the belt-and-braces D7 said the user could ask for,
+  obtained through the mechanism that already exists. Recorded so that adding an
+  identity to this app later is understood as widening a real-money tenant's
+  model-addressable surface.
+
+#### MCP live exercise — all measured 2026-08-11
+
+`/healthz` now reports `mcp: {"enabled": true, "tools": ["send_message"]}`.
+
+| Probe | Result |
+|---|---|
+| unauthenticated; wrong key | **401**, both |
+| **legacy era `2025-11-25`** — `initialize` | negotiated **`2025-11-25`** |
+| legacy `ping` | **200** |
+| legacy `tools/list` | `['send_message']`, `identity` enum **`['pm-familyworkspace']`** — per-app narrowing works **on the wire**, not only in tests |
+| **modern era `2026-07-28`** | requires **all** of: `params._meta` carrying **both** `io.modelcontextprotocol/protocolVersion` **and** `io.modelcontextprotocol/clientCapabilities`; plus headers `MCP-Protocol-Version`, `Mcp-Method` (cross-checked against the body's method) and `Mcp-Name` (against `params.name`, `tools/call` only). **Each omission produced a distinct, specific 400** |
+| `server/discover` | **200**; result keys `_meta, cacheScope, capabilities, instructions, resultType, supportedVersions, ttlMs` |
+| `cacheScope` | ✅ **`'private'` confirmed on the wire** — the hard-rule-#4 control the spec flagged as a leak vector, verified where it matters rather than in a unit test. `resultType: 'complete'`, `ttlMs: 300000` |
+| **a real message delivered** via `tools/call`, **modern** era | `{"status": "delivered", "channel": "google_chat", "identity": "pm-familyworkspace", "mode": "webhook", "thread_key": null}` |
+| **hard rule #4 enforced live** | `aitrader-alerts` refused — `"app 'agent-mcp' may not send as 'aitrader-alerts' (allowed: pm-familyworkspace)"`, `isError: true` |
+| audit row in `GET /v1/deliveries` | **1 row** — `source: agent-mcp`, `kind: message`, `status: delivered`, title truncated to 80 chars. ✅ **The refused attempt created NO row**, which is correct |
+
+✅ **The delivery-log row confirms CG-80's build-time fix in production.** The
+plan's `call_tool` took no `DeliveryLog` and would have made every MCP send
+invisible in `GET /v1/deliveries`; that was caught in build rather than review,
+and this is the first evidence the wiring holds on the box.
+
+✅ **This ANSWERS the plan's own *"single most valuable thing this task
+produces"* — which era is load-bearing — and it should stop being carried as
+open.** The answer is **both**, and the asymmetry is the useful part: legacy is
+reachable with a bare `initialize` and nothing else, while modern demands three
+headers and two `_meta` keys before it will do anything. A server that had picked
+one era would have been silently unreachable to half its clients, exactly as D4a
+predicted. ⚠ **D4a's dual-era decision is vindicated by measurement, not by
+argument** — which is a stronger position than the one it was taken from, and the
+distinction is worth keeping.
+
+⛔ **No ⚠ verification-ledger flag moves, and this is precisely the moment the
+spec warned a Builder would want to move one.** A message delivered through the
+MCP tool is **the same webhook bytes from a different caller**; `webhook.send` was
+cleared 2026-07-29 and nothing about a new ingress re-proves or extends it. Not
+one row in `CLAUDE.md`'s ledger is cleared, added, re-priced or reworded by
+anything on this page. ⚠ **Nor does the redeploy clear the `SubscriberLoop`
+long-run row** — the opposite: the outage destroyed the streak that was its best
+evidence (§9 hazard 2, and §11).
+
+#### The Homepage tile — created, not repointed
+
+⚠ **`services.yaml` on the box had 8 NAS tiles and chat-gateway was NOT among
+them.** §9's hazard about *"repointing the tile"* was describing a tile that had
+never been created in the config Homepage serves. Created 2026-08-11 in
+`/mnt/datapool/apps/homepage/config/services.yaml` (backup `.bak-20260811`); the
+NAS group now holds **9** tiles and the file was validated by parsing it, not by
+eye:
+
+- `href` → the gateway's `/healthz` on the LAN address and port 8085
+- `siteMonitor` → the same host and port on **`/healthz?strict=1`**
+- a comment in the file explaining why it must be exactly `1`: `strict` is a bool
+  query parameter, so a bare `?strict` or an invalid value is a **422**, which
+  would make the tile read **DOWN on a healthy gateway**
+
+⚠ **Addresses: `<LAN-IP>` per this file's public-repo discipline** (top of file,
+CG-78). The literal values live on the box and in the homelab repo's
+`network/reservations.md`; the tile is described here by **shape**.
+
+⚠ **This is a change to the HOMELAB box's configuration, not to this repo, and it
+is not yet recorded in the homelab repo either.** That repo references
+chat-gateway only in `nas/captured-state.md`, and **`capture.sh` has not been
+re-run** since the tile was written. So the tile exists in production and in no
+git history anywhere. That is an outstanding cross-repo handoff — §9's *"Artifacts
+this repo CANNOT create"* is its home, and **this repo cannot discharge it**.
+
+#### What this run did NOT do
+
+- **It did not explain the SIGKILL.** See above; open, and may recur.
+- **It did not verify `?strict=1` → 503 on the box.** The window closed first.
+- **It did not re-run `capture.sh`**, so neither the tile nor the new compose
+  value (`GATEWAY_ENABLE_MCP`) is captured into the homelab repo.
+- **It did not restart the soak.** Both streams are dead and a re-run needs a
+  durability design first — §11, and **CG-85**.
+- **It moved no ⚠ verification-ledger flag.**
+
+---
+
 ## §11 · Observation — the CG-59 soak
 
 ⚠ **STOPPED — this section said `RUNNING` for four days after it was not.**
@@ -1027,8 +1286,69 @@ here is **an analogy, not a measurement** — what was actually observed is only
 live process, and a file four days cold*. No dev-box outage was independently
 confirmed.
 
+⚠ **BOTH STREAMS ARE DEAD AND THESE ARE FINAL — measured 2026-08-11.** The
+paragraph above described the dev-box half only. The **NAS memory stream** stopped
+too, and the numbers below are the whole of what that run produced. Nothing more
+will be added to either file.
+
+**NAS memory stream** — `/mnt/datapool/apps/chat-gateway/soak/memory.jsonl`, **152
+samples**:
+
+| | |
+|---|---|
+| window | `2026-08-05T21:15:58Z` → `2026-08-06T22:29:53Z`, `soak_elapsed_s: 90835.9` = **25.2 h** of a 72 h ceiling |
+| memory | `current_bytes` **52 539 392 → 52 793 344**; **`peak_bytes` 54 362 112 UNCHANGED**; `max_bytes` 536 870 912 (512 MiB) |
+| handles | `threads: 6` constant, `open_fds: 9` constant |
+| container | `restart_count: 0`, `status: running` throughout |
+
+✅ **Verdict: flat. No memory leak, no fd growth, no thread growth.** That is a
+**clean result for the question this half existed to answer** — the OOM-under-a-
+512-MiB-cap-with-zero-swap failure mode described below did not begin to develop.
+⚠ **Over 25 h, not 72 h**, and the difference is not rhetorical: the reasons the
+design gave for wanting 72 h — three midnight rollovers, ~12 retention sweeps,
+~70 token refreshes — are the things a 25 h window does **not** buy. Say *flat
+over 25 h*; do not round it up to the run that was planned.
+
+**Dev-box `/healthz` stream** — 2886 samples, 24 h 12 m, 2882 `ok` / 4 `degraded`,
+`events_seen` `0 → 0`. ⚠ **Detail is deliberately not restated here — it has one
+home and it is CG-82**, including the escalating `ConnectError` window nobody read.
+
+⚠ **A NEW OBSERVATION, recorded as an open question rather than a conclusion:
+both streams died the same evening, about 90 minutes apart** — dev box
+`2026-08-06T21:02:42Z`, NAS `2026-08-06T22:29:53Z`. **Two independent samplers, on
+two different hosts, stopping that close together suggests a common cause, and
+what that cause was is unexplained.** The inference on offer for each host alone —
+*"a bare background process does not survive its host going down"* — is written
+below for the NAS sampler and was only ever an **analogy** for the dev-box one
+(that process's launch mechanism is documented nowhere in this repo). Neither
+inference explains the **coincidence**, and a coincidence is exactly the shape that
+looks explained once you have two separate stories for it. ⚠ **This is not
+connected to the 2026-08-10 `dockerd` failure by anything but suspicion** — that is
+four days later, and asserting a link would be inventing one. Filed as **CG-85**,
+with the consequence that matters: **any future long-run evidence needs a capture
+that survives a host event, and this project has now lost two runs to not having
+one.**
+
+⛔ **AND THE UPTIME EVIDENCE IS GONE — this is the sharpest correction on the
+page.** Four files asserted, in the present tense, that `RestartCount: 0` since
+`2026-08-05T16:34:10Z` was *"~5 days of live uptime evidence that CG-80's rebuild
+will spend"*. **It was not spent. The container did not survive the 2026-08-10
+`dockerd` outage** (§10, 2026-08-11). **The last moment the streak was observed
+alive is this stream's own final sample, `2026-08-06T22:29:53Z`** — which is
+roughly **25 h of witnessed uptime**, with nothing observing the four days
+between that sample and the outage. **So CG-82 task 1 is MOOT: it cannot be
+discharged.** ⚠ **Lost, not spent — and the difference is the entire point of
+that task.** Spent would have meant a deliberate trade for a deploy; lost means
+the evidence went, and this project got nothing for it, and *nothing noticed for
+a day* (CG-84).
+
 **Results are NOT in this section yet, and this section says so rather than being
-written ahead of them.** The design — why ≥24 h is the floor, what a pass is, and how a quiet
+written ahead of them.** ⚠ **Partly superseded 2026-08-11 by the block above** —
+the raw numbers are now here, because both files are final and a pointer to a
+finished artifact nobody will re-open is worse than the four lines it saves. What
+is still **not** here, and is genuinely still owed to CG-59, is the **analysis**:
+the pass/fail verdict against §G2.5, the §G3′ disk-growth calibration, and the
+ledger proposal. The design — why ≥24 h is the floor, what a pass is, and how a quiet
 network is told apart from a wedged loop — has **one home**, plan Part G §G2. Do
 not restate it here.
 
@@ -1096,7 +1416,11 @@ subsequent connections.
   run's duration claim resets with it; check `soak_elapsed_s` in the last line
   before trusting any span.
 - **It stops on its own after 72 h.** The ceiling is in the script, not in a
-  scheduler, so nothing has to remember to stop it.
+  scheduler, so nothing has to remember to stop it. ⚠ **It never reached that
+  ceiling — it stopped at 25.2 h** (see the top of this section). The ceiling was
+  never the binding constraint on either stream, which is the finding: **both
+  runs were ended by their environment, not by their design**, and the design's
+  one durability control was aimed at the wrong end of the run.
 
 ⚠ **Gotcha for whoever runs the next one: `setsid --fork` does not work on this
 box.** It fails with `Function not implemented` (ENOSYS on the child's `execve`),
@@ -1106,8 +1430,21 @@ also works. This cost a launch attempt.
 
 ### What is already known before the run finishes
 
-- container start **2026-08-05T16:34:10Z**, `RestartCount: 0` — the soak clock
-  and the deployment clock are the same clock, and it has not been reset.
+⚠ **The run has since ENDED — this heading is left in its original tense because
+it dates itself, and every bullet under it is annotated rather than rewritten.**
+Final numbers are in the block at the top of this section.
+
+- ~~container start **2026-08-05T16:34:10Z**, `RestartCount: 0` — the soak clock
+  and the deployment clock are the same clock, and it has not been reset.~~
+  ⛔ **FALSIFIED 2026-08-11: it HAS been reset, and not by anything this project
+  chose.** The `dockerd` failure of 2026-08-10 ended it; the streak's last
+  **observed** moment is `2026-08-06T22:29:53Z`, not the ~5 days four documents
+  went on claiming. Current baselines, measured 2026-08-11: `StartedAt
+  2026-08-11T14:46:00.906461422Z` (daemon recovery), then
+  `2026-08-11T14:56:49.752003098Z` (redeploy), `RestartCount: 0`. ⚠ **A fresh
+  `RestartCount: 0` is not evidence of anything yet** — it is hours old, and
+  reading it as continuity with the old streak is the exact mistake this bullet
+  now exists to prevent.
 - the memory stream's first sample is **2026-08-05T21:15:58Z**, so it starts
   ~4.7 h into the deployment's uptime. **The gap is recorded rather than
   smoothed:** the `/healthz` stream and the container's own uptime both cover

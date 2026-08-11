@@ -1915,6 +1915,18 @@ FamilyWorkspace. Copy the surrounding block's comment style:
     allow_inbound: false
 ```
 
+✅ **DISCHARGED 2026-08-11 — the block above is left byte-for-byte as it shipped,
+and its last sentence is no longer true of the live box.** An operator minted the
+key (over stdin, never argv) and wrote an `agent-mcp` entry into the gitignored
+`config/registry.yaml` with **one** identity, `pm-familyworkspace`; the surface has
+a caller. ⚠ **This is an annotation, not an edit to the shipped file** — the
+committed `config/registry.example.yaml` is being corrected separately, and this
+plan records what Task 7 *shipped*, so the two must not be silently reconciled by
+rewriting history here. ⚠ **The warning it carries is still correct and must stay
+in the example file:** registering a tenant for real remains an operator action a
+PR cannot perform. What changed is only that the action was taken —
+`docs/deploy/nas.md` §10's **2026-08-11** entry is its one home.
+
 Add the matching name-only line to `.env.example`'s per-app key block:
 
 ```
@@ -2088,6 +2100,16 @@ home in the spec, and CACHE_SCOPE's reasoning has one home in its own
 comment."
 ```
 
+⚠ **The commit message above is a historical artifact and is NOT edited — but one
+of its sentences stopped being true on 2026-08-11.** *"until someone mints and
+writes it the surface has no caller"* described the world for five days; an
+operator has since minted the key and written the entry (Step 2's annotation
+above), so `agent-mcp` is a live tenant on the box with a single identity,
+`pm-familyworkspace`. A commit message cannot be corrected in place, which is
+exactly why the correction is recorded beside it rather than by rewording the
+quote — and why the shipped `.env.example` / `registry.example.yaml` copies of
+that sentence are being amended in the files themselves.
+
 ---
 
 ## Task 8: UAT against a real MCP client, and the deploy handoff
@@ -2095,12 +2117,28 @@ comment."
 **No code.** This task is the row's exit condition and cannot be faked into an
 offline test.
 
-- [ ] **Step 1: Full suite, clean**
+⚠ **STATUS 2026-08-11 — this task stood entirely unticked while every other task
+in the plan read `[x]`, and that was ACCURATE at the merge**, not an oversight:
+CG-80 shipped its code on 2026-08-10 (PR #72) and **deliberately stopped short of
+the box**. The boxes below are now resolved one at a time against what was actually
+done, on the box, on 2026-08-11. **Nothing here is ticked from inference**, one
+step is ticked with its scope narrowed in the annotation, and the sub-item that was
+*not* performed — `?strict=1` returning **503** — is called out rather than swept
+into a neighbouring tick. Every measurement has one home and it is not this file:
+`docs/deploy/nas.md` §10's **2026-08-11** entry.
+
+- [x] **Step 1: Full suite, clean**
 
 Run: `python3 -m pytest -q`. Record the number. It is the number that goes in the
 PR body — **measured, not copied from this plan.**
 
-- [ ] **Step 2: Prove no ledger flag moved (global constraint 3)**
+  ✅ **Discharged by PR #72, merged 2026-08-10** — the row shipped, so the suite ran.
+  The number belongs to that PR body and is deliberately **not** transcribed here:
+  the step's own instruction (*measured, not copied from this plan*) is the same
+  rule read in the other direction, and a suite count with two homes is the exact
+  failure `CLAUDE.md` keeps as its standing example.
+
+- [x] **Step 2: Prove no ledger flag moved (global constraint 3)**
 
 ```bash
 git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"
@@ -2109,7 +2147,14 @@ git diff main -- src/ | grep -c "LIVE-UNVERIFIED\|SHAPE-VERIFIED"
 Expected: **0**. If it is not 0, stop — that is a hard-rule-#3 question for the
 user, not something to resolve in this PR.
 
-- [ ] **Step 3: Run the gateway locally and connect a real MCP client**
+  ✅ **Held at the merge, 2026-08-10 — and held again on 2026-08-11, which is the
+  harder test.** The grep guards the *code*; what happened on the box a day later
+  is the thing it could not guard: a real message **delivered** through the tool,
+  which looks like fresh Google evidence and is not. No flag was cleared, added,
+  re-priced or reworded then either. **The step is a floor, not the guarantee** —
+  the guarantee is the reasoning in spec §11, written before the round trip.
+
+- [x] **Step 3: Run the gateway locally and connect a real MCP client**
 
 ```bash
 GATEWAY_ENABLE_MCP=1 python3 -m chat_gateway serve
@@ -2131,13 +2176,74 @@ Record, as evidence in the PR body:
 | 3 | The `identity` enum shows **only** your key's identities | the rendered enum |
 | 4 | A message actually arrives in Google Chat | the space it landed in, and the `/v1/deliveries` row |
 
+✅ **ANSWERED 2026-08-11 — and the answer to row 1 is BOTH, asymmetrically.** This
+is the most important line in the task and it is no longer an open question. Driven
+live over real HTTP against the **deployed** box:
+
+- **Legacy `2025-11-25`** negotiated from a **bare `initialize`** and nothing else;
+  `ping` **200**; `tools/list` → `['send_message']` with the `identity` enum
+  narrowed to `['pm-familyworkspace']` — **per-app narrowing works on the wire**,
+  not only in tests (rows 2 and 3, on the wire rather than as a client renders
+  them).
+- **Modern `2026-07-28`** will not move without **all five** of: `params._meta`
+  carrying both `io.modelcontextprotocol/protocolVersion` and
+  `io.modelcontextprotocol/clientCapabilities`, plus the headers
+  `MCP-Protocol-Version`, `Mcp-Method` (cross-checked against the body's method)
+  and `Mcp-Name` (against `params.name`, `tools/call` only). **Each omission
+  produced a distinct, specific 400.** `server/discover` → **200**, result keys
+  `_meta, cacheScope, capabilities, instructions, resultType, supportedVersions,
+  ttlMs`, with **`cacheScope: 'private'` confirmed on the wire** —
+  `resultType: 'complete'`, `ttlMs: 300000`.
+- **Row 4: a real message was DELIVERED** through `tools/call` over the **modern**
+  era — `{"status": "delivered", "channel": "google_chat", "identity":
+  "pm-familyworkspace", "mode": "webhook", "thread_key": null}` — and the
+  `GET /v1/deliveries` audit row is present: **1 row**, `source: agent-mcp`,
+  `kind: message`, `status: delivered`, title truncated to 80 chars.
+
+⚠ **What this buys, stated as the plan asked rather than as a verdict: D4a's
+dual-era decision is vindicated by MEASUREMENT, not by argument.** A server that
+had picked one era would have been **silently unreachable** to the other's clients
+— reachable-with-nothing on one side, refusing-without-five-pieces on the other.
+**Stop carrying "which era is load-bearing" as an open question.**
+
+⚠ **Scope of the tick, because the step's heading promises something slightly
+different from what was done.** The gateway was exercised **on the deployed NAS
+box, over direct HTTP**, not on `localhost:8085`. So rows 1, 3 and 4 are answered
+**on the wire**; the *rendering* half of rows 2 and 3 — how a packaged MCP client
+**displays** the tool and its enum — is **not** established by this, and spec
+§12.2 bullet 2's distinction (*a `TestClient` cannot prove a client accepts it*)
+survives in that narrower form.
+
+⚠ **A client WAS registered, and that is a third thing again — do not collapse it
+into either of the two above.** `claude mcp add --scope local --transport http
+chat-gateway <url>/mcp --header "Authorization: Bearer <key>"` was run on
+2026-08-11 and wrote the server into `~/.claude.json` for this project. **That is
+a configuration written, not a handshake observed:** no client session's rendered
+tool list or rendered enum was captured, so it discharges the *setup* half of this
+step's heading and none of its evidence table. Recorded because *"a client is
+configured"* and *"a client connected"* are exactly the two facts this step exists
+to keep apart.
+
+⚠ **`--scope local` was deliberate and is the reason no credential shipped.**
+Project scope writes `.mcp.json` **into the repository**, and `claude mcp add`
+stores the `--header` value **verbatim** — so the same command at project scope
+would have put a live key on a branch. Verified afterwards that no `.mcp.json`
+exists in the repo. **The correct wiring, and this hazard, now have a consumer-
+facing home in `docs/integration-guide.md`** — a step in a plan is read once by
+one Builder, and this is a mistake every future tenant can make.
+
 ⚠ **This is NOT a verification-ledger event.** It sends through
 `webhook.send` / `chat_api.send`, both of which cleared their flags in July
 2026. The same bytes from a different caller is not new evidence about Google,
 and claiming a clear here would be the same category error as claiming one from
 an offline replay. **Move no flag.**
 
-- [ ] **Step 4: Try one thing that should fail, and confirm the model can read it**
+✅ **Obeyed on the day, 2026-08-11: no flag moved.** ⚠ **The reason that decline is
+worth anything is that this paragraph was written on 2026-08-06, five days BEFORE
+the `delivered` it refuses to bank** — a refusal composed after the fact reads
+identically and proves nothing.
+
+- [x] **Step 4: Try one thing that should fail, and confirm the model can read it**
 
 Ask the agent to send as an identity its key does **not** grant. Confirm the
 refusal comes back as tool text the model can act on — naming what it *may* use —
@@ -2145,7 +2251,18 @@ rather than as a protocol error it cannot see. That round trip is the entire
 justification for spec §6.5's split; if it does not behave that way, the split is
 wrong and the row is not done.
 
-- [ ] **Step 5: Open the PR**
+  ✅ **Done live 2026-08-11, in production, against the real registry.** A
+  `tools/call` naming `aitrader-alerts` came back `isError: true` with the text
+  *"app 'agent-mcp' may not send as 'aitrader-alerts' (allowed:
+  pm-familyworkspace)"* — the registry's own message, naming what the caller **may**
+  use, as tool text rather than a protocol error. **Hard rule #4 enforced on the
+  wire**, and §6.5's split behaves exactly as the step demanded. ✅ **And the
+  refusal created NO `/v1/deliveries` row**, which is correct — an attempt that
+  never reached an adapter is not a delivery — and it is the first production
+  evidence for CG-80's build-time `DeliveryLog` fix, whose absence would have made
+  every MCP send invisible in the audit trail.
+
+- [x] **Step 5: Open the PR**
 
 Branch `feat/cg-80-mcp-server-surface` → `main`. The body must carry:
 
@@ -2156,15 +2273,41 @@ Branch `feat/cg-80-mcp-server-surface` → `main`. The body must carry:
 - a **Docs Impact** section listing every file Task 7 touched;
 - ⚠ **the two open handoffs below, which the PR does NOT close.**
 
-- [ ] **Step 6: Record the two handoffs the merge does not discharge**
+  ✅ **PR #72, merged 2026-08-10.** ⚠ **The third bullet could not be honoured as
+  written and that is worth saying rather than glossing:** the PR shipped a day
+  before the box was reachable, so *"Step 3's era finding"* did not exist when the
+  body was composed. It exists now (Step 3 above), and it did **not** come from the
+  PR. ⚠ **Both handoffs the last bullet required the body to carry have since been
+  discharged — see Step 6** — which does not retroactively make the merge close
+  them; it means someone else closed them four and five days later, on a box.
+
+- [x] **Step 6: Record the two handoffs the merge does not discharge**
 
 Neither is work this PR can do. Both belong in the queue row's exit notes.
+
+  ✅ **Recorded at the merge, and BOTH DISCHARGED 2026-08-11** — see the per-handoff
+  annotations below. ⚠ **The step itself was right and stays ticked on its own
+  terms:** its job was to make sure a merged row did not read as a finished one,
+  and for five days that is exactly what it did.
 
 1. ⚠ **The surface has no caller until an operator acts.** `config/registry.yaml`
    is gitignored, so the `agent-mcp` tenant exists only in the example file. An
    operator must mint a key, add the app entry, add
    `CHAT_GATEWAY_API_KEY__AGENT_MCP` to the box `.env`, and restart. **CG-61's
    lesson exactly: merged and in effect are two different facts here.**
+
+   ✅ **DISCHARGED 2026-08-11 — the operator did precisely this.** A key was minted
+   **over stdin, never argv** (hard rule #2), an `agent-mcp` entry was written into
+   the gitignored `config/registry.yaml` with **one** identity,
+   `pm-familyworkspace`, and `GATEWAY_ENABLE_MCP` was set via `app.update` (job
+   **3180**); `/healthz` now reports `mcp: {"enabled": true, "tools":
+   ["send_message"]}`. ⚠ **Kept in full rather than struck, because it was right
+   for five days and nothing about the discharge came from this repo** — that was
+   its whole claim. ⚠ **One thing it did NOT say, and the day supplied it:** which
+   identities get granted is itself a decision with consequences (spec §14's D7
+   note) — `aitrader-alerts` and `aitrader-reports` were deliberately **not**
+   granted, which the live rule-#4 refusal in Step 4 then demonstrated.
+
 2. ⚠ **The redeploy that carries this to the NAS also carries CG-59's
    `?strict=1`, and the ORDER is set by `docs/deploy/nas.md` §9 hazard 1.**
    The running container predates `?strict=1` and answers **200** to it, because
@@ -2188,6 +2331,39 @@ Neither is work this PR can do. Both belong in the queue row's exit notes.
    disproved"*). ⚠ **Do not read the correction as "the constraint is gone":** the
    *uptime* is real, is ~5 days, is longer than the soak ever asked for, and the
    rebuild spends it. What died was the **sampling**. Capture first, then rebuild.
+
+   ⛔ **THE CORRECTION ABOVE IS ITSELF FALSIFIED — 2026-08-11 — and its final four
+   words are now an instruction nobody can follow.** There was no uptime left to
+   capture. `dockerd` on the NAS was SIGKILLed on **2026-08-10**, cause
+   unexplained, and the container did not survive it. The last moment the streak
+   was ever **observed** alive is the NAS soak stream's final sample,
+   **`2026-08-06T22:29:53Z`** — roughly **25 h witnessed**, with nothing watching
+   the four days between that sample and the outage. **The "~5 days" repeated
+   above was arithmetic on a start timestamp, never an observation**, which is how
+   it survived being corrected once already. **`CG-82 task 1` is therefore MOOT: it
+   cannot be discharged.** ⚠ **LOST, not SPENT — and that distinction is the entire
+   reason the task existed.** Spent would have bought a deploy, which is the bargain
+   this handoff was written to price; lost bought nothing. ⚠ **Do not resurrect
+   "capture first" from this paragraph** — there is nothing to capture, and the
+   redeploy has since happened. New baselines and the outage timeline have one home:
+   `docs/deploy/nas.md` §10's **2026-08-11** entry.
+
+   ✅ **AND THE HANDOFF ITSELF IS DISCHARGED 2026-08-11, in the order it
+   prescribed.** `docker build`, then `sudo midclt call app.redeploy chat-gateway`
+   → job **3112 SUCCESS**, source `52710df` → `1f2d886` — **the first real exercise
+   of `app.redeploy`**, which nas.md §10 deviation 6 had recorded as
+   documented-but-untested: **it works.** CG-59's `?strict=1` rode the same
+   redeploy and is live: before, `?strict=1` → **200** with no `mcp` field; after,
+   `?strict=banana` → **422** and `?strict=1` → **200** while healthy. ⚠ **The 422
+   is a tool nobody planned for** — the old handler did not declare `strict` so it
+   answered 200 to any value; the new one declares it a bool, so a
+   deliberately-invalid value identifies the live image in **one request, without
+   degrading production**. ⛔ **What was NOT done, stated plainly rather than folded
+   into the tick: `?strict=1` returning 503 has still never been seen on the box.**
+   A genuine transient degraded window did occur after the restart and cleared
+   before a `?strict=1` sample could be taken, so this handoff's middle step —
+   *verify 503 on a degraded boot* — is **undischarged**, and the 503 path is proven
+   only in CG-59's driven local test. The tile step went ahead regardless.
 
 ---
 

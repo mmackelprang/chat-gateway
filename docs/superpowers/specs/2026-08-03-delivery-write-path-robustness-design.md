@@ -580,3 +580,30 @@ measurement, not as a standing property**: the audit JSONL and the journals are
 the files that grow, and how fast they grow on real volume is one of the things
 **CG-59's soak** is there to find out. The argument did not weaken; it stopped
 being hypothetical.
+
+> ⛔ **THE SOAK DID NOT FIND IT OUT, AND IT IS NOT GOING TO — corrected
+> 2026-08-11.** Both CG-59 streams are **dead and final**: the dev-box `/healthz`
+> half ran **24 h 12 m**, the NAS memory half **25.2 h** of a 72 h ceiling, and
+> neither is accruing. So *"one of the things CG-59's soak is there to find out"*
+> is a future tense that has already closed — **the growth rate of the audit JSONL
+> and the journals under real volume is unmeasured**, and this paragraph's own
+> instruction is left standing with nothing behind it. ⚠ **A re-run is blocked on
+> CG-85**: both samplers died to their **environment** rather than to their design,
+> ~90 minutes apart on two different hosts for reasons that remain **unexplained**,
+> so repeating the same capture buys the same ending.
+>
+> ⚠ **What the surviving half DOES cover, stated so it is not over-read:** the NAS
+> stream measured the **process** — memory, file descriptors, threads, all flat
+> over 25 h with no restart. **That is not disk.** It says nothing about how fast
+> the audit trails and journals grow, which is the question this paragraph asked.
+>
+> ⚠ **The bullet's own warning came true, which is the best argument for having
+> written it.** *"Read the low headroom-pressure figure as one dated measurement,
+> not as a standing property"* — `datapool` was measured **ONLINE at 38 % capacity**
+> on 2026-08-11 (clean scrub, zero errors), during the diagnosis of an outage this
+> paragraph knows nothing about. **The `1%` above is a reading from a day, not a
+> property of the box**, and it is left as written because that is what it always
+> was. ✅ **The argument the bullet supports is untouched:** CG-75 shipping before
+> CG-55 was right on the reasoning above, never on evidence the soak was going to
+> supply. **Numbers have one home: `docs/deploy/nas.md` §11 and §10's 2026-08-11
+> entry.**
