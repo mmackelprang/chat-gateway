@@ -671,8 +671,31 @@ call a tool it never listed. The enum's description reports each identity's
 live readiness from the same function `/healthz` reads, so the two cannot
 disagree about whether an identity is configured.
 
-Claude Code, project scope (`.mcp.json`) — keep the key in the environment,
-not in the file:
+### Wiring a client — and the one way to get it wrong that leaks your key
+
+**The scope you choose decides which file your API key lands in, and one of
+those files is inside your git repository.** This is the whole of the hazard;
+everything else here is typing.
+
+Claude Code, the form that was used to wire this gateway's first agent tenant:
+
+```bash
+claude mcp add --scope local --transport http chat-gateway \
+  http://<gateway-host>:8085/mcp \
+  --header "Authorization: Bearer <your-key>"
+```
+
+⚠ **`--scope local` is load-bearing, not a default worth accepting quietly.**
+Local scope writes the server — **including the literal header you just typed** —
+into `~/.claude.json`, outside any repository. **`--scope project` writes
+`.mcp.json` into the project directory**, which is a tracked file in most repos,
+so the same command would put a live credential on a branch and, one `git add -A`
+later, in your history. `claude mcp add` stores the header **verbatim**; it does
+not substitute an environment variable for you. **Check afterwards** — `ls
+.mcp.json` returning nothing is a one-second confirmation and it is worth taking.
+
+If you *do* want the server committed so a team shares it, commit the **shape**
+and never the secret — project scope with an environment reference:
 
 ```json
 {
@@ -686,7 +709,11 @@ not in the file:
 }
 ```
 
-Or by hand:
+That file is safe to commit **only because the key is a reference**. The
+distinction is exactly this gateway's own hard rule #2 — the registry holds env
+var *names*, the environment holds values — applied one layer out, at the client.
+
+Or by hand, which is also how you check a deployment answers at all:
 
 ```bash
 curl -s $GW/mcp -H "$AUTH" -H "$JSON" -d '{
@@ -736,6 +763,13 @@ never adds a `reasons` entry at any value: a surface being switched off is a
 configuration, not a fault. What it is *for* is telling an operator that the
 running image both **has** this surface and **has it on**, which is two facts
 you otherwise cannot get by probing.
+
+✅ **That earned out on the first upgrade, 2026-08-11**: the field's absence and
+then its presence were what distinguished the old image from the new one either
+side of a redeploy. If you are checking whether a gateway you did not deploy can
+serve you, `GET /healthz` and look for `mcp.enabled` — a `401` from `POST /mcp`
+and a *surface not enabled* answer are not the same problem and this tells you
+which you have.
 
 ### What it does NOT do, and why
 

@@ -202,10 +202,23 @@ JSON-RPC from stdin. No new package, no new dependency, no new container, and
 Its advantages are real and should not be talked past:
 
 - **It requires no gateway change, therefore no rebuild, therefore no redeploy.**
-  It could ship today, while CG-59's soak is still accruing uptime.
+  ~~It could ship today, while CG-59's soak is still accruing uptime.~~
 - **stdio is universally supported**; remote HTTP with custom headers is not.
 - The rule #1 / #4 / #6 analysis collapses to *"it is a client of the published
   API"* — the gateway grows no authenticated surface whatsoever.
+
+⛔ **FALSIFIED 2026-08-11 — nothing was accruing, and the thing being protected
+was already gone.** Both soak streams are dead and final; the NAS one's last
+sample is `2026-08-06T22:29:53Z`, and the uptime it was watching did not survive a
+`dockerd` failure on 2026-08-10. The numbers have one home —
+`docs/deploy/nas.md` §10's **2026-08-11** entry — and are deliberately not copied
+here. ⚠ **The bullet's actual advantage survives intact**: (b′) still needs no
+rebuild and no redeploy, and that is still true. What is struck is only the
+*reason it mattered* — the trailing clause priced a redeploy against a soak that
+stopped sampling **the same evening this spec was dated** and an uptime streak a
+`dockerd` failure ended four days later. Kept struck rather than deleted because
+"it can ship without touching the box" was a real argument for (b′) and a reader
+needs to see it was weighed, not missed.
 
 Its disadvantage is distribution: every machine running an MCP client needs the
 package installed and configured, and the API key then lives in a second place.
@@ -254,6 +267,35 @@ long-run evidence that exists, it is ~5 days — longer than the soak ever asked
 inspect`.** The distinction that matters: what died was the *sampling*, not the
 *uptime*, and a reader who collapses those two will throw the survivor away.
 
+⛔ **CORRECTED A THIRD TIME, 2026-08-11 — and the second correction is the one
+worth studying, because it was careful, specific, and wrong.** The block above
+separated *the sampling died* from *the uptime is alive* and told a Builder to go
+save the survivor. **There was no survivor.** `dockerd` on the NAS was SIGKILLed on
+**2026-08-10** — cause unexplained — and the container did not survive it. The
+last moment the streak was ever **observed** alive is the NAS soak stream's final
+sample, **`2026-08-06T22:29:53Z`**: roughly **25 h witnessed**, with nothing at all
+watching the four days between that sample and the outage. **The "~5 days" was
+arithmetic on a start timestamp, never an observation** — which is how a *careful*
+correction came to assert it in the present tense, and why nothing caught it: no
+measurement disagreed with it, because no measurement existed. One home for the
+numbers and the recovery baselines: `docs/deploy/nas.md` §10's **2026-08-11** entry.
+
+⚠ **Therefore: `CG-82 task 1` is MOOT — it cannot be discharged.** Do not
+resurrect the *"Capture it first"* instruction from the block above; there is
+nothing left to capture, and a redeploy has since happened anyway (§4's bonuses,
+below). ⚠ **The distinction that actually matters is the one that task existed
+for: the evidence was LOST, not SPENT.** Spent would have bought a deploy; lost
+bought nothing. Every version of this paragraph reasoned about *spending* it
+deliberately, in exchange for something — and the outcome was neither the
+scheduled expiry the first version predicted nor the deliberate trade the second
+version tried to protect.
+
+⚠ **The pattern, since this paragraph has now produced three of them:** the first
+correction found the reasoning *right for the wrong reason*; the second drew a
+sharp, true-looking line between two things and defended the wrong side of it; and
+a **third** thing neither version had in frame — the host's container runtime —
+ended both at once. A correction is not evidence that a claim has stopped moving.
+
 **Two things that fall out of that redeploy, and both are bonuses the row should
 claim:**
 
@@ -264,10 +306,37 @@ claim:**
   503 on a degraded boot, then repoint the Homepage tile* — and deliberately does
   not schedule the rebuild. **CG-80's redeploy is that rebuild.** The row inherits
   the verification step and the homelab handoff.
+
+  ✅ **CLAIMED 2026-08-11 — the redeploy happened and `?strict=1` is live on the
+  box.** Measured both sides of it: before, `?strict=1` → **200** and no `mcp`
+  field; after, `?strict=banana` → **422**, `?strict=1` → **200** while healthy,
+  `mcp` field present. ⚠ **The 422 is the load-bearing half and nobody predicted
+  it here:** the old handler never declared `strict`, so it answered 200 to *any*
+  value; the new one declares it as a bool. A deliberately-invalid value therefore
+  says which image is live **in one request, without degrading production and
+  without waiting for a fault** — it asks the parser a question, not the gateway.
+  ⛔ **STILL UNVERIFIED on the box: `?strict=1` returning 503.** A genuine
+  transient degraded window did occur after the restart and cleared before a
+  `?strict=1` sample could be taken, so that path is proven only in CG-59's driven
+  local test. This bullet's inherited *"verify 503 on a degraded boot"* step is
+  therefore **not** discharged. One home for all of it: `docs/deploy/nas.md` §10's
+  **2026-08-11** entry.
 - **It is the first real exercise of `app.redeploy`.** nas.md §10 deviation 6
   records that CG-55 used `docker kill` + `app.start` because fact 4 needed a
   crash, so *"`app.redeploy` remains the documented upgrade step and is **untested
   by this run**."* CG-80 tests it.
+
+  ✅ **CLAIMED 2026-08-11 — it works.** `sudo midclt call app.redeploy
+  chat-gateway` succeeded, carrying a locally-built image on a box with no
+  registry, which is the case §4 documents and nothing had ever run. The
+  documented upgrade step had never been exercised at all until then; deviation 6
+  said documented-but-untested and that sentence is now spent.
+  `GATEWAY_ENABLE_MCP` was turned on separately via `app.update`. ⚠ **The job
+  ids, the image digest and the commit range are deliberately NOT repeated here**
+  — their one home is `docs/deploy/nas.md` §10's 2026-08-11 entry. A spec records
+  *what a decision cost and whether it paid*; the run's identifiers belong to the
+  runbook, and this file carrying its own copy is how two records start
+  disagreeing.
 
 **What would flip this decision to (b′):** a target MCP client turning out not to
 support HTTP transport with static headers. The tool definitions and the
@@ -693,6 +762,14 @@ not one. The "no client has connected yet" fact lives in the plan's UAT step and
 in the queue row's exit condition, where it can be discharged, and **nowhere
 else**.
 
+✅ **DISCHARGED 2026-08-11, in the one place this paragraph said it could be.**
+The deployed surface was exercised over real HTTP in both eras and delivered a
+real message; the measurements live in `docs/deploy/nas.md` §10's **2026-08-11**
+entry. ⚠ **The instruction above is unchanged by that and is now the *harder*
+half:** no flag word was invented while the surface was untouched, and none is
+invented now that it has been touched — see §11, where the temptation runs the
+other way.
+
 ---
 
 ## 10. Hard rule #5 — what `/healthz` gains, decided one field at a time
@@ -733,6 +810,16 @@ changes nothing while looking exactly like the fix."* A `/healthz` field naming
 the MCP surface lets an operator confirm a rebuild landed **by reading**, not by
 inferring from behaviour that fails identically either way. `tools` is generated
 from the tool registry, never a literal list.
+
+✅ **The field did exactly that job on 2026-08-11**, its first day on a real box:
+`/healthz` reported `mcp: {"enabled": true, "tools": ["send_message"]}`, which is
+how the redeploy was confirmed landed and armed — by reading, as designed.
+⚠ **The 200-to-`?strict=1` anecdote above is past tense now and should be read as
+one**: the same redeploy carried CG-59, and the current image answers **422** to
+`?strict=banana` (§4). That turned out to give a *second*, independent one-request
+read of which image is live — so the lesson this field was justified by has two
+instruments on the box rather than one. Neither is copied here; `docs/deploy/nas.md`
+§10's **2026-08-11** entry is their one home.
 
 **Its `status` interaction, decided explicitly: it is NOT an input to `status`
 and adds no `reasons` entry, at any value.** A surface being switched off is a
@@ -777,6 +864,18 @@ The reasoning, in the ledger's own terms:
   offline replay. If a Builder wants to move a ledger row, that is a hard-rule-#3
   question needing the user's explicit sign-off, and it does not belong in this
   row.
+
+  ✅ **The round trip happened on 2026-08-11 and NO ⚠ flag moved.** A real message
+  was delivered through `tools/call` against the deployed box —
+  `{"status": "delivered", … "mode": "webhook"}` — and not one row in `CLAUDE.md`'s
+  ledger is cleared, added, re-priced or reworded by it. `webhook.send` was cleared
+  2026-07-29; a new ingress in front of it re-proves nothing about Google.
+  ⚠ **The reason this decline can be trusted is that it was written IN ADVANCE.**
+  A refusal composed *after* seeing a live `delivered` is indistinguishable from
+  one composed to justify what its author already wanted; this one predates the
+  evidence by five days and predicted the exact shape of the temptation it then
+  refused. That is the whole value of writing it down before the fact, and it is
+  the reason to keep this bullet standing rather than replace it with the outcome.
 - Exposing `cards` touches **none** of the card-shape findings. `CLAUDE.md`'s
   outbound/inbound `parameters` table is a statement about Google's runtimes; this
   row passes `cards` through verbatim as `/v1/messages` already does and adds no
@@ -848,6 +947,13 @@ persuasive and narrower than it looks.** Three things:
    half**, not an estimate of the row — §16 sizes the real thing.
 2. **No real MCP client has connected to it.** A `TestClient` proves the server
    answers what we designed; it cannot prove a client accepts it.
+   ⚠ **Still true 2026-08-11, and now true of the PROTOTYPE ONLY — read the scope,
+   because this bullet is one line away from looking false.** The *deployed* server
+   has since been handshaked over real HTTP in both eras against the box (§4, §11;
+   measurements in `docs/deploy/nas.md` §10's **2026-08-11** entry). The ~90-line
+   prototype described here was never deployed and nothing has ever connected to
+   it; it remains what it always was — a mount-point experiment, superseded by the
+   shipped module.
 3. **It ran against a synthetic registry**, not the live gitignored one — the
    distinction that has caught three people in this project already.
 
@@ -920,6 +1026,16 @@ HTTP transport, static bearer header) completing a handshake, listing the tool,
 and sending a message. This cannot be an offline test and must not be faked into
 one. It is the row's exit condition.
 
+✅ **MET 2026-08-11, over real HTTP against the deployed box — and the way it was
+met is worth stating precisely rather than ticked.** Handshake completed in **both**
+eras, `tools/list` returned `['send_message']` with the `identity` enum narrowed to
+`['pm-familyworkspace']` **on the wire**, a real message was **delivered**, and the
+rule-#4 refusal came back as tool text. ⚠ **The probes were direct HTTP, not a
+packaged MCP client**, so what §12.2 bullet 2 asks for — *a client accepts it* — is
+answered for the wire shape and not for any particular client's rendering. That
+distinction is exactly why the test plan named a client rather than a request.
+Measurements have one home: `docs/deploy/nas.md` §10's **2026-08-11** entry.
+
 ---
 
 ## 14. Decisions for the user — ✅ ALL EIGHT SIGNED OFF 2026-08-10
@@ -949,17 +1065,27 @@ operator grants an agent tenant those identities (§7.5). Nobody has decided tha
 Recorded here so that granting those two identities is a deliberate act with this
 paragraph attached rather than a line in a YAML file.
 
+✅ **The operator acted 2026-08-11 and did NOT grant those two identities.**
+`agent-mcp` was registered with **one** identity, `pm-familyworkspace`. The
+consequence this paragraph flagged therefore remains hypothetical, and it was
+demonstrated as such on the wire: `tools/call` naming `aitrader-alerts` came back
+`isError: true`, *"app 'agent-mcp' may not send as 'aitrader-alerts' (allowed:
+pm-familyworkspace)"* — the registry's own message, from the real check, in
+production. ⚠ **That measurement does not retire this paragraph**, it only shows
+the default was not taken this once: granting those identities is still a
+deliberate act with this paragraph attached, and nothing in the code prevents it.
+
 | # | Decision | Recommendation | One-line reasoning |
 |---|---|---|---|
 | **D1** | **Inbound scope** — send-only, or send + `read_inbox`? | **Send-only.** Design `read_inbox` fully (§7.6) and file it as **CG-81**, not queued: needs explicit hard-rule-#6 sign-off **and** CG-56 | `Inbox.poll` drains, so until CG-56 an MCP reader silently deletes another consumer's replies (§7.2) — a defect, not a policy call |
 | **D2** | **Process model** — mounted route / stdio CLI verb / second container | **(a) mounted route** on the existing FastAPI app | zero new deploy artifact on a NAS where a second one is expensive and under-specified (§4), and rule #4 is satisfied by reusing `authenticate()` rather than re-implementing it |
 | **D3** | **How many tools** | **One: `send_message`** | the per-app `enum` makes `list_identities` redundant; `notify` returns a 202 an agent cannot act on; a `heartbeat` tool would page a human after an agent session ends (§8) |
-| **D4a** | ⚠ **Which protocol era?** `2026-07-28` deleted `initialize`, `ping` and sessions, and **modern↔legacy fails in BOTH directions** (§6.1) | **Dual-era** on one endpoint | picking one era makes the gateway **silently unreachable** to clients speaking the other; dual-era's failure mode is "some extra code" instead. ⚠ **This finding arrived after the rest of this spec was drafted and it resized the row** — see §16 |
+| **D4a** | ⚠ **Which protocol era?** `2026-07-28` deleted `initialize`, `ping` and sessions, and **modern↔legacy fails in BOTH directions** (§6.1) | **Dual-era** on one endpoint | picking one era makes the gateway **silently unreachable** to clients speaking the other; dual-era's failure mode is "some extra code" instead. ⚠ **This finding arrived after the rest of this spec was drafted and it resized the row** — see §16. ✅ **VINDICATED BY MEASUREMENT 2026-08-11, not by argument** — both eras were driven against the deployed box and **both work, asymmetrically**: legacy answers a bare `initialize` with nothing else, while modern moves only when three headers and two `_meta` keys are all present. A server that had picked one era would have been unreachable to the other's clients, which is what this row reasoned to a priori. Measurements: `docs/deploy/nas.md` §10's **2026-08-11** entry |
 | **D4** | **Hand-rolled JSON-RPC, or the `mcp` Python SDK?** | **Hand-rolled** on `fastapi` + `pydantic`, no new dependency — ⚠ **but D4a makes this closer than it first looked** | an SDK brings its own ASGI/session/auth model into a process with four daemon threads and a hand-ordered boot, into a 174 MB image built on a box with no registry (§9). The honest counter — a protocol that broke nine days ago will move again — is answered by the symmetric risk: with no CI to that box, a silent wire change arriving via a dependency bump is worse here than an explicit one arriving via an edit |
 | **D5** | **Feature flag** — on by default, or `GATEWAY_ENABLE_MCP`? | **`GATEWAY_ENABLE_MCP`, default OFF** | matches `GATEWAY_ENABLE_PUBSUB`'s posture for a new surface; pairs with §10's health field so "did the rebuild land" and "is it armed" are two separate readable facts |
 | **D6** | **`/healthz`** — what, if anything, is added? | **`mcp: {enabled, tools}` and no counters.** Never an input to `status`, no `reasons` entry at any value | a synchronous route has no silent-failure mode for a counter to catch (§10); the config echo earns its place on CG-59's just-learned lesson that a deployed image may not be the one you think |
 | **D7** | **A registry `allow_mcp: false` per-app opt-out?** | **No** — the key is the control | YAGNI, and an app that does not want MCP simply keeps its key out of an MCP client. ⚠ **But this is the knob for §7.5's flagged fact** — that `aitrader-alerts` and `aitrader-reports` become model-addressable. Under D2(a) such a flag *is* enforceable, since MCP is a distinguishable route. If the user wants belt-and-braces for a real-money tenant, this is cheap and this is the moment |
-| **D8** | **Agent tenant onboarding** — does an agent get its own app id + identity, or reuse an existing tenant's key? | **Its own app id and its own identity** — but as a **documented operator action plus a `registry.example.yaml` example**, never as part of the PR | ⚠ `config/registry.yaml` is gitignored and a new key is a new secret: **a PR cannot do this.** CG-61's lesson exactly — *merged* and *in effect* are different facts. Until the operator acts, the surface ships with no caller, and the row must say so rather than read as done |
+| **D8** | **Agent tenant onboarding** — does an agent get its own app id + identity, or reuse an existing tenant's key? | **Its own app id and its own identity** — but as a **documented operator action plus a `registry.example.yaml` example**, never as part of the PR | ⚠ `config/registry.yaml` is gitignored and a new key is a new secret: **a PR cannot do this.** CG-61's lesson exactly — *merged* and *in effect* are different facts. ~~Until the operator acts, the surface ships with no caller, and the row must say so rather than read as done~~ ✅ **DISCHARGED 2026-08-11** — the operator minted a key (over stdin, never argv) and added `agent-mcp` to the gitignored registry with **one** identity, `pm-familyworkspace`; `GATEWAY_ENABLE_MCP` was set via `app.update` and `/healthz` reports `mcp: {"enabled": true, "tools": ["send_message"]}`. The struck sentence was **correct for five days** and is kept because its shape recurs: it was discharged by an operator on a box, not by anything in this repo, exactly as the row said it would have to be |
 
 ### Design calls made without asking — overrule if you disagree
 
@@ -1031,5 +1157,5 @@ design.
 
 | Row | State |
 |---|---|
-| **CG-80** — the MCP server surface, send-only | **queued** by this spec |
+| **CG-80** — the MCP server surface, send-only | ~~**queued** by this spec~~ ✅ **merged 2026-08-10, deployed and exercised on the NAS 2026-08-11** — and those are two dates for a reason, the same reason D8 gives |
 | **CG-81** — an MCP `read_inbox` tool | **filed, not queued.** Needs explicit hard-rule-#6 sign-off (D1) and depends on **CG-56** |

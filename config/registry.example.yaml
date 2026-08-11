@@ -84,12 +84,26 @@ apps:
   # example is a template and nothing more. Until an operator mints a key,
   # writes the entry and restarts, the MCP surface has no caller.
   #
+  # ^ Still true of any FRESH deployment, which is why it stays. On the NAS it
+  # was DONE on 2026-08-11 (docs/deploy/nas.md §10) — key minted over stdin,
+  # this block written into the live registry, `GATEWAY_ENABLE_MCP` set — and
+  # the surface has since delivered a real message. Read the sentence above as
+  # instructions to an operator, never as the current state of a box.
+  #
   # ⚠ And choose the `identities:` list deliberately rather than by copying.
   # Every identity granted here becomes model-addressable to whoever holds this
   # key — which is why this example grants ONE, and not, say, an aitrader
   # identity. That consequence is recorded in the CG-80 spec §7.5 and D7; it is
   # outbound only and touches no inbound guarantee, but it is a real choice and
   # this line is where it gets made.
+  #
+  # ⚠ THAT CHOICE WAS MADE, DELIBERATELY, ON THE LIVE BOX — and it is the only
+  # control there is. D7 declined a registry `allow_mcp:` flag, so this list is
+  # the whole of what narrows an MCP caller. `aitrader-alerts` and
+  # `aitrader-reports` were NOT granted, and the refusal was then observed on
+  # the wire: "app 'agent-mcp' may not send as 'aitrader-alerts'". Adding a line
+  # here later is not a config edit; it is widening a tenant's
+  # model-addressable surface.
   agent-mcp:
     key_env: CHAT_GATEWAY_API_KEY__AGENT_MCP
     identities: [pm-familyworkspace]

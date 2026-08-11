@@ -405,10 +405,34 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   ⚠ **Merged is not in effect, again.** The surface ships with **no caller**:
   `registry.example.yaml` gains an `agent-mcp` template, but minting the key and
   writing the app into the gitignored `config/registry.yaml` is an operator
-  action. CG-61's lesson, and **it is not deployed** — this row was merged
+  action. CG-61's lesson, and ~~**it is not deployed** — this row was merged
   deliberately without a rebuild, because the rebuild spends uptime evidence
-  CG-82 task 1 must capture first.
-  **No ⚠ verification-ledger flag moved.** This sits above `adapters/` and makes
+  CG-82 task 1 must capture first.~~
+  ✅ **IT IS DEPLOYED, ENABLED AND EXERCISED SINCE 2026-08-11 — the struck clause
+  was true for one day.** The operator minted the key, wrote `agent-mcp` into the
+  live registry and turned the surface on; it has since **delivered a real
+  message** and **refused an identity it was not granted, live**. The record has
+  ONE home and it is not this file: `docs/deploy/nas.md` §10, the **2026-08-11**
+  entry. Do not copy its job ids, image digest or probe results here.
+  ⚠ **The struck reason is worse than expired, and that is the part worth
+  carrying:** the rebuild did **not** spend the uptime evidence. `dockerd` on the
+  NAS died on 2026-08-10 and the container did not survive, so the streak was
+  **lost rather than spent** and **CG-82 task 1 cannot be discharged**. A
+  sentence that reads *"deferred for a good reason"* can be falsified by the
+  reason evaporating rather than by the decision being wrong.
+  ⚠ **One live consequence for a real-money tenant, recorded because D7 declined
+  the alternative:** there is no registry `allow_mcp` flag, so an app's
+  `identities:` list is the **only** thing narrowing what an MCP caller may send
+  as. `agent-mcp` was granted **one** identity and `aitrader-*` deliberately not.
+  Hard rule #6 is untouched — this is strictly outbound — but adding an identity
+  to that app is widening a model-addressable surface, not editing a config line.
+  ✅ **Dual-era is answered by measurement, not argument: BOTH eras are
+  load-bearing**, and asymmetrically — legacy negotiates from a bare
+  `initialize`, modern refuses to move without three headers and two `_meta`
+  keys. D4a is settled; stop carrying it as an open question.
+  **No ⚠ verification-ledger flag moved** — ⚠ **including on the day of the live
+  round trip, which is exactly when the spec predicted somebody would want to
+  move one.** This sits above `adapters/` and makes
   no Google call of its own; a live round-trip through the tool is the same bytes
   from a different caller and clears nothing.
 - **Card `parameters` shapes — outbound is fixed, inbound is a property of the
@@ -617,3 +641,25 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   candidate (`SubscriberLoop`'s long-run row) and leaves it for CG-59's soak,
   because retiring it needs the user's explicit hard-rule-#3 sign-off and a clock,
   not a smoke test.
+  ⚠ **§10 NOW HOLDS TWO DATED RUNS, and the *"look at §10, do not guess"* test
+  above is how you tell them apart.** The second is **2026-08-11**: a **23-hour
+  outage nobody detected** (`dockerd` SIGKILLed on 2026-08-10, cause unexplained,
+  systemd then latching), its recovery, the **first upgrade redeploy** — which
+  put CG-80's `/mcp` and CG-59's `?strict=1` on the box — and MCP's enablement
+  and live exercise. Its facts, deviations and probe results are **not summarized
+  here** for exactly the reason the paragraph above gives.
+  ⛔ **Two things from it that a reader of THIS file must not get wrong, because
+  both contradict what other bullets used to say.** (1) *"Deployed"* has not meant
+  *"continuously serving"* since 2026-08-10 — **this gateway has had a
+  multi-hour outage**, and the reason nobody knew is a genuine architectural gap
+  filed as **CG-84**: the dead-man switch watches **tenants'** silence, and
+  **`/healthz` cannot report that it is not answering.** (2) The container's
+  uptime streak is **gone, lost rather than spent** — so any sentence anywhere
+  offering *"~5 days of `RestartCount: 0`"* as evidence toward the
+  `SubscriberLoop` flag is false, and **CG-82 task 1 is moot**.
+  ⚠ **Still no ledger flag moved on 2026-08-11 either**, and it was a far more
+  tempting day than 2026-08-05: a real message went through the MCP tool to a
+  real Chat space. **That is the same webhook bytes from a different caller** —
+  `webhook.send` cleared 2026-07-29 — and a new ingress neither re-proves nor
+  extends it. The `SubscriberLoop` candidate moved the **wrong** way: the run
+  that was to be its evidence is dead (**CG-85**).

@@ -477,11 +477,11 @@ long-run.
 | 0b | **CG-61** close `aiteam-harness`'s inbound path (D1) | **New.** Behaviour change, so it is not folded into CG-60 (§4.0b). **Must land before CG-55**, which streams the live registry to the box. ✅ **It did — PR [#50](https://github.com/mmackelprang/chat-gateway/pull/50) merged 2026-07-31, and the operator's live-registry edit followed on 2026-08-03**, two days before CG-55 ran. |
 | 1 | **CG-53** deployment artifacts + secret-safety proof (**no deploy**) | Largest unknowns, and it carries the §1.2 leak finding. That finding must not wait behind two code PRs. Produces the image strategy, the on-box layout, the `CHAT_GATEWAY_ENV_FILE` loader, and the runbook — all offline-verifiable. |
 | 2 | **CG-54** queue + inbox durability | The **only hard prerequisite** for an always-on deploy. `restart: unless-stopped` means the thing restarts by itself; every restart silently empties both queues. A trusted always-on service that loses work on restart is worse than a hand-run one that does, because nobody is watching. Offline-testable. |
-| 3 | **CG-55** first NAS deploy + live smoke (~~**user-executed**~~ → ⚠ **BUILDER-executed over SSH** — this cell was already contradicted by §4.3's opening line in the same file, which says in so many words that it *"supersedes the earlier user-executed … framing"*; the sequencing table simply never got the edit. It ran that way on 2026-08-05) | Everything after this benefits from being observed on a running instance, and **the soak clock starts here** — so CG-59 harvests days of real uptime instead of beginning a wait. ✅ **It landed 2026-08-05 (`4ddd6f5`) and the clock has been running since.** |
+| 3 | **CG-55** first NAS deploy + live smoke (~~**user-executed**~~ → ⚠ **BUILDER-executed over SSH** — this cell was already contradicted by §4.3's opening line in the same file, which says in so many words that it *"supersedes the earlier user-executed … framing"*; the sequencing table simply never got the edit. It ran that way on 2026-08-05) | Everything after this benefits from being observed on a running instance, and **the soak clock starts here** — so CG-59 harvests days of real uptime instead of beginning a wait. ✅ **It landed 2026-08-05 (`4ddd6f5`)** ~~**and the clock has been running since.**~~ ⛔ **FALSIFIED 2026-08-11 — the clock stopped on 2026-08-06 and the box stopped on 2026-08-10.** Both soak streams are dead and final: the dev-box `/healthz` half ran **24 h 12 m**, the NAS memory half **25.2 h of a 72 h ceiling**. Then `dockerd` on the NAS failed on 2026-08-10 and the container did not survive, so *"days of real uptime"* was **LOST, not SPENT** — the last **observed** alive moment is the NAS stream's final sample on 2026-08-06, ~25 h witnessed, with nothing watching the four days after it. ⚠ **The row's reasoning is not what broke, which is why it is corrected rather than deleted:** deploying at step 3 really did buy the run a head start; what it could not buy was a capture that survives the host, and that is now its own row (**CG-85**). Every number has one home — `docs/deploy/nas.md` §11 and §10's **2026-08-11** entry. |
 | 4 | **CG-56** inbox delivery semantics (at-most-once → ack) — ✅ **approved, D3** | Before the contract doc is rewritten, so it is written once. |
 | 5 | **CG-57** jobhunt `callback_url` → passive polling | Documents the *final* semantics, whichever way CG-56 resolves. |
 | 6 | **CG-58** structured adapter failures + `Retry-After` | Improves a running system; needs no deploy to test (fakes can return 429 + `Retry-After`), and benefits from real traffic having been seen. |
-| 7 | **CG-59** long-run observation + what a **deployed** `/healthz` needs | Strictly after a deploy. Harvests the soak from step 3. ✅ **The deploy happened 2026-08-05; nothing blocks this row and the clock is running.** ⚠ Its `?strict=1` half became *more* urgent that day, not less — the homelab Homepage tile now probes plain `/healthz`, which answers 200 while degraded (§4.7). |
+| 7 | **CG-59** long-run observation + what a **deployed** `/healthz` needs | Strictly after a deploy. Harvests the soak from step 3. ✅ **The deploy happened 2026-08-05; nothing blocks this row** ~~**and the clock is running.**~~ ⛔ **THE CLOCK STOPPED — corrected 2026-08-11.** Both streams are dead and final (24 h 12 m on the dev-box `/healthz` half, 25.2 h of 72 h on the NAS memory half); there is nothing left to harvest from step 3, and a re-run needs **CG-85** first. ~~⚠ Its `?strict=1` half became *more* urgent that day, not less — the homelab Homepage tile now probes plain `/healthz`, which answers 200 while degraded (§4.7).~~ ⛔ **THE PREMISE WAS FALSE — corrected 2026-08-11: there was no tile.** `services.yaml` on the box carried **eight** NAS tiles and chat-gateway was not among them, so *"now probes plain `/healthz`"* described a probe nobody had created (§4.7). ✅ **The `?strict=1` half shipped 2026-08-05 and reached the box 2026-08-11** on CG-80's redeploy, and a tile was **created** — not repointed — against the strict form the same day. ⛔ **Still unverified on the box: `?strict=1` returning 503.** One home: `docs/deploy/nas.md` §10's **2026-08-11** entry. |
 
 **Where this departs from the brief's order, and why.**
 
@@ -932,6 +932,48 @@ here, and **not implemented by CG-53** — this row ships no deploy.
   contradiction. **CG-79 examined this line and correctly left it alone** (it
   counts a different set of ten and was accurate on the day); the thing that moved
   it is not one of CG-79's six facts at all.
+
+  ⛔ **CORRECTED 2026-08-11 — *written* was read downstream as *live*, and this
+  bullet is where that chain STARTS.** The ✅ above is accurate, and about a **pull
+  request**: PR #21 carries all five artifacts, and that is what it says. What the
+  rest of this arc then did with it is the failure — §4.7's *"THE TILE EXISTS
+  NOW"*, plan Part G's drift 12, G1's *"a live monitoring surface with a
+  known-wrong verdict"* and G1's whole new deliverable (*"the tile has to be
+  REPOINTED"*) all treat an open PR as a running dashboard. **Measured on the box
+  2026-08-11: `/mnt/datapool/apps/homepage/config/services.yaml` carried EIGHT
+  tiles in its NAS group, and chat-gateway was NOT one of them.** Whether PR #21
+  merged is not readable from this repo and is **not asserted here in either
+  direction**; what was measured is the file Homepage actually serves, and it did
+  not contain the row.
+
+  **Nothing above needs striking — the word this bullet chose was the right one.**
+  The durable lesson is the one a correction can carry and a re-measurement cannot:
+  **this repo can only ever verify the near half of a cross-repo handoff**, and the
+  arc spent six days reasoning about the far half as though *authored* and
+  *serving* were the same state. The ⚠ **written by the user, not by this row**
+  caveat earlier in this same bullet was the warning that this was a handoff; it
+  was read as a note about authorship, and not as a warning that the handoff's
+  completion was unmeasured and unmeasurable from here.
+
+  ⚠ **The correction is NOT that the old claim was harmless — it argued the MILDER
+  of two failures, and that is the part worth carrying forward.** A tile probing
+  plain `/healthz` reads **green while inbound is dead**. **No tile at all reads
+  NOTHING while the whole gateway is gone** — which is exactly what happened from
+  2026-08-10, when `dockerd` on the NAS died, took every one of the eleven stacks
+  with it, and stayed down ~23 hours with nothing telling anyone. Same blindness,
+  shorter route, larger blast radius. That gap is now **CG-84**, and it is a gap
+  rather than a defect: every liveness signal this gateway publishes is published
+  by the process whose liveness is in question.
+
+  ✅ **A tile was CREATED on the box 2026-08-11** — that file backed up first, the
+  NAS group now nine, the YAML validated by parsing rather than by eye — with
+  `href` on `/healthz` and `siteMonitor` on **`/healthz?strict=1`**, carrying a
+  comment recording that the `1` is load-bearing: the rebuilt image declares
+  `strict` as a bool, so an invalid value is a **422** and would read DOWN on a
+  perfectly healthy gateway. ⚠ **`capture.sh` has NOT been re-run, so the homelab
+  repo does not record the tile** — the same far half of the same handoff, still
+  open, and still not something this repo can discharge. One home for all of it:
+  `docs/deploy/nas.md` §9 and §10's **2026-08-11** entry.
 - `.env.example` gains `CHAT_GATEWAY_ENV_FILE` with the "environment wins"
   semantics stated.
 - `docker-compose.yml`'s header gains one clause scoping it as the **dev-box /
@@ -1458,7 +1500,17 @@ flag discipline applies: **no ⚠ flag may be cleared, added or reworded.**
 `CLAUDE.md`'s ledger records that no multi-hour live run has happened for
 `SubscriberLoop`. This row is that run. ~~Depends on CG-55; the clock starts when
 CG-55 lands.~~ ✅ **CG-55 landed 2026-08-05 (`4ddd6f5`) and the clock started with
-it. Nothing blocks this row.**
+it.** ~~**Nothing blocks this row.**~~
+
+⛔ **CORRECTED 2026-08-11 — the clock started and then STOPPED, and something does
+now block this row.** *"This row is that run"* is still the right description of
+the intent; it is no longer a description of anything in progress. Both streams are
+**dead and final** (24 h 12 m on the dev-box `/healthz` half, 25.2 h of a 72 h
+ceiling on the NAS memory half), the container's uptime evidence was **lost** to
+the 2026-08-10 `dockerd` outage rather than spent, and **a credible re-run is
+blocked on CG-85** — the samplers died to their environment, not their design, so
+repeating the same capture buys the same ending. Full treatment: the *"The soak"*
+subsection below. Numbers have one home: `docs/deploy/nas.md` §11.
 
 ⚠ **This section was written 2026-07-31, before eight PRs and the deploy, and it
 has been REFRESHED — twelve drifts, on the CG-53/Part A precedent. The drift
@@ -1480,20 +1532,54 @@ line-anchored citations in the live contracts point at the wrong code).
 
 Hardcoded 200, always. For a hand-run gateway that is fine and arguably correct —
 you read the JSON. For a **deployed** one this is a real gap, because Homepage's
-`siteMonitor` and Beszel both judge by status code: the tile is **green while
-inbound is dead**.
+`siteMonitor` and Beszel both judge by status code: ~~the tile is~~ ⚠ ***any*
+probe on the plain form would be** — corrected 2026-08-11, immediately below —
+**green while inbound is dead**.
 
 That is the claude-mem hardcoded-health-check failure — the one hard rule #5
 exists because of, the one that hid 11 days of silent capture failure — occurring
 one layer up, at the dashboard, against an endpoint that is itself scrupulously
 honest. `/healthz` is not lying; the dashboard reading it cannot hear it.
 
+> ⚠ **CORRECTED 2026-08-11 — the reasoning holds, the TENSE was wrong.** *"The
+> tile is green while inbound is dead"* is written in the present about a tile
+> that did not exist. Measured on the box: `services.yaml` carried **eight** NAS
+> tiles and chat-gateway was not among them (the origin of the error is §4.1's
+> `docs/deploy/nas.md` deliverable bullet — the PR #21 ✅ — where the full
+> correction lives). **Read this paragraph as
+> CONDITIONAL — *any* `siteMonitor` on the plain form would be green while inbound
+> is dead — which is precisely why the tile created on 2026-08-11 was pointed at
+> `?strict=1` from birth rather than pointed and then fixed.** ⚠ **And the failure
+> that actually occurred was the quieter sibling of this one:** no tile at all is
+> not green-while-dead, it is **nothing-while-absent**, which is what ~23 hours of
+> a dead `dockerd` looked like to every human on 2026-08-10. Filed as **CG-84**.
+
 **Recommended: add `GET /healthz?strict=1`, returning 503 when `reasons` is
 non-empty and 200 otherwise, with an identical body.** Additive — no existing
 consumer changes — and the homelab Homepage tile points its `siteMonitor` at the
 strict form. `/healthz` plain keeps its current contract.
 
-> ⚠ **THE TILE EXISTS NOW, so this stopped being preventative on 2026-08-05.**
+> ✅ **BOTH HALVES OF THAT RECOMMENDATION ARE NOW TRUE — confirmed 2026-08-11 —
+> and the second became true by a tile being CREATED, not repointed.** The
+> endpoint shipped 2026-08-05 and **reached the box 2026-08-11** on CG-80's
+> redeploy; the tile created that day carries `href` on plain `/healthz` and
+> `siteMonitor` on `/healthz?strict=1`. **Marked ✅ rather than corrected on
+> purpose: this sentence asked for the right thing, and what it asked for is what
+> was built** — it is the passages that read it as *already done* (below, and plan
+> Part G §G1) that were wrong, not this one. ⚠ **One consequence the sentence
+> could not have anticipated, now recorded because it makes the strict form
+> non-optional:** the rebuilt handler declares `strict` as a bool, so an invalid
+> value is a **422**, and a tile probing `?strict=banana` — or any typo — reads
+> **DOWN on a healthy gateway.** The `1` is load-bearing, and the tile carries a
+> comment saying so. ⛔ **Still NOT established on the box: `?strict=1` returning
+> 503.** A genuine degraded window occurred after the 2026-08-11 restart and
+> cleared before it could be sampled; the 503 path is proven only in the driven
+> local test. One home: `docs/deploy/nas.md` §10's **2026-08-11** entry.
+
+> ~~⚠ **THE TILE EXISTS NOW, so this stopped being preventative on 2026-08-05.**~~
+> ⛔ **FALSIFIED 2026-08-11 — IT DID NOT EXIST. Read the whole block below as a
+> description of an artifact in an open PR, never of anything Homepage was
+> serving; the correction follows the block.**
 > Homelab **PR #21** adds a Homepage row for the gateway whose `siteMonitor` is
 > `http://<LAN-IP>:8085/healthz` — **the plain form**, which answers **200 for
 > every reason string this endpoint can produce**, including the *"subscriber …
@@ -1505,6 +1591,34 @@ strict form. `/healthz` plain keeps its current contract.
 > `?strict=1` without it changes nothing an operator can see, which would retire
 > the finding without fixing it. Both halves are named in plan Part G §G1 and in
 > `nas.md` §9.
+
+> ⛔ **THE CORRECTION TO THE BLOCK ABOVE — 2026-08-11, measured on the box.**
+> `/mnt/datapool/apps/homepage/config/services.yaml` carried **eight** tiles in its
+> NAS group and **chat-gateway was not one of them.** So *"the tile therefore reads
+> green while inbound is dead"* described a monitoring surface that was not in the
+> config Homepage serves. Whether PR #21 merged is not readable from this repo and
+> is **not asserted either way**; the live file is what was measured. The whole
+> chain — here, plan Part G drift 12 and §G1 — inherits from **§4.1's
+> `docs/deploy/nas.md` deliverable bullet (the PR #21 ✅), which is where the
+> fullest version of this correction lives.**
+>
+> ⚠ **Not a harmless error: it argued the MILDER of two failures.** A tile on the
+> plain form is green while inbound is dead; **no tile at all is nothing while the
+> gateway is gone** — the state the box was actually in for ~23 hours from
+> 2026-08-10, unnoticed. **CG-84.**
+>
+> ✅ **The handoff clause was right, and it is DISCHARGED — by CREATE rather than
+> REPOINT.** *"Repointing … is a homelab-repo change"* presupposed something to
+> repoint. On 2026-08-11 a tile was **created** in that file (backed up first, NAS
+> group now nine, YAML validated by parsing) with `siteMonitor` on
+> `/healthz?strict=1` and `href` on the plain form. ⚠ **The `?strict=1` half also
+> reached the box that day** on CG-80's redeploy, so *"shipping `?strict=1` without
+> it changes nothing an operator can see"* never became the outcome it warned
+> about. ⚠ **Two residuals, neither closed:** `capture.sh` has **not** been re-run,
+> so the homelab repo does not record the tile — the far half of the handoff, which
+> this repo cannot discharge — and **`?strict=1` returning 503 has still never been
+> observed on the box.** One home for both: `docs/deploy/nas.md` §9 and §10's
+> **2026-08-11** entry.
 
 Chosen over changing the default because the default is a published contract with
 existing readers, and because a 503 from a container health check would make
@@ -1521,6 +1635,36 @@ one compaction, and `inbox.pending` / `inbox.dropped`.
 
 Deliverable: a dated observation section in the runbook — measured, not asserted,
 in this queue's house style.
+
+> ⛔ **THE RUN HAPPENED, DIED, AND IS FINAL — 2026-08-11. This design is now a
+> description of what was ATTEMPTED, not of what exists.** Both streams stopped on
+> the evening of 2026-08-06: the dev-box `/healthz` half after **24 h 12 m**, the
+> NAS memory half after **25.2 h** of its 72 h ceiling. Nothing is running,
+> accruing, or waiting for a ceiling. ⚠ **`≥24h` was the floor, so the run is not
+> void — it is *at* the floor with no margin**, and every downstream sentence that
+> assumes 72 h is assuming a run that does not exist.
+>
+> ✅ **One half of it answered its question cleanly and that should not be lost in
+> the failure:** the memory stream was **flat** — no memory leak, no fd growth, no
+> thread growth, no restart — over 25 h. **Over 25 h, not 72 h**, and the
+> difference is not rhetorical: three midnights, ~12 sweeps and ~70 token refreshes
+> are exactly what the 25 h window does not buy, and those were the reasons the
+> target was 72 h at all.
+>
+> ⚠ **Both streams died ~90 minutes apart on two DIFFERENT hosts, and that is
+> recorded as an OPEN QUESTION, not a conclusion.** Two independent samplers
+> stopping that close together suggests a common cause and it is unexplained; the
+> per-host inference (*a bare background process does not survive its host going
+> down*) explains each one separately and explains the coincidence not at all.
+> **Filed as CG-85, whose subject is not the deaths but the consequence: long-run
+> evidence needs a capture that survives a host event, and this project has now
+> lost two runs for want of one.**
+>
+> ⛔ **And the fallback evidence went too.** The container's uptime streak — the
+> other input this row had toward the `SubscriberLoop` flag — was destroyed when
+> `dockerd` on the NAS failed on 2026-08-10, **LOST rather than SPENT on a
+> deliberate rebuild**; last **observed** alive on 2026-08-06. **Every number has
+> one home: `docs/deploy/nas.md` §11, and §10's 2026-08-11 entry.**
 
 ⚠ **Whether this clears the ledger's `SubscriberLoop` long-run row is a hard rule
 #3 question and needs the user's explicit sign-off**, on the CG-35 precedent. The
