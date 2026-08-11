@@ -2299,9 +2299,10 @@ Neither is work this PR can do. Both belong in the queue row's exit notes.
    ✅ **DISCHARGED 2026-08-11 — the operator did precisely this.** A key was minted
    **over stdin, never argv** (hard rule #2), an `agent-mcp` entry was written into
    the gitignored `config/registry.yaml` with **one** identity,
-   `pm-familyworkspace`, and `GATEWAY_ENABLE_MCP` was set via `app.update` (job
-   **3180**); `/healthz` now reports `mcp: {"enabled": true, "tools":
-   ["send_message"]}`. ⚠ **Kept in full rather than struck, because it was right
+   `pm-familyworkspace`, and `GATEWAY_ENABLE_MCP` was set via `app.update`;
+   `/healthz` now reports `mcp: {"enabled": true, "tools": ["send_message"]}`.
+   *(Job ids and the commit range are not repeated here — one home,
+   `docs/deploy/nas.md` §10's 2026-08-11 entry.)* ⚠ **Kept in full rather than struck, because it was right
    for five days and nothing about the discharge came from this repo** — that was
    its whole claim. ⚠ **One thing it did NOT say, and the day supplied it:** which
    identities get granted is itself a decision with consequences (spec §14's D7
@@ -2349,10 +2350,11 @@ Neither is work this PR can do. Both belong in the queue row's exit notes.
    `docs/deploy/nas.md` §10's **2026-08-11** entry.
 
    ✅ **AND THE HANDOFF ITSELF IS DISCHARGED 2026-08-11, in the order it
-   prescribed.** `docker build`, then `sudo midclt call app.redeploy chat-gateway`
-   → job **3112 SUCCESS**, source `52710df` → `1f2d886` — **the first real exercise
-   of `app.redeploy`**, which nas.md §10 deviation 6 had recorded as
-   documented-but-untested: **it works.** CG-59's `?strict=1` rode the same
+   prescribed.** `docker build`, then `sudo midclt call app.redeploy
+   chat-gateway`, succeeded — **the first real exercise of `app.redeploy`**, which
+   nas.md §10 deviation 6 had recorded as documented-but-untested: **it works.**
+   *(Job ids, image digest and commit range: `docs/deploy/nas.md` §10's
+   2026-08-11 entry, their one home.)* CG-59's `?strict=1` rode the same
    redeploy and is live: before, `?strict=1` → **200** with no `mcp` field; after,
    `?strict=banana` → **422** and `?strict=1` → **200** while healthy. ⚠ **The 422
    is a tool nobody planned for** — the old handler did not declare `strict` so it

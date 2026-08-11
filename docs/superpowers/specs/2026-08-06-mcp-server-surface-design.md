@@ -327,11 +327,16 @@ claim:**
   by this run**."* CG-80 tests it.
 
   ✅ **CLAIMED 2026-08-11 — it works.** `sudo midclt call app.redeploy
-  chat-gateway` → job **3112 SUCCESS**, carrying a locally-built image from source
-  `52710df` → `1f2d886`. The documented upgrade step had never been run at all
-  until then; deviation 6 said documented-but-untested and that sentence is now
-  spent. `GATEWAY_ENABLE_MCP` was turned on separately via `app.update` → job
-  **3180 SUCCESS**.
+  chat-gateway` succeeded, carrying a locally-built image on a box with no
+  registry, which is the case §4 documents and nothing had ever run. The
+  documented upgrade step had never been exercised at all until then; deviation 6
+  said documented-but-untested and that sentence is now spent.
+  `GATEWAY_ENABLE_MCP` was turned on separately via `app.update`. ⚠ **The job
+  ids, the image digest and the commit range are deliberately NOT repeated here**
+  — their one home is `docs/deploy/nas.md` §10's 2026-08-11 entry. A spec records
+  *what a decision cost and whether it paid*; the run's identifiers belong to the
+  runbook, and this file carrying its own copy is how two records start
+  disagreeing.
 
 **What would flip this decision to (b′):** a target MCP client turning out not to
 support HTTP transport with static headers. The tool definitions and the
@@ -1080,7 +1085,7 @@ deliberate act with this paragraph attached, and nothing in the code prevents it
 | **D5** | **Feature flag** — on by default, or `GATEWAY_ENABLE_MCP`? | **`GATEWAY_ENABLE_MCP`, default OFF** | matches `GATEWAY_ENABLE_PUBSUB`'s posture for a new surface; pairs with §10's health field so "did the rebuild land" and "is it armed" are two separate readable facts |
 | **D6** | **`/healthz`** — what, if anything, is added? | **`mcp: {enabled, tools}` and no counters.** Never an input to `status`, no `reasons` entry at any value | a synchronous route has no silent-failure mode for a counter to catch (§10); the config echo earns its place on CG-59's just-learned lesson that a deployed image may not be the one you think |
 | **D7** | **A registry `allow_mcp: false` per-app opt-out?** | **No** — the key is the control | YAGNI, and an app that does not want MCP simply keeps its key out of an MCP client. ⚠ **But this is the knob for §7.5's flagged fact** — that `aitrader-alerts` and `aitrader-reports` become model-addressable. Under D2(a) such a flag *is* enforceable, since MCP is a distinguishable route. If the user wants belt-and-braces for a real-money tenant, this is cheap and this is the moment |
-| **D8** | **Agent tenant onboarding** — does an agent get its own app id + identity, or reuse an existing tenant's key? | **Its own app id and its own identity** — but as a **documented operator action plus a `registry.example.yaml` example**, never as part of the PR | ⚠ `config/registry.yaml` is gitignored and a new key is a new secret: **a PR cannot do this.** CG-61's lesson exactly — *merged* and *in effect* are different facts. ~~Until the operator acts, the surface ships with no caller, and the row must say so rather than read as done~~ ✅ **DISCHARGED 2026-08-11** — the operator minted a key (over stdin, never argv) and added `agent-mcp` to the gitignored registry with **one** identity, `pm-familyworkspace`; `GATEWAY_ENABLE_MCP` was set via `app.update` (job 3180) and `/healthz` reports `mcp: {"enabled": true, "tools": ["send_message"]}`. The struck sentence was **correct for five days** and is kept because its shape recurs: it was discharged by an operator on a box, not by anything in this repo, exactly as the row said it would have to be |
+| **D8** | **Agent tenant onboarding** — does an agent get its own app id + identity, or reuse an existing tenant's key? | **Its own app id and its own identity** — but as a **documented operator action plus a `registry.example.yaml` example**, never as part of the PR | ⚠ `config/registry.yaml` is gitignored and a new key is a new secret: **a PR cannot do this.** CG-61's lesson exactly — *merged* and *in effect* are different facts. ~~Until the operator acts, the surface ships with no caller, and the row must say so rather than read as done~~ ✅ **DISCHARGED 2026-08-11** — the operator minted a key (over stdin, never argv) and added `agent-mcp` to the gitignored registry with **one** identity, `pm-familyworkspace`; `GATEWAY_ENABLE_MCP` was set via `app.update` and `/healthz` reports `mcp: {"enabled": true, "tools": ["send_message"]}`. The struck sentence was **correct for five days** and is kept because its shape recurs: it was discharged by an operator on a box, not by anything in this repo, exactly as the row said it would have to be |
 
 ### Design calls made without asking — overrule if you disagree
 

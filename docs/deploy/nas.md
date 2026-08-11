@@ -785,9 +785,10 @@ repointing anything:
    halves of this hazard's ordering constraint are now void** (there is nothing
    left to capture) **while the redeploy it gated has since happened for its own
    reasons.** Do not resurrect a `docker inspect`-first instruction from this
-   paragraph. New baselines, both measured 2026-08-11: `StartedAt
-   2026-08-11T14:46:00.906461422Z` after the daemon recovery, then
-   `2026-08-11T14:56:49.752003098Z` after the redeploy, `RestartCount: 0`.
+   paragraph. **The container's new baselines live in §10's 2026-08-11 entry**,
+   which is their one home — deliberately not copied here, because a timestamp
+   that reads as *"the current uptime"* is precisely the shape this hazard has
+   just watched go wrong twice.
 3. **The URL is `?strict=1` exactly.** `strict` is a boolean query parameter: a
    bare `?strict` or an empty `?strict=` is a **422** once the new image is
    running — non-200, so the tile would read DOWN on a healthy gateway. That is
@@ -1134,6 +1135,14 @@ a runbook's incident write-up is a gap nobody will work.
 | `sudo midclt call app.redeploy chat-gateway` | job **3112** → **SUCCESS** |
 | compose gained `GATEWAY_ENABLE_MCP: "1"` via `sudo midclt call app.update` | job **3180** → **SUCCESS** |
 
+**The container's new uptime baselines — measured here because this is their one
+home, and §9 and §11 both point at it.** `StartedAt
+2026-08-11T14:46:00.906461422Z` after the daemon recovery, then
+`2026-08-11T14:56:49.752003098Z` after the redeploy; `RestartCount: 0`.
+⚠ **A fresh `RestartCount: 0` is not evidence of anything yet** — it is hours
+old, and reading it as continuity with the streak the outage destroyed is the
+precise mistake §9 hazard 2 and §11 now exist to prevent.
+
 ✅ **First real exercise of `app.redeploy`** — §10 deviation 6 recorded it as
 documented-but-untested since 2026-08-05. It works, against a locally built image
 on a box with no registry. That deviation is updated rather than left standing.
@@ -1439,9 +1448,9 @@ Final numbers are in the block at the top of this section.
   ⛔ **FALSIFIED 2026-08-11: it HAS been reset, and not by anything this project
   chose.** The `dockerd` failure of 2026-08-10 ended it; the streak's last
   **observed** moment is `2026-08-06T22:29:53Z`, not the ~5 days four documents
-  went on claiming. Current baselines, measured 2026-08-11: `StartedAt
-  2026-08-11T14:46:00.906461422Z` (daemon recovery), then
-  `2026-08-11T14:56:49.752003098Z` (redeploy), `RestartCount: 0`. ⚠ **A fresh
+  went on claiming. **Current baselines are in §10's 2026-08-11 entry**, their
+  one home, and are not copied into this bullet — a *"current uptime"* figure
+  with two homes is the specific thing that went wrong here. ⚠ **A fresh
   `RestartCount: 0` is not evidence of anything yet** — it is hours old, and
   reading it as continuity with the old streak is the exact mistake this bullet
   now exists to prevent.
