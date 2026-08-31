@@ -37,7 +37,7 @@ import hashlib
 import json
 import re
 import threading
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Callable
 from zoneinfo import ZoneInfo
@@ -386,10 +386,34 @@ class HeartbeatStore:
 
     # -- persistence ----------------------------------------------------------
     def _load(self) -> None:
+        """Read the persisted checks. UNKNOWN KEYS ARE IGNORED, DELIBERATELY.
+
+        ⚠ THIS IS A ROLLBACK GUARD, AND IT POINTS FORWARD — say which
+        direction, because the obvious reading is the one it cannot deliver. It
+        does NOT rescue a rollback to a PRE-CG-86 image: that image ships its
+        own `_load`, which is `Check(**c)`, and it will still die inside
+        `create_app` with (MEASURED on 3.10.12) `TypeError: Check.__init__()
+        got an unexpected keyword argument 'thread_started'` — a boot failure
+        on a file this release wrote. Nothing committed here can change code
+        that already shipped.
+
+        What it does buy: from this release on, a state file written by a
+        NEWER one loads, so the next field addition cannot turn a rollback to
+        this image into a boot failure the way CG-86's two fields would have.
+        It is the same posture as `normalize_event`'s two envelope formats —
+        tolerate what you can name, and do not let an unknown extra be fatal.
+
+        ⚠ IT IS NOT A VALIDATOR AND MUST NOT BE READ AS ONE. The values of the
+        keys it DOES know are still unchecked — `scan_once`'s docstring records
+        that a corrupt `last_seen` makes selection raise before the loop is
+        entered, and that residue is untouched here. Only the KEY SET is
+        filtered.
+        """
         if self._path and self._path.exists():
             data = json.loads(self._path.read_text(encoding="utf-8"))
+            known = {f.name for f in fields(Check)}
             for c in data.get("checks", []):
-                check = Check(**c)
+                check = Check(**{k: v for k, v in c.items() if k in known})
                 self._checks[(check.source, check.check_id)] = check
 
     def _save(self) -> None:

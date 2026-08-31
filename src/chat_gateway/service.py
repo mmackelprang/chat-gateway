@@ -558,7 +558,30 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # `recovery_message` raise while formatting an elapsed delta. Built
         # above the `try`, that raise would 500 the liveness ping and cause the
         # exact fabricated outage this whole block is written not to cause.
-        if previous is not None and previous.status == "missed":
+        #
+        # ⚠ AND `alert_count > 0`, WHICH IS NOT REDUNDANT WITH `missed` — it is
+        # the DEPLOY-TRANSITION guard, added in CG-86's pre-merge review. A
+        # `heartbeats.json` row written before this release loads with
+        # `status: "missed"`, `thread_started=False` and `alert_count=0`; if it
+        # refreshes before the next scan, the all-clear is the FIRST message
+        # ever posted on that thread key — a `RESOLVED` starting its own
+        # thread, which is precisely the rule this whole change cites. Nothing
+        # is lost by suppressing it: a recovery delivered nothing at all before
+        # this PR, so a migrated row keeps exactly the behaviour it had.
+        #
+        # ⚠ AND IT IS `alert_count`, NOT `not previous.thread_started`, WHICH
+        # WOULD BE WRONG. A check whose thread ROOT failed but whose ALERT
+        # succeeded has `thread_started=False` while the thread DOES exist —
+        # the alert created it, via the adapter's
+        # `REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD` — so that gate would swallow a
+        # legitimate all-clear for the alert the reader is actually looking at.
+        # That is not hypothetical: `scan_once`'s inner `try` exists to let
+        # exactly that combination happen. `alert_count` increments only in
+        # `mark_alerted`, i.e. only once a threaded alert was ACCEPTED, so it
+        # answers the question that matters here — "is there a message of ours
+        # on this thread for this to close?" — and nothing else does.
+        if (previous is not None and previous.status == "missed"
+                and previous.alert_count > 0):
             try:
                 title, body = recovery_message(previous, checks.now())
                 _monitor_notify(app_id, title, body, None,

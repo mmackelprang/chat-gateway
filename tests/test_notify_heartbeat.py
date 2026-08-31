@@ -1543,6 +1543,114 @@ def test_a_missed_check_that_refreshes_delivers_exactly_one_recovery(
     assert len(adapter.sent) == before + 1
 
 
+def test_a_pre_CG_86_missed_row_that_refreshes_posts_no_orphan_all_clear(
+        registry, tmp_path):
+    """⚠ THE DEPLOY TRANSITION, and it is the one shape `status == "missed"`
+    alone gets wrong.
+
+    A `heartbeats.json` row written by the previous release loads with
+    `status: "missed"`, `thread_started=False` and `alert_count=0`: it was
+    alerted, but by a build that posted no thread root and set no thread key.
+    If it refreshes before the next scan, an all-clear gated on the status
+    alone would be the FIRST message ever posted on that thread key — a
+    `RESOLVED` starting its own thread, which is the exact rule CG-86 cites.
+
+    `previous.alert_count > 0` is what suppresses it, and nothing is lost:
+    before this PR a recovery delivered nothing at all, so the migrated row
+    keeps precisely the behaviour it already had. The check is suppressed, not
+    broken — the second half of this test drives it missed again and watches
+    the thread open normally.
+    """
+    path = tmp_path / "hb.json"
+    path.write_text(json.dumps({"checks": [{
+        "source": "aitrader", "check_id": "daily-run", "schedule": "every:60s",
+        "grace": "60s", "tz": "America/New_York",
+        "last_seen": "2026-07-24T20:30:00+00:00",
+        "last_alerted": "2026-07-27T23:00:00+00:00", "status": "missed",
+    }]}), encoding="utf-8")
+
+    clock = Clock(dt.datetime(2026, 7, 28, 12, 0, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+    migrated = app.state.heartbeats.list_for("aitrader")[0]
+    assert (migrated.status, migrated.thread_started, migrated.alert_count) == \
+        ("missed", False, 0), "the premise: this is what a pre-CG-86 row loads as"
+
+    body = {"check_id": "daily-run", "schedule": "every:60s", "grace": "60s"}
+    assert client.post("/v1/heartbeat", headers=AUTH, json=body).status_code == 200
+    app.state.dispatcher.process_due()
+
+    assert adapter.sent == [], "an all-clear here would start its own thread"
+    assert client.get("/v1/deliveries", headers=AUTH).json()["deliveries"] == []
+
+    # Suppressed, not broken: the very next outage opens the thread and alerts
+    # in the normal way, and its recovery is threaded because by then there is
+    # something of ours for it to close.
+    clock.now += dt.timedelta(seconds=300)
+    assert app.state.monitor.scan_once() == 1
+    app.state.dispatcher.process_due()
+    assert len(rendered_as(adapter, "info")) == 1     # the thread root
+    assert len(rendered_as(adapter, "alert")) == 1    # the alert
+    client.post("/v1/heartbeat", headers=AUTH, json=body)
+    app.state.dispatcher.process_due()
+    assert len(rendered_as(adapter, "info")) == 2, "now the all-clear IS owed"
+
+
+def test_a_check_whose_ROOT_failed_but_whose_ALERT_landed_still_gets_its_all_clear(
+        registry, tmp_path):
+    """⚠ WHY THE GATE IS `alert_count`, NOT `not previous.thread_started`.
+
+    `thread_started` is `False` in two states that look identical from the
+    field and are opposite in fact: no thread exists (the pre-CG-86 row above),
+    and a thread DOES exist because the alert created it after its root failed
+    — the adapter posts with `REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`, so an
+    alert on an unopened key opens it. `scan_once`'s inner `try` exists
+    precisely so that combination can happen.
+
+    Gating on `not previous.thread_started` would swallow the all-clear for the
+    alert the reader is actually looking at. `alert_count` increments only in
+    `mark_alerted`, i.e. only once a threaded alert was ACCEPTED, so it answers
+    the question that matters — is there a message of ours on this thread for
+    this to close?
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+    body = {"check_id": "daily-run", "schedule": "every:60s", "grace": "60s"}
+    assert client.post("/v1/heartbeat", headers=AUTH, json=body).status_code == 200
+
+    # Break the ROOT only. The recovery notice does not go through
+    # `monitor._notify` at all — `refresh_heartbeat` calls the shared
+    # `_monitor_notify` closure directly — so this cannot mask the assertion.
+    original = app.state.monitor._notify
+
+    def root_refusing(source, title, body_, key, thread_key, *, severity="alert"):
+        if severity == "info":
+            raise RuntimeError("root refused")
+        return original(source, title, body_, key, thread_key, severity=severity)
+
+    app.state.monitor._notify = root_refusing
+    clock.now += dt.timedelta(seconds=300)
+    with pytest.raises(RuntimeError, match="root refused"):
+        app.state.monitor.scan_once()
+    app.state.monitor._notify = original
+    app.state.dispatcher.process_due()
+
+    check = app.state.heartbeats.list_for("aitrader")[0]
+    assert (check.status, check.thread_started, check.alert_count) == \
+        ("missed", False, 1), "the state the simpler gate would have misread"
+    assert len(rendered_as(adapter, "alert")) == 1
+    assert rendered_as(adapter, "info") == [], "the root never landed"
+
+    clock.now += dt.timedelta(seconds=120)
+    assert client.post("/v1/heartbeat", headers=AUTH, json=body).status_code == 200
+    app.state.dispatcher.process_due()
+
+    (ident, msg), = rendered_as(adapter, "info")
+    assert ident == "aitrader-alerts"
+    assert "recovered after" in msg.text
+    assert msg.thread_key == "hb:aitrader:daily-run", \
+        "and it closes the alert's own thread, which the alert opened"
+
+
 def test_a_recovery_that_raises_does_not_fail_the_heartbeat_request(
         registry, tmp_path, monkeypatch):
     """⚠ REFRESHING **IS** THE LIVENESS PING, so nothing in the all-clear may
@@ -1763,14 +1871,67 @@ def test_format_elapsed_at_every_unit_boundary():
     assert format_elapsed(-5) == "0s", "a backwards clock renders no minus sign"
 
 
+def test_a_heartbeats_json_carrying_an_UNKNOWN_key_still_loads(tmp_path):
+    """⚠ THE ROLLBACK DIRECTION, AND IT POINTS FORWARD — see `_load`'s
+    docstring for what it cannot do.
+
+    `Check(**row)` makes every field addition a BOOT failure for the previous
+    image: `create_app` builds the store, the store loads the file, and an
+    unexpected keyword raises before the app exists. CG-86 added two fields, so
+    a rollback to a pre-CG-86 image is exactly that failure — and nothing
+    committed now can fix an image that already shipped.
+
+    What is fixable is the NEXT one. From this release on, an unknown key is
+    dropped rather than fatal, so a state file written by a newer image still
+    loads here. The unknown key below stands in for that future field.
+
+    ⚠ THE KEY SET IS FILTERED, NOT THE VALUES. `status` below is a real field
+    with a real value and survives; nothing here validates it.
+    """
+    path = tmp_path / "hb.json"
+    path.write_text(json.dumps({"checks": [{
+        "source": "aitrader", "check_id": "daily-run", "schedule": "every:60s",
+        "grace": "60s", "tz": "America/New_York",
+        "last_seen": "2026-07-24T20:30:00+00:00",
+        "last_alerted": "2026-07-27T23:00:00+00:00", "status": "missed",
+        "thread_started": True, "alert_count": 4,
+        # A field some later release adds, that this one has never heard of.
+        "escalation_tier": "paging",
+    }]}), encoding="utf-8")
+
+    check = HeartbeatStore(path).list_for("aitrader")[0]
+    assert (check.status, check.thread_started, check.alert_count) == \
+        ("missed", True, 4), "every KNOWN field survives the filter"
+    assert not hasattr(check, "escalation_tier")
+    # And the row it did not understand is not written back out — `_save`
+    # serialises the dataclass, so the unknown key is dropped on the next
+    # write. Recorded rather than fixed: preserving it would mean carrying an
+    # unvalidated blob through a file this gateway is the only writer of.
+    assert "escalation_tier" not in json.dumps(
+        {"checks": [check.__dict__]})
+
+
 def test_a_heartbeats_json_written_before_CG_86_still_loads(tmp_path):
     """The on-disk shape gained two fields, and an upgrade must not lose checks.
 
-    `HeartbeatStore._load` does `Check(**row)`, so a row written by the previous
-    release — no `thread_started`, no `alert_count` — loads only because both
-    defaults exist. ⚠ The defaults are ALSO the correct migration: an existing
-    missed check re-opens its thread once (nobody had one) and restarts its
-    backoff ladder at 1d, which is the pre-CG-86 cadence.
+    `HeartbeatStore._load` builds a `Check` from a row's known keys, so a row
+    written by the previous release — no `thread_started`, no `alert_count` —
+    loads only because both defaults exist. This test asserts the LOAD, and
+    nothing else; ⚠ it used to claim the migration behaviour too ("an existing
+    missed check re-opens its thread once"), which is true only on the
+    miss-again path and is exercised nowhere here. Corrected 2026-08-31 in
+    CG-86's pre-merge review.
+
+    Where the two migration paths ARE pinned:
+
+    - miss again — the check has no thread, so its next alert opens one and its
+      ladder restarts at 1d, the pre-CG-86 cadence
+      (`test_the_thread_root_is_posted_once_per_check_and_not_after_a_refresh`
+      covers the once-per-check half).
+    - refresh first — `alert_count == 0` suppresses the all-clear, so a
+      `RESOLVED` cannot be the first message on a thread key nothing has ever
+      posted to
+      (`test_a_pre_CG_86_missed_row_that_refreshes_posts_no_orphan_all_clear`).
     """
     path = tmp_path / "hb.json"
     path.write_text(json.dumps({"checks": [{
