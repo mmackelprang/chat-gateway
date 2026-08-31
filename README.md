@@ -75,7 +75,7 @@ curl -s localhost:8085/v1/messages \
 |---|---|
 | `POST /v1/messages` | Send a raw envelope as a registered identity (synchronous; 403 if the identity isn't allowlisted for your key) |
 | `POST /v1/notify` | **Accept-fast notifications** (202 on enqueue): severity routing (`routes:` config), severity rendering (alert = loud card + "What to do"; info = plain), dedupe windows with occurrence counters, async delivery with retries |
-| `POST /v1/heartbeat` | **Dead-man checks**: register/refresh; silence past `schedule + grace` fires an alert on your alert route, repeating daily. `weekdays` schedule rolls weekend due-dates to Monday (tz-aware) — no weekend false alarms |
+| `POST /v1/heartbeat` | **Dead-man checks**: register/refresh; silence past `schedule + grace` fires an alert on your alert route, repeating on an escalating backoff (1d/2d/4d/weekly), one Chat thread per check, with an all-clear on recovery. `weekdays` schedule rolls weekend due-dates to Monday (tz-aware) — no weekend false alarms |
 | `GET /v1/heartbeat/{source}` · `DELETE .../{check_id}` | Check states / decommission (own source only) |
 | `GET /v1/deliveries` | Per-source delivery log: `enqueued → retrying* → delivered/failed` (+ `deduped`). Titles only, never bodies |
 | `GET /v1/inbox` | Poll replies routed to your app (tier 2). Apps with `allow_inbound: false` get a hard 403 — the **no-inbound-control** contract is enforced, and no gateway mechanism ever turns Chat input into a call against a consumer |

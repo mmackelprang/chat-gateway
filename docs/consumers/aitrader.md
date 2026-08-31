@@ -298,21 +298,97 @@ guarantee: the due date is computed, converted into `tz`, and then
 forward to Monday, in **your** timezone, default **`America/New_York`**. The
 deadline is `next_due + grace`.
 
-**Repeat** is daily (`DEFAULT_REPEAT_S = 86400`) until you refresh or delete.
+~~**Repeat** is daily (`DEFAULT_REPEAT_S = 86400`) until you refresh or
+delete.~~ ⚠ **CORRECTED 2026-08-31 (CG-86): THE REPEAT ESCALATES.** It is
+**1d, then 2d, then 4d, then weekly** (`repeat_after`, ceiling
+`MAX_REPEAT_S = 604800`) until you refresh or delete. `DEFAULT_REPEAT_S` is
+now the FIRST interval, not a flat one. **Nothing is suppressed** — the
+reminder keeps arriving, and each one carries a fresh elapsed delta in its
+title, so no two are the same message. The cause: a check that had not changed
+state in seven days produced four consecutive days of byte-identical top-level
+alerts.
+
+⚠ **The FIRST transition into `missed` is unchanged and still alerts on the
+very next scan.** No backoff, ceiling or alert count can delay it — CG-86
+changed the cadence of REMINDERS and nothing else.
+
 ⚠ **This used to add "and the repeats collapse through the same deduper
 (`dedupe_key: "hb:<check_id>"`)". CG-76 removed that key.** What it buys you:
 **two outages now produce two alerts.** If you die, recover, refresh, and die
 again inside the hour, the second outage is reported — under the old key it was
 collapsed into the first one's alert. Nothing else changes for you; `alert_due()`
-is this path's dedupe and still caps you at one alert per check per 24h. The
-measurement and the reasoning have one home, CG-76's spec §2.4. The alert is
-`severity: alert`, so it takes your **alert** route:
+is this path's dedupe and still caps you at ~~one alert per check per 24h~~
+**one alert per check per `repeat_after(alert_count)`, which is 24h at its
+shortest and only ever longer**. The
+measurement and the reasoning have one home, CG-76's spec §2.4.
 
-```
+**Every message about one check now shares one Chat thread** (CG-86 D1): the
+key is `hb:<source>:<check_id>`, derived from the check's identity and from
+nothing that moves. Four messages can appear in it — a thread root, the first
+alert, its reminders, and an all-clear.
+
+⚠ **ALL FOUR TAKE YOUR `alert` ROUTE, whatever they render as** (CG-86 D2).
+Severity picks the destination SPACE as well as the loudness, and your `alert`
+and `info` routes are two different identities; threading is per-space, so a
+quiet message routed by its render severity would land in `aitrader-reports`
+where nobody watching the alert in `aitrader-alerts` would ever see it.
+**Expect thread roots and all-clears in your ALERT space, rendered `info`.**
+
+~~```
 title: heartbeat missed: daily-trading-run
 body:  No refresh since <iso> (schedule weekdays, grace 2h).
        Repeats daily until refreshed or deleted.
+```~~
+
+⚠ **The wire shape above is SUPERSEDED as of 2026-08-31 (CG-86)**, and it is
+struck rather than deleted because it is what you received until that date.
+Titles now lead with your app id, carry the elapsed delta, and contain **no
+severity word or emoji** — the gateway's own `severity_prefix()` supplies that,
+and a title repeating it renders it twice. Every body opens with its own UTC
+timestamp line and closes with an `Action:` line, including when the action is
+`none`.
+
 ```
+# posted once per check, at its first alert — rendered info, routed alert
+title: [aitrader] 🧵 Heartbeat daily-trading-run
+body:  Subject: dead-man check daily-trading-run for aitrader (schedule
+       weekdays, grace 2h, tz America/New_York).
+       Closes when: the check refreshes, or is deleted.
+       Identifiers: source aitrader, check_id daily-trading-run,
+       thread hb:aitrader:daily-trading-run.
+       Action: none — this message opens the thread.
+
+# the first miss — rendered alert, routed alert
+title: [aitrader] heartbeat daily-trading-run — missed, no refresh for 7d01h
+body:  <iso>Z · missed, no refresh for 7d01h
+       No refresh since <iso> (schedule weekdays, grace 2h, tz America/New_York).
+       Next reminder in 1d00h if it is still missed.
+       Action: refresh this check, or delete it if the job is retired.
+
+# a reminder — same, with "still missed" and a fresh delta
+title: [aitrader] heartbeat daily-trading-run — still missed, 8d01h
+
+# the all-clear — rendered info, routed alert, same thread (CG-86 D6)
+title: [aitrader] heartbeat daily-trading-run — recovered after 8d02h
+body:  <iso>Z · recovered after 8d02h
+       A refresh arrived; the check is ok again (schedule weekdays, grace 2h,
+       tz America/New_York).
+       Action: none — this closes the missed-check alert above.
+```
+
+⚠ **THE ALL-CLEAR IS NEW, AND IT FIRES ON THE `missed` → `ok` TRANSITION
+ONLY.** Before CG-86 a recovery delivered **nothing at all** — `refresh()`
+silently reset `status`. A refresh of a check that was already `ok` still
+delivers nothing, which matters to you because registering and refreshing are
+the same call and you ping on schedule: a condition one word wider than this
+would post to Chat on every ping. Pinned by a test that asserts **zero** sends
+across repeated healthy refreshes.
+
+⚠ **Nothing in the all-clear can fail your ping.** It is composed and emitted
+inside a guard; a failure is recorded in your delivery log as `failed` with
+`recovery notice not sent: <ExceptionType>` and swallowed. Refreshing *is* the
+liveness signal, and a 5xx here would freeze `last_seen` and manufacture the
+fabricated outage §7 already warns about below.
 
 **Refresh semantics worth knowing:** `POST /v1/heartbeat` builds a **brand-new
 check** each call. So a refresh clears `status` back to `ok` and resets
@@ -616,7 +692,8 @@ it instead of copying it. Read it there; it is the single authoritative list.
 Everything in §§2–7 is pinned by deterministic offline tests in
 `tests/test_notify_heartbeat.py`, whose docstring is *"The aitrader contract's
 acceptance criteria, as deterministic tests"* — including your acceptance
-criteria 2 (dedupe 10×→1), 3 (weekday dead-man, weekend silence, daily repeat)
+criteria 2 (dedupe 10×→1), 3 (weekday dead-man, weekend silence, ~~daily
+repeat~~ **escalating repeat — CG-86, 2026-08-31**)
 and 4 (full delivery-log accounting). Criterion 1's remaining half is a **human
 observation** — *curl → loud card visible in the alert space within seconds* — a
 judgement about rendering and latency, not a code seam. Run it as your first
@@ -749,7 +826,7 @@ and `registry.apps` reports `key_configured` — booleans and names, never value
 | Threading via `thread_key` | passed through to Chat thread mechanics (§2) |
 | Dead-man checks on the always-on side | `POST /v1/heartbeat` + gateway-resident monitor (§7) |
 | Weekday awareness, no weekend false alarms | `schedule: weekdays`, Sat/Sun roll to Monday in `tz` (§7) |
-| Missed alerts repeat on backoff until refreshed/deleted | daily repeat, dedupe-collapsed (§7) |
+| Missed alerts repeat on backoff until refreshed/deleted | ~~daily repeat, dedupe-collapsed~~ → **escalating 1d/2d/4d/weekly, one thread per check, no dedupe key** (§7; corrected 2026-08-31, CG-86) |
 | US-market-holiday awareness (nice-to-have) | **not modeled, documented** — widen `grace` (§7, §11) |
 | Check states queryable | `GET /v1/heartbeat/{source}`, own source only (§2) |
 | Decommission | `DELETE /v1/heartbeat/{source}/{check_id}` (§2) |
