@@ -1375,6 +1375,112 @@ def test_the_thread_root_is_posted_once_per_check_and_not_after_a_refresh(
     assert app.state.heartbeats.list_for("aitrader")[0].thread_started is True
 
 
+def _root_failing_monitor(tmp_path, clock, root):
+    """A monitor whose THREAD ROOT fails and whose ALERT does not.
+
+    ⚠ THE FAKE DISCRIMINATES ON `severity`, NOT ON `source`, AND THAT IS THE
+    WHOLE POINT OF THESE TWO TESTS. Every other notify fake in this file keys
+    on `source`, so it fails a check's root and its alert together — which can
+    never exercise the case the inner `try` in `scan_once` exists for:
+    root-fails, alert-succeeds. Measured before these tests were written:
+    deleting that inner `try` left all 506 tests passing.
+
+    `severity` is the RENDER severity, and it is the only thing that
+    distinguishes the two messages at this seam — `info` is the quiet thread
+    root, `alert` is the alert. Both are ROUTED `alert` (CG-86 D2), so the
+    route cannot be the discriminator here either.
+
+    Returns `(monitor, store, seen)`; `root(...)` is what the root call does.
+    """
+    store = HeartbeatStore(tmp_path / "hb.json", now_fn=clock)
+    store.refresh("aitrader", "daily-run", "every:60s", "60s")
+    seen: list[tuple[str, str]] = []
+
+    def notify(source, title, body, key, thread_key, *, severity="alert"):
+        seen.append((severity, title))
+        if severity == "info":
+            return root()
+        return True
+
+    return HeartbeatMonitor(store, notify), store, seen
+
+
+def test_a_thread_root_that_RAISES_never_strands_the_check_s_alert(tmp_path):
+    """⚠ THE INNER `try` IN `scan_once` IS WHAT THIS PINS, and until this test
+    existed nothing did — deleting that `try` left the whole suite green.
+
+    A thread root is DECORATIVE; the alert is the thing this feature exists to
+    deliver. If a root that raises could reach the per-check `except`, the
+    alert would never be attempted, the check would be counted undeliverable,
+    and it would go on failing on every scan for as long as whatever broke the
+    root stayed broken — a new CG-76-class silent door opened by the fix for
+    one. So the root's failure is captured beside the alert, not in front of
+    it.
+
+    Three scans, because one is not enough to show the door stays shut: the
+    root is retried on each (its check never latches `thread_started`) and
+    fails on each, and the alert lands on each.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    monitor, store, seen = _root_failing_monitor(
+        tmp_path, clock, lambda: (_ for _ in ()).throw(RuntimeError("root refused")))
+
+    clock.now += dt.timedelta(seconds=300)
+    # The waits are `repeat_after(alert_count)` exactly — 1d after the first
+    # alert, 2d after the second (CG-86 D5).
+    for n, wait in enumerate((0, DEFAULT_REPEAT_S, 2 * DEFAULT_REPEAT_S)):
+        clock.now += dt.timedelta(seconds=wait)
+        # `scan_once` re-raises the root's failure, so /healthz still degrades
+        # through `scan_failures` — the root is not swallowed, only deferred.
+        with pytest.raises(RuntimeError, match="root refused"):
+            monitor.scan_once()
+        severities = [s for s, _ in seen]
+        assert severities.count("alert") == n + 1, "the alert must still fire"
+        assert severities.count("info") == n + 1, "and the root is re-attempted"
+
+    check = store.list_for("aitrader")[0]
+    assert check.alert_count == 3, "every alert was accepted and marked"
+    assert check.thread_started is False, \
+        "a root that never lands must never latch as started"
+    # ⚠ A FAILED ROOT IS NOT A FAILED ALERT. `alerts_undeliverable` counts
+    # alert ATTEMPTS not accepted for delivery; no alert was lost here, and a
+    # root fed into that counter would inflate the dropped-ALERT number with
+    # something no alert was lost to.
+    assert monitor.alerts_undeliverable == 0
+    assert monitor.checks_undeliverable == 0
+
+
+def test_a_thread_root_that_is_REFUSED_never_strands_the_check_s_alert(tmp_path):
+    """The same isolation for the OTHER failure shape: a root that returns
+    `False` — refused for want of a route, or deduped — rather than raising.
+
+    ⚠ THIS ARM DOES **NOT** PIN THE INNER `try`, AND SAYING SO IS THE POINT.
+    A `False` raises nothing, so the `try` is not on its path and deleting it
+    leaves this test green — measured, not assumed. What this pins is the
+    neighbouring property, which no test covered either: the root's RETURN
+    VALUE does not gate the alert. A `continue` or an early `return` on a
+    falsy root would strand the alert exactly as a propagating raise would,
+    and would look like tidying.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    monitor, store, seen = _root_failing_monitor(tmp_path, clock, lambda: False)
+
+    clock.now += dt.timedelta(seconds=300)
+    for n, wait in enumerate((0, DEFAULT_REPEAT_S, 2 * DEFAULT_REPEAT_S)):
+        clock.now += dt.timedelta(seconds=wait)
+        assert monitor.scan_once() == 1, "one alert accepted, every scan"
+        severities = [s for s, _ in seen]
+        assert severities.count("alert") == n + 1
+        assert severities.count("info") == n + 1
+
+    check = store.list_for("aitrader")[0]
+    assert check.alert_count == 3
+    assert check.thread_started is False, \
+        "a refused root must never latch as started"
+    assert monitor.alerts_undeliverable == 0
+    assert monitor.checks_undeliverable == 0
+
+
 def test_a_healthy_refresh_of_an_ok_check_delivers_nothing(registry, tmp_path):
     """⚠ THE HIGHEST-RISK LINE IN CG-86, and the reason D6 is transition-only.
 
