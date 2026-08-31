@@ -87,6 +87,32 @@ builds a card for `alert` and `warning`; **`info` returns plain text and
 references `app_id` nowhere.** This matters in §7 and it is the single easiest
 fact here to get backwards.
 
+### Measured by running it, not by reading it
+
+The four rows above that produce a visible string were **executed** against this
+checkout at `0c0d8e3` rather than reasoned about — constructing the state and
+running it, which is how this repo has caught the things reading missed:
+
+```
+>>> thread_key_for("aitrader", "candle-crawl")
+'hb:aitrader:candle-crawl'
+>>> _title("aitrader", "heartbeat candle-crawl", "missed, no refresh for 2h14m")
+'[aitrader] heartbeat candle-crawl — missed, no refresh for 2h14m'
+>>> render(Notification(severity="alert", title="candle crawl — stalled 2h14m",
+...                     body="b"), "aitrader").cards[0]["card"]["header"]["subtitle"]
+'aitrader: candle crawl — stalled 2h14m'
+>>> i = render(Notification(severity="info",
+...            title="candle crawl — 62.0%, nothing to report"), "aitrader")
+>>> i.text, i.cards
+('ℹ️ [INFO] candle crawl — 62.0%, nothing to report', [])
+```
+
+⚠ **The last line is the whole of §7 in one measurement**: `cards` is `[]`, so on
+the `info` path there is **no header, no subtitle, and no app id anywhere in the
+message** — before registration and after it. ⚠ The strings are real renderer
+output; the titles fed in are illustrative, chosen to match the shapes pmtrader's
+BQ-031 predicts so the two records can be compared.
+
 ---
 
 ## 3. The registry shape, as it actually is
