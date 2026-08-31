@@ -6,8 +6,14 @@ decided, no code changed.
 
 The owner has decided **that** `pmtrader` becomes its own app in this gateway's
 registry. This file exists so the team that executes it does not have to
-rediscover the shape of the problem. Every factual claim below was measured
-against this checkout at `0c0d8e3`; §1 gives the method for each.
+rediscover the shape of the problem.
+
+⚠ **Every claim below carries its method at its own site**, measured against this
+checkout at `0c0d8e3`. **Three things could NOT be checked from here and are
+labelled as such wherever they appear**: the deletion of the `candle-crawl` check
+(§5), whether the NAS registry has drifted (§6), and anything about what a real
+Chat space renders. **§10 is the list.** §1's method table covers §1's own rows,
+not the whole document.
 
 ---
 
@@ -40,7 +46,7 @@ documented test/dev interpreter (`python3`, `CLAUDE.md` § Layout).
 |---|---|---|---|
 | 1 | pmtrader is not a registered app | `grep -rn pmtrader config/ src/ docs/`, and `git grep -n pmtrader`, **both at `0c0d8e3`** | **exit 1, zero hits**, both ways. ⚠ **The `docs/` half of that command does not reproduce after this file merges** — see the note below the table |
 | 2 | the registry registers exactly three apps | `load_registry("config/registry.yaml")` — the **real loader**, not a YAML read | `['aiteam-harness', 'job-hunter', 'aitrader']` |
-| 3 | the app id comes from the key, never from the request | read `auth.py:22-38` | `authenticate` iterates `registry.apps`, constant-time-compares the presented bearer against `os.environ[app.key_env]`, and **returns the registry's YAML key** for the first match |
+| 3 | the app id comes from the key, never from the request | read `auth.py:22-38` | `authenticate` iterates `registry.apps`, constant-time-compares the presented bearer against `os.environ.get(app.key_env, "")` under an `if expected and …` guard — so an **unset** variable never matches — and **returns the registry's YAML key** for the first match |
 | 4 | the client's `source` cannot override it | read `notifications.py:82-83`, `service.py:466-467` | `source` is `str \| None`, described *"informational; the authenticated app is authoritative"*; `notify()` calls `emit_notification(app_id, n)` and **`n.source` is read by nothing on the path** |
 | 5 | the consumer doc says so in the same words | `docs/consumers/aitrader.md:53` | *"**accepted and ignored.** The authenticated app is authoritative — the gateway uses your key-derived app id everywhere (routing, dedupe, the delivery log)."* |
 
@@ -66,8 +72,10 @@ registered app.
 ## 2. What pmtrader borrows from `aitrader` — end to end
 
 Ten surfaces, each with the site that makes it so. This is the cost the
-registration buys back. (**Ten**, counted off the table below — this repo has
-been bitten enough times by a prose count that disagrees with its own list.)
+registration buys back. (**Ten**, counted off the table below. ⚠ This was
+written as *"Nine"* first, and §7 got a different count wrong in the same draft —
+**so read this parenthetical as a repair, not as a boast**; both were caught in
+pre-merge review and both are recorded at their sites.)
 
 | Borrowed | Site | What it means today |
 |---|---|---|
@@ -77,7 +85,7 @@ been bitten enough times by a prose count that disagrees with its own list.)
 | the **dedupe namespace** | `service.py:335`, `notifications.py:231-248` | dedupe is keyed `(app_id, dedupe_key)`; the window and the occurrence counters are `aitrader`'s |
 | the **delivery log** | `service.py:337, 341, 633-635` | `GET /v1/deliveries` is per-source and capped; each project's traffic evicts the other's history |
 | the **heartbeat namespace** | `service.py:519, 611-621, 623-629` | checks are keyed on the app id; `GET /v1/heartbeat/aitrader` would list pmtrader's checks, and a `check_id` collision is two systems refreshing one check |
-| the **dead-man thread key** | `heartbeat.thread_key_for`, `heartbeat.py:110-128` | `hb:<source>:<check_id>` — so a pmtrader check threads under `hb:aitrader:…` |
+| the **dead-man thread key** | `heartbeat.thread_key_for`, `heartbeat.py:110-129` | `hb:<source>:<check_id>` — so a pmtrader check threads under `hb:aitrader:…` |
 | the **dead-man title** | `heartbeat._title`, `heartbeat.py:194-211`; thread root `heartbeat.py:312` | `[aitrader] heartbeat <check_id> — …` and `[aitrader] 🧵 Heartbeat <check_id>` — **the gateway's own messages carry the wrong project's name** |
 | the **card subtitle label** | `notifications.py:223` | `f"{app_id}: {n.title}"` → `aitrader: <pmtrader's subject>` |
 | the **consumer doc** | `docs/consumers/aitrader.md` | pmtrader's operators read another project's contract, and any deviation pmtrader needs has nowhere to be recorded |
@@ -118,7 +126,7 @@ BQ-031 predicts so the two records can be compared.
 ## 3. The registry shape, as it actually is
 
 Read off `registry.py`'s dataclasses (`Identity` at `:81-87`, `App` at
-`:109-117`) and the loader's validation (`registry.py:265-287`), not off an
+`:109-117`) and the loader's validation (`registry.py:263-287`), not off an
 example.
 
 ### `identities:` — **destinations.** Where a message can go.
@@ -151,7 +159,10 @@ not hypothetical: `aiteam-harness` had inbound on for its whole life *because
 
 ### The worked example — `aitrader`, redacted
 
-Verbatim from the live `config/registry.yaml`, **with the space ids removed**.
+An **excerpt** of the live `config/registry.yaml` — two of its four identities
+and one of its three apps — byte-exact except for two deliberate changes, both
+named: **the space ids are removed**, and the two `space:` trailing comments were
+reworded to carry the redaction note.
 Space ids are not on hard rule #2's secret list, but all four `space:` values in
 the committed `registry.example.yaml` are `""` and this repo is public; the
 values are read from the gitignored live file, not from here. The env-var
@@ -214,8 +225,8 @@ no agent can do.**
   not fix: both projects' traffic still arrives in one room.** ⚠ It also makes
   that space have **two owning apps** for inbound routing —
   `registry.apps_for_space` (`registry.py:161-172`) returns every app owning an
-  identity homed in a space, and `adapters/pubsub.py:691` fans out to all of
-  them. Inert today, because both apps would be `allow_inbound: false`; it
+  identity homed in a space, and `adapters/pubsub.py:691` looks them up and `:693` fans out
+  to all of them. Inert today, because both apps would be `allow_inbound: false`; it
   stops being inert the moment either one is flipped.
 
 ⚠ The two halves of the problem are separable and the decision should say which
@@ -256,8 +267,13 @@ security hole in a real-money system). `job-hunter` is `true`.
 
 **pmtrader has no inbound need on record.** Measured 2026-08-31, read-only,
 over `~/prj/pmtrader`: `grep -rn 'v1/notify|v1/heartbeat|v1/messages|v1/deliveries'`
-over its `src/` returns hits for **`/v1/notify` and `/v1/heartbeat` only**
-(`watch.py:1532`, `:1578`, `:1620`; `report.py:1665`), and `v1/inbox`,
+over its `src/` returns **seven hits naming two endpoints only — `/v1/notify`
+and `/v1/heartbeat`**, with no `v1/messages` and no `v1/deliveries`. ⚠ **Four of
+the seven are call sites and three are comments; only the call sites are cited**
+(`watch.py:1532`, `:1578`, `:1620`; `report.py:1665`), and **the filter is stated
+because an earlier draft cited four and called them the grep's output** — an
+instrument silently excluding part of its population is this repo's own named
+defect. And `v1/inbox`,
 `callback_url` and `allow_inbound` appear nowhere in its `src/` at all. Its own
 `docs/OPERATOR_ALERTING.md:230` already writes `allow_inbound: false` into its
 draft. **That is an observation about pmtrader as it stands, not a decision.**
@@ -278,9 +294,12 @@ pmtrader's messages look like.
 
 ### 4.5 Whether `docs/consumers/pmtrader.md` is written in the same PR
 
-The other three consumers each have one and it is where a deviation is recorded.
-Writing it late is how a consumer ends up documented by another consumer's file —
-which is the state pmtrader is in now.
+It is where a deviation is recorded. ⚠ **Two of the three registered apps have a
+doc in `docs/consumers/` — `aitrader.md` and `jobhunt.md`. `aiteam-harness` has
+none**, so "every consumer has one" is not this repo's actual practice and an
+earlier draft of this line claimed it was. Writing it late is nonetheless how a
+consumer ends up documented by another consumer's file — which is the state
+pmtrader is in now.
 
 ---
 
@@ -347,6 +366,16 @@ tenant: *"⚠ REGISTERING THIS FOR REAL IS AN OPERATOR ACTION, NOT A PR. The liv
 is a template and nothing more. Until an operator mints a key, writes the entry
 and restarts, the MCP surface has no caller."*
 
+⚠⚠ **Read that with the qualifier its own file attaches five lines below it**,
+`registry.example.yaml:87-91`: *"^ Still true of any FRESH deployment, which is
+why it stays. On the NAS it was DONE on 2026-08-11 (docs/deploy/nas.md §10) — key
+minted over stdin, this block written into the live registry,
+`GATEWAY_ENABLE_MCP` set — and the surface has since delivered a real message.
+Read the sentence above as instructions to an operator, never as the current
+state of a box."* **That is the nearest committed statement that the live
+registry received an `agent-mcp` entry on 2026-08-11**, and it is what the drift
+subsection below actually rests on.
+
 **CG-61 is the cautionary precedent.** Its PR changed only
 `registry.example.yaml`; the live edit was a separate operator action that landed
 **78 minutes after** a measurement that had recorded it as still outstanding, and
@@ -382,10 +411,19 @@ pmtrader's **BQ-031** is filed `🛑 blocked`, awaiting an operator call between
 three options. Its subject is an operator ruling to drop the `[pmtrader]` token
 from pmtrader's message titles on the premise that the gateway already supplies
 the app name. pmtrader measured that premise against this repo's source, found
-it fails, changed no title, and filed the question. It records **three numbered
-findings**, which reduce to **two independent grounds**: the subtitle is
-card-only (its findings 1 and 2 — the mechanism and its consequence for
-pmtrader's four title sites), and the app id is `aitrader` (its finding 3).
+it fails, changed no title, and filed the question. It records **FOUR numbered
+findings** — (1) the subtitle is card-only, (2) three of pmtrader's four title
+sites are `info`, (3) the app id is `aitrader` not `pmtrader`, and (4) the
+gateway's **own** notifications keep a bracketed app token. ⚠ **An earlier draft
+of this paragraph said three and dropped (4)** — in a document that boasts one
+section earlier about counts disagreeing with their own lists. Corrected in
+pre-merge review; recorded rather than quietly fixed, because it is the same
+defect twice in one file.
+
+Findings 1–3 reduce to **two independent grounds against dropping the token**:
+the subtitle is card-only (1 and 2 — the mechanism and its consequence), and the
+app id is `aitrader` (3). **Finding 4 is not a ground against dropping it; it is
+precedent**, and it is treated separately below.
 
 BQ-031's option **(b)** is *"register a `pmtrader` app in the gateway"*, and it
 is described there as fixing the misattribution **"for the card branch only"**.
@@ -397,9 +435,9 @@ project's name on pmtrader's incident, in a space that already carries
 objection is gone.
 
 ⚠⚠ **What registration does not remove, and this must not be blurred:** the
-`info` branch **has no subtitle at all.** `render` (`notifications.py:189-227`)
-emits a card for `alert` and `warning` only; `info` is plain text that never
-references `app_id`. Three of pmtrader's four title sites are `info` — the
+`info` branch **has no subtitle at all** — §2's card-branch note has the citation
+and the executed transcript; it is not repeated here, so there is one line range
+to keep current rather than two. Three of pmtrader's four title sites are `info` — the
 all-clear, the status report and the 🧵 Thread Title. **For all three, the app
 name would come from the title or from nowhere, registered or not.**
 
@@ -408,10 +446,14 @@ the measurement rested on and leaves the other exactly where it was. BQ-031
 remains the owner's call between (a), (b) and (c), and (b) is not a synonym for
 "the token can now be dropped".
 
-⚠ Corroborating, from this side: the gateway's **own** dead-man titles keep a
-bracketed app token for the same reason. `heartbeat.py:202-206` protects it from
-truncation on the ground that *"the head is the identifying half"*. The
-transport and the consumer reached the same conclusion independently.
+⚠⚠ **BQ-031's finding (4) is NOT re-derived here and is not new evidence.**
+pmtrader had already read this repo's `heartbeat.py:194-211` and quoted its
+*"the head is the identifying half"* (`heartbeat.py:202-206`) — **the same file,
+from the same source, before this document existed.** It is repeated here only
+because a gateway-side reader can check it locally without opening pmtrader's
+repo. ⚠ **An earlier draft called it *"Corroborating, from this side"*, which
+presented a finding the far end had already made as independent confirmation of
+itself.** That would have made one measurement look like two.
 
 ---
 
@@ -422,12 +464,19 @@ Three checks, none of which posts to a Chat space:
 1. **Load it.** `load_registry("config/registry.yaml")` raises `RegistryError`
    on an unknown identity, a route that does not point at one of the app's own
    identities, an unknown severity, a missing `key_env`, or a `callback_url`
-   without `allow_inbound` (`registry.py:265-287`). A registry that loads has
+   without `allow_inbound` (`registry.py:263-287` — **263**, not 265: the
+   `key_env` raise sits two lines above the `App(...)` construction, and an
+   earlier draft cited a range that excluded one of the five conditions it
+   listed). A registry that loads has
    already passed hard rule #4's shape.
 2. **`GET /healthz`.** Carries `registry.health()` (`service.py:777`), which
    reports per app `key_configured` — is the `key_env` variable set — and per
-   identity `env_resolved` and `space_set`. **Booleans only; no values, no URLs**
-   (`registry.py:174-187`).
+   identity `env_resolved` and `space_set`. ⚠ **It is NOT booleans only**, and an
+   earlier draft of this line said it was: `registry.py:180` also emits each
+   identity's `mode` (a string) and `:184` each app's `identities` (a list of
+   names). **The load-bearing half is the true one — no env-var VALUES and no
+   URLs** — and it is on an **unauthenticated** response, which `service.py:765-766`
+   already notes carries every app id and identity name.
 3. **`GET /v1/identities`** with the new key. Authenticated, so a `200` proves
    the key resolves to the new app id, and the body names the app id it resolved
    to plus each identity's `ready` flag (`service.py:650-684`).
@@ -442,7 +491,7 @@ those two was checked.
 
 | Where | What it holds |
 |---|---|
-| `~/prj/pmtrader` `docs/OPERATOR_ALERTING.md` §3 | *"The registration problem — read this before minting a key."* **Option A — register `pmtrader` as its own app (recommended)** and **Option B — reuse `aitrader`'s key**, with six named costs. Written from pmtrader's end, and accurate about this repo when written. ⚠ **No document in THIS repo had recorded any of it before now** — measured at `0c0d8e3` (§1). ⚠⚠ **This file falsifies one sentence of it:** §3 opens *"`grep -rn 'pmtrader' /mnt/d/prj/chat-gateway/` returns **zero hits**"*, which stops being true the moment this merges. **Not corrected here — `~/prj/pmtrader` was read-only** — and flagged so whoever next touches that file knows why |
+| `~/prj/pmtrader` `docs/OPERATOR_ALERTING.md` §3 | *"The registration problem — read this before minting a key"* (no trailing period in the original) **Option A — register `pmtrader` as its own app (recommended)** and **Option B — reuse `aitrader`'s key**, with six named costs. Written from pmtrader's end, and accurate about this repo when written. ⚠ **No document in THIS repo had recorded any of it before now** — measured at `0c0d8e3` (§1). ⚠⚠ **This file falsifies one sentence of it:** §3 opens *"`grep -rn 'pmtrader' /mnt/d/prj/chat-gateway/` returns **zero hits**"*, which stops being true the moment this merges. **Not corrected here — `~/prj/pmtrader` was read-only** — and flagged so whoever next touches that file knows why |
 | `~/prj/pmtrader` `docs/BUILDER_QUEUE.md` § BQ-031 | the blocked row and its three options — see §7 |
 | this repo `docs/consumers/aitrader.md` | the shape a notify + dead-man consumer contract takes here; §7 carries the dead-man cadence |
 | this repo `docs/consumers/jobhunt-handoff.md` | the shape of a *consumer* handoff, for whoever writes pmtrader's contract |
