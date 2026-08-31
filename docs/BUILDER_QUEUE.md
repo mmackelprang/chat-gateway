@@ -111,7 +111,61 @@ reasons; the record is `docs/deploy/nas.md` §10's 2026-08-11 entry.
 
 ---
 
-**Last updated:** 2026-08-31 (Builder — **CG-86 SHIPPED ([PR #75](https://github.com/mmackelprang/chat-gateway/pull/75)): the dead-man alert
+**Last updated:** 2026-08-31 (Builder — **a handoff document only. `pmtrader` is
+not a registered app, every message it sends is attributed to `aitrader`, and the
+window in which fixing that costs nothing is open right now.**
+
+⚠ **NO QUEUE ROW WAS FILED AND NO CG ID WAS MINTED. NOTHING WAS DECIDED AND NO
+CODE CHANGED.** The owner has decided *that* `pmtrader` becomes its own app here
+and will execute it with an agent team later; this pass leaves that team the
+facts. The whole of it is `docs/consumers/pmtrader-registration-handoff.md`.
+
+⛔ **MEASURED, through the real loader rather than a YAML read:
+`load_registry("config/registry.yaml")` returns `['aiteam-harness', 'job-hunter',
+'aitrader']`, and at `0c0d8e3` `grep -rn pmtrader config/ src/ docs/` exits 1.**
+⚠ **That command does not reproduce after this merge — the handoff itself puts the
+name into `docs/`, which is stated at the site. The durable form is `config/ src/`,
+and it stays empty until somebody registers the app.** pmtrader
+authenticates with `aitrader`'s bearer token and `authenticate` (`auth.py:22-38`)
+resolves the app id from the registry key whose `key_env` matches that token — so
+**ten** surfaces are borrowed, not one: the key, the app id, the destination
+spaces, the dedupe namespace, the delivery log, the heartbeat namespace, the
+dead-man thread key (`hb:aitrader:<check_id>`), the dead-man title
+(`[aitrader] heartbeat …` — **the gateway's own messages carry the wrong
+project's name**), the card subtitle, and the consumer doc. ⚠ **The client's
+`source` field cannot fix any of it** — `docs/consumers/aitrader.md:53`:
+*"**accepted and ignored.** The authenticated app is authoritative"*.
+
+⚠⚠ **THE FINDING WITH A CLOCK ON IT: the migration surface is EMPTY TODAY AND
+CLOSES BY ITSELF.** With the only `aitrader`-sourced heartbeat check deleted,
+nothing has to be migrated. But `POST /v1/heartbeat` **registers on first ping**
+(`service.py:519-532`), so the next time pmtrader's crawl runs while still
+holding `aitrader`'s key, `candle-crawl` is re-registered under `aitrader` and the
+surface stops being empty. **Nobody has to do anything wrong for that to happen.**
+⚠ The deletion itself is the **owner's report** and is not verifiable from this
+repository — heartbeat state is on the box. The handoff says so at the site and
+says what to check first.
+
+⚠ **It does NOT settle pmtrader's BQ-031, and the handoff refuses to imply it
+does.** Registration removes the misattribution ground; it does not touch the
+other one, because `render` builds a card for `alert` and `warning` only and
+**`info` has no subtitle at all** — and three of pmtrader's four title sites are
+`info`.
+
+⚠ **One hazard surfaced that nobody asked for, stated as a hazard because the box
+cannot be read from here:** `docs/deploy/nas.md`'s install step overwrites the
+NAS registry with this checkout's copy, and this checkout's copy has an mtime of
+2026-08-03 and carries **no `agent-mcp`**, which the queue records an operator
+writing into the live registry on 2026-08-11. **Diff the two before installing
+either.**
+
+**Docs-only; no `src/` change. Suite 511 → 511.** Nothing was sent to the live
+gateway or any Chat space, no registry was edited, no key was minted, and
+`~/prj/pmtrader` was read-only.
+
+---
+
+**Previously:** 2026-08-31 (Builder — **CG-86 SHIPPED ([PR #75](https://github.com/mmackelprang/chat-gateway/pull/75)): the dead-man alert
 had never threaded, and the reason it matters is not the threading.**
 
 ⛔ **EVERY DEAD-MAN ALERT THIS PROJECT HAS EVER SENT WAS AN UNTHREADED TOP-LEVEL
