@@ -51,6 +51,27 @@ def build_runtime():
         print(f"env: loaded {load_env_file(env_file)} key(s) from {env_file}", flush=True)
 
     registry = load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml"))
+    # CG-88. `allow_inbound` now defaults to DENY, and an app that inherits it
+    # is named here rather than refused. The refusal was the alternative and it
+    # was declined: two of the three registry copies are off-repo and unreadable
+    # from any checkout (docs/consumers/pmtrader-registration-handoff.md §6), so
+    # "required, no default" would have bet the service on a file nobody can
+    # read. This is the half of that shape which cannot cause an outage.
+    #
+    # stderr, not stdout: `check` writes machine-readable JSON to stdout one
+    # branch below, and a warning that lands in a `| jq` pipeline is a warning
+    # somebody silences. Silent when the list is empty — the always-on channel
+    # is `registry.health()`, which reports `inbound_defaulted: []` on every
+    # `/healthz` and every `check`, so absence of this line is never the only
+    # evidence.
+    if registry.inbound_defaulted:
+        print(
+            "registry: WARNING — no allow_inbound written for "
+            f"{', '.join(registry.inbound_defaulted)}; "
+            "each inherits the default, which is DENY (hard rule #6). "
+            "Write the key explicitly so the posture is the file's, not the loader's.",
+            file=sys.stderr, flush=True,
+        )
     state_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
     # ONE home for each of these two paths, deliberately: the Inbox WRITES the
     # audit dir and the quarantine dir, and the RetentionSweeper below is

@@ -77,6 +77,38 @@ def _require_id_str(kind: str, value) -> None:
         )
 
 
+def _require_bool(app_id: str, key: str, value) -> None:
+    """A security boolean is never coerced, because coercion inverts it.
+
+    `bool("false")` is **True**. YAML gives an unquoted `false` a real `bool`,
+    but a quoted one — `allow_inbound: "false"` — is a three-character string,
+    and every truthiness test in Python says yes to it. The old loader did
+    `bool(spec.get("allow_inbound", True))`, so a registry that SPELLED the
+    refusal would have opened the path anyway, silently, with the file reading
+    exactly as its author intended.
+
+    That is the same defect the default carried (CG-88), arriving through the
+    value rather than through its absence, and it is the "reformatted away"
+    half: quoting a scalar is the kind of thing a YAML formatter or a
+    templating pass does without asking. A default-deny that a stray pair of
+    quotes can still flip is not a guarantee.
+
+    Refusing rather than coercing is this file's existing treatment of YAML's
+    coercion traps — `_require_id_str` above refuses a non-string key instead
+    of calling `str()` on it, for the same reason. The cost is stated where it
+    is taken: a live registry carrying a quoted boolean stops loading, which
+    under PR 4's R1-B is a supported steady state on this gateway (reads serve,
+    nothing crosses) and prints `config error:` naming the app and the fix.
+    """
+    if not isinstance(value, bool):
+        raise RegistryError(
+            f"app {app_id!r}: {key} must be a YAML boolean (true/false), not "
+            f"{type(value).__name__} {value!r}. Quoted booleans are the trap: "
+            f'`{key}: "false"` is a non-empty STRING, which is truthy — it '
+            "would have granted exactly what it appears to refuse."
+        )
+
+
 @dataclass
 class Identity:
     name: str
@@ -110,7 +142,29 @@ class App:
     app_id: str
     key_env: str
     identities: list[str] = field(default_factory=list)
-    allow_inbound: bool = True
+    # CG-88. DEFAULT-DENY, and the default is the guarantee — not the YAML line.
+    #
+    # This defaulted to `True` until 2026-08-31, so an app that never mentioned
+    # inbound HAD it: `aiteam-harness` ran open for its whole life for exactly
+    # that reason, which is why CG-61 exists. Hard rule #6 says inbound crosses
+    # "only by that consumer's explicit registry opt-in"; with a permissive
+    # default that sentence was aspirational, and it is now mechanical.
+    #
+    # It matters most where a guarantee is published. `docs/consumers/aitrader.md`
+    # §8 promises a real-money tenant NO inbound path; before this that promise
+    # was held by one `allow_inbound: false` line in a file with THREE copies,
+    # only one of them in git (`docs/consumers/pmtrader-registration-handoff.md`
+    # §6). Dropped, reformatted, or missing from a copy, the line's absence used
+    # to INVERT the guarantee in silence. Absence is now the safe answer.
+    #
+    # NOT made required-with-no-default, which is the stronger shape this repo
+    # family usually reaches for: a registry omitting the key would then refuse
+    # to load, and `docs/deploy/nas.md`'s install step overwrites the box's
+    # registry with this checkout's copy. Neither of the two off-repo copies is
+    # readable from here, so that trade was refused rather than taken blind.
+    # What replaces it is `Registry.inbound_defaulted` below — the reliance is
+    # reported instead of being fatal.
+    allow_inbound: bool = False
     routes: dict[str, str] = field(default_factory=dict)  # severity -> identity (/v1/notify)
     callback_url: str = ""            # inbound push (tenant opt-in; requires allow_inbound)
     allowed_users: list[str] = field(default_factory=list)  # emails; empty = no restriction
@@ -130,6 +184,18 @@ class App:
 class Registry:
     identities: dict[str, Identity]
     apps: dict[str, App]
+    #: App ids whose entry said nothing about `allow_inbound` and therefore
+    #: inherited the default (CG-88). Empty is the correct state; a non-empty
+    #: list is a registry whose inbound posture is held by a loader default
+    #: rather than by anything an author wrote — which is what made
+    #: `aiteam-harness` open for its whole life.
+    #:
+    #: Reported, never enforced: it is the half of "make it required" that
+    #: cannot take a gateway down. It is DERIVED AT LOAD, so a `Registry`
+    #: built by hand (tests do this) reports `[]` — truthfully, because such a
+    #: registry has no YAML to have omitted anything, and its `App` objects
+    #: state `allow_inbound` in Python or take the deny default.
+    inbound_defaulted: list[str] = field(default_factory=list)
 
     def identity_for(self, app_id: str, identity_name: str) -> Identity:
         app = self.apps.get(app_id)
@@ -184,6 +250,25 @@ class Registry:
                 app_id: {"key_configured": a.key_configured(), "identities": a.identities}
                 for app_id, a in sorted(self.apps.items())
             },
+            # CG-88, hard rule #5. Empty on a registry that states its own
+            # inbound posture; an app id appears here only while its entry
+            # leaves that posture to a loader default.
+            #
+            # NOT an input to `status` and never a `reasons` entry, decided
+            # explicitly per this repo's standing per-field requirement: the
+            # gateway is DENYING, which is the safe answer, so a `degraded`
+            # here would report a configuration smell as a fault and teach an
+            # operator that `degraded` is the normal reading — the verdict
+            # `suppressed_opt_out` and `files_deleted` both got.
+            #
+            # Disclosure on an UNAUTHENTICATED endpoint, weighed rather than
+            # assumed: this publishes app ids, which `health()` already
+            # publishes two lines above, and the fact it adds about one is
+            # "this app is inbound-CLOSED and nobody wrote that down" — which
+            # is only sayable at all because the default now denies. Under the
+            # old default the same field would have named every open tenant,
+            # and it would not have been shipped.
+            "inbound_defaulted": list(self.inbound_defaulted),
         }
 
 
@@ -243,6 +328,11 @@ def load_registry(path: str | Path) -> Registry:
         identities[name] = ident
 
     apps: dict[str, App] = {}
+    # CG-88. Collected here rather than derived from the App objects, because
+    # by then the two cases are indistinguishable: an app that WROTE
+    # `allow_inbound: false` and one that wrote nothing both end up `False`,
+    # and only the second is a reliance worth reporting.
+    inbound_defaulted: list[str] = []
     for app_id, spec in (data["apps"] or {}).items():
         # Type-check BEFORE the prefix check, because YAML coerces unquoted keys:
         # `1:`, `true:`, `null:` and `1.5:` arrive as int / bool / None / float,
@@ -262,9 +352,26 @@ def load_registry(path: str | Path) -> Registry:
         spec = spec or {}
         if not spec.get("key_env"):
             raise RegistryError(f"app {app_id!r}: key_env is required")
+        # CG-88. Absence is DENY and is recorded as reliance; a written value
+        # must be a real boolean. `None` covers both "key absent" and an
+        # explicit `allow_inbound:` with nothing after it — a key that states
+        # no posture is not a statement of posture, so it is treated as absent
+        # and reported the same way.
+        #
+        # There is deliberately NO `bool(...)` call left on this path. The old
+        # one read `bool(spec.get("allow_inbound", True))` and was wrong twice
+        # over — a permissive default AND a coercion that made `"false"` true.
+        # A later edit cannot re-widen a coercion site that does not exist.
+        raw_inbound = spec.get("allow_inbound")
+        allow_inbound = False
+        if raw_inbound is None:
+            inbound_defaulted.append(app_id)
+        else:
+            _require_bool(app_id, "allow_inbound", raw_inbound)
+            allow_inbound = raw_inbound
         app = App(app_id=app_id, key_env=spec["key_env"],
                   identities=list(spec.get("identities") or []),
-                  allow_inbound=bool(spec.get("allow_inbound", True)),
+                  allow_inbound=allow_inbound,
                   routes=dict(spec.get("routes") or {}),
                   callback_url=str(spec.get("callback_url") or ""),
                   allowed_users=[str(u).lower() for u in (spec.get("allowed_users") or [])],
@@ -289,4 +396,5 @@ def load_registry(path: str | Path) -> Registry:
 
     if not apps:
         raise RegistryError("registry defines no apps")
-    return Registry(identities=identities, apps=apps)
+    return Registry(identities=identities, apps=apps,
+                    inbound_defaulted=sorted(inbound_defaulted))

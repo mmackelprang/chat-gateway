@@ -1,6 +1,8 @@
 """Envelope, registry, auth, inbox — the offline core."""
 
 import datetime as dt
+import json
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -311,3 +313,281 @@ def test_a_valid_registry_still_loads(tmp_path):
     p.write_text(HEAD_YAML + "apps:\n  aiteam_harness:\n    key_env: KEY\n"
                  "    identities: [pm]\n", encoding="utf-8")
     assert "aiteam_harness" in load_registry(p).apps
+
+
+# ---------------------------------------------------------------------------
+# CG-88 — `allow_inbound` defaults to DENY, and the DEFAULT is the guarantee
+# ---------------------------------------------------------------------------
+#
+# Until 2026-08-31 the field defaulted to `True`: an app that never mentioned
+# inbound HAD it. `aiteam-harness` ran open for its whole life for exactly that
+# reason (CG-61), and `docs/consumers/aitrader.md` §8's no-inbound guarantee for
+# a real-money tenant was held by ONE `allow_inbound: false` line in a file with
+# three copies, only one of them in git.
+#
+# ⚠ EVERY CONTROL BELOW THAT CLAIMS TO BIND THE DEFAULT USES A FIXTURE THAT
+# OMITS THE KEY. A test asserting `allow_inbound is False` against an entry that
+# WROTE `false` passes identically under either default and binds nothing (0h) —
+# which is why the first assertion in the first test is about the fixture's
+# silence rather than about the registry.
+
+COMMITTED_EXAMPLE = (Path(__file__).resolve().parents[1]
+                     / "config" / "registry.example.yaml")
+
+
+def test_allow_inbound_defaults_to_DENY_when_the_entry_says_nothing(registry):
+    """The default itself, on a fixture that states no posture at all.
+
+    `REGISTRY_YAML` at the top of this file deliberately writes no
+    `allow_inbound` for either app, and that silence is what makes this a
+    control rather than a restatement of a YAML line. It is asserted, so a
+    future edit that "tidies" the fixture by writing the key explicitly turns
+    this test red instead of quietly emptying it.
+    """
+    assert "allow_inbound" not in REGISTRY_YAML, (
+        "this control binds only while the fixture stays silent — an explicit "
+        "value here would make it pass under a permissive default too"
+    )
+    assert registry.apps["aiteam-harness"].allow_inbound is False
+    assert registry.apps["job-hunter"].allow_inbound is False
+
+
+def test_the_DATACLASS_default_denies_too_and_that_is_a_second_site(tmp_path):
+    """The constructor default, which the loader no longer exercises.
+
+    ⚠ MEASURED, and it is why this test exists: flipping
+    `App.allow_inbound: bool = False` back to `True` left the entire suite
+    GREEN. `load_registry` passes the field explicitly on every path, so the
+    dataclass default governs only hand-built `App` objects — which
+    `tests/test_core.py` and `tests/test_durability.py` both construct, and
+    neither stated the field. Under 0h that default had not been shown to bind
+    anything, so the flip was a free re-widening waiting for whoever writes the
+    next in-process consumer.
+
+    Two sites, two controls: the loader's is
+    `test_allow_inbound_defaults_to_DENY_when_the_entry_says_nothing`, and this
+    is the other one.
+    """
+    from chat_gateway.registry import App
+
+    assert App(app_id="built-by-hand", key_env="K").allow_inbound is False
+
+
+def test_the_reliance_is_REPORTED_and_a_written_value_is_not(tmp_path):
+    """`inbound_defaulted` names the apps whose posture the loader chose.
+
+    Two cases that are indistinguishable once loaded — an app that wrote
+    `false` and an app that wrote nothing both end up `False` — and only the
+    second is a reliance. Reporting it is the half of "make the key required"
+    that cannot take a running gateway down; the other half was declined
+    because two of the three registry copies are unreadable from any checkout.
+    """
+    p = tmp_path / "r.yaml"
+    p.write_text(
+        "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+        "apps:\n"
+        "  silent:\n    key_env: K1\n    identities: [pm]\n"
+        "  wrote-false:\n    key_env: K2\n    identities: [pm]\n"
+        "    allow_inbound: false\n"
+        "  wrote-true:\n    key_env: K3\n    identities: [pm]\n"
+        "    allow_inbound: true\n", encoding="utf-8")
+    reg = load_registry(p)
+
+    assert reg.apps["silent"].allow_inbound is False
+    assert reg.apps["wrote-false"].allow_inbound is False
+    assert reg.apps["wrote-true"].allow_inbound is True
+    # Only the silent one, and the list is sorted so the report is stable.
+    assert reg.inbound_defaulted == ["silent"]
+    assert reg.health()["inbound_defaulted"] == ["silent"]
+
+
+def test_an_explicit_null_states_no_posture_and_is_treated_as_absent(tmp_path):
+    """`allow_inbound:` with nothing after it is silence, not a decision.
+
+    YAML gives it `None`. Reading that as "written" would let an empty key
+    stand in for a posture nobody chose, which is the defect one layer in.
+    """
+    p = tmp_path / "r.yaml"
+    p.write_text(
+        "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+        "apps:\n  hollow:\n    key_env: K\n    identities: [pm]\n"
+        "    allow_inbound:\n", encoding="utf-8")
+    reg = load_registry(p)
+    assert reg.apps["hollow"].allow_inbound is False
+    assert reg.inbound_defaulted == ["hollow"]
+
+
+@pytest.mark.parametrize("written", ['"false"', '"true"', "0", "1", '"yes"', "[]"])
+def test_a_non_boolean_allow_inbound_is_REFUSED_rather_than_coerced(tmp_path, written):
+    """The other half of the same fail-open, arriving through the VALUE.
+
+    `bool("false")` is True, so the old `bool(spec.get(...))` would have granted
+    inbound to an entry that spelled the refusal — the "reformatted away" case,
+    since quoting a scalar is something a formatter or a templating pass does
+    without asking. A default-deny a stray pair of quotes can flip is not a
+    guarantee.
+
+    Refusing rather than coercing is this file's existing treatment of YAML
+    coercion traps: `_require_id_str` refuses a non-string key instead of
+    calling `str()` on it.
+    """
+    assert bool("false") is True, "the coercion this refusal exists to prevent"
+    p = tmp_path / "r.yaml"
+    p.write_text(
+        "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+        f"apps:\n  a:\n    key_env: K\n    identities: [pm]\n"
+        f"    allow_inbound: {written}\n", encoding="utf-8")
+    with pytest.raises(RegistryError, match="must be a YAML boolean"):
+        load_registry(p)
+
+
+def test_an_unquoted_yaml_boolean_is_still_accepted_in_both_spellings(tmp_path):
+    """The control for the test above: the refusal must DISCRIMINATE.
+
+    PyYAML resolves `yes`/`no`/`on`/`off` to real booleans, so those are
+    written values and not coercions. A refusal that also rejected them would
+    be a refusal nobody could satisfy without knowing which spellings survived.
+    """
+    p = tmp_path / "r.yaml"
+    p.write_text(
+        "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+        "apps:\n"
+        "  yes-app:\n    key_env: K1\n    identities: [pm]\n    allow_inbound: yes\n"
+        "  no-app:\n    key_env: K2\n    identities: [pm]\n    allow_inbound: no\n",
+        encoding="utf-8")
+    reg = load_registry(p)
+    assert reg.apps["yes-app"].allow_inbound is True
+    assert reg.apps["no-app"].allow_inbound is False
+    assert reg.inbound_defaulted == []
+
+
+# --- the published guarantee, pinned against the one registry that is in git --
+
+def _example_with_line_removed(app_id: str, key: str) -> tuple[str, int]:
+    """Return the committed example minus one `key:` line from one app's block.
+
+    Structural rather than a string replace, so it cannot silently match the
+    same key under a different app. The count is returned and asserted by every
+    caller: a helper that removed nothing would leave the test passing against
+    the file it was supposed to have damaged.
+    """
+    text = COMMITTED_EXAMPLE.read_text(encoding="utf-8")
+    out, removed, in_app, in_apps = [], 0, False, False
+    for line in text.splitlines(keepends=True):
+        if line.rstrip("\n") == "apps:":
+            in_apps, in_app = True, False
+        elif in_apps and line.startswith("  ") and not line.startswith("   ") \
+                and line.strip().endswith(":"):
+            in_app = line.strip() == f"{app_id}:"
+        if in_app and line.strip().startswith(f"{key}:"):
+            removed += 1
+            continue
+        out.append(line)
+    return "".join(out), removed
+
+
+def test_aitraders_no_inbound_guarantee_survives_losing_its_own_registry_line(tmp_path):
+    """`docs/consumers/aitrader.md` §8, on its NEW basis.
+
+    Before CG-88 that guarantee was one YAML line — in a file with three
+    copies, only one of them in git, and whose install step overwrites the box's
+    copy with this checkout's. Dropped, reformatted away or missing from a copy,
+    its absence INVERTED the guarantee in silence. This deletes exactly that
+    line from the committed template and asserts the answer does not move.
+    """
+    text, removed = _example_with_line_removed("aitrader", "allow_inbound")
+    assert removed == 1, (
+        "the fixture did not damage the file it claims to have damaged — "
+        "either aitrader's entry moved or the helper stopped finding it"
+    )
+    assert "allow_inbound" not in text.split("  aitrader:")[1]
+
+    p = tmp_path / "example-minus-one-line.yaml"
+    p.write_text(text, encoding="utf-8")
+    reg = load_registry(p)
+
+    assert reg.apps["aitrader"].allow_inbound is False
+    # ...and the loss is reported rather than merely survived, which is what an
+    # operator diffing two registry copies needs to see.
+    assert "aitrader" in reg.inbound_defaulted
+
+
+def test_the_committed_example_states_every_apps_inbound_posture(tmp_path):
+    """The belt beside CG-88's braces, and the template's own honesty.
+
+    The default now makes silence safe; it does not make silence GOOD. The
+    committed example is what a fresh deployment copies, so an app there that
+    says nothing about inbound teaches the next operator to say nothing either —
+    and `job-hunter` is a two-way tenant whose live entry writes `true`. An
+    empty `inbound_defaulted` is the machine-checkable form of "this template
+    states its own posture".
+    """
+    reg = load_registry(COMMITTED_EXAMPLE)
+    assert reg.inbound_defaulted == [], (
+        "these apps in registry.example.yaml leave their inbound posture to the "
+        f"loader: {reg.inbound_defaulted}"
+    )
+    assert reg.apps["aitrader"].allow_inbound is False
+    assert reg.apps["aiteam-harness"].allow_inbound is False
+    assert reg.apps["agent-mcp"].allow_inbound is False
+    assert reg.apps["job-hunter"].allow_inbound is True
+
+
+def test_check_names_the_apps_that_relied_on_the_default_on_STDERR(tmp_path, monkeypatch, capsys):
+    """The loud half, end to end through `main(["check"])`.
+
+    stderr and not stdout, because `check`'s stdout is machine-readable JSON one
+    branch later and a warning inside a `| jq` pipeline is a warning somebody
+    silences. The JSON carries the same list on every run, so the always-on
+    channel is the report and the console line is the prompt.
+    """
+    from chat_gateway.__main__ import main
+
+    p = tmp_path / "r.yaml"
+    p.write_text(
+        "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+        "apps:\n"
+        "  silent:\n    key_env: K1\n    identities: [pm]\n"
+        "  stated:\n    key_env: K2\n    identities: [pm]\n"
+        "    allow_inbound: false\n", encoding="utf-8")
+    monkeypatch.setenv("CHAT_GATEWAY_REGISTRY", str(p))
+    monkeypatch.setenv("CHAT_GATEWAY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("CHAT_GATEWAY_INBOX_DIR", str(tmp_path / "inbox-data"))
+    monkeypatch.delenv("CHAT_GATEWAY_ENV_FILE", raising=False)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GATEWAY_ENABLE_PUBSUB", raising=False)
+
+    assert main(["check"]) == 0
+    captured = capsys.readouterr()
+    assert "silent" in captured.err and "DENY" in captured.err
+    assert "stated" not in captured.err, "an app that wrote its posture is not a reliance"
+    assert "WARNING" not in captured.out, "the warning must not contaminate the JSON"
+    assert json.loads(captured.out)["apps"]["silent"]["key_configured"] is False
+    assert json.loads(captured.out)["inbound_defaulted"] == ["silent"]
+
+
+def test_check_is_SILENT_when_every_app_states_its_own_posture(tmp_path, monkeypatch, capsys):
+    """The control for the test above — the warning must discriminate.
+
+    A line that prints on every boot is a line an operator stops reading, which
+    is this repo's own recorded reason for not degrading `/healthz` on a
+    guarantee that is working.
+    """
+    from chat_gateway.__main__ import main
+
+    p = tmp_path / "r.yaml"
+    p.write_text(
+        "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+        "apps:\n  stated:\n    key_env: K\n    identities: [pm]\n"
+        "    allow_inbound: false\n", encoding="utf-8")
+    monkeypatch.setenv("CHAT_GATEWAY_REGISTRY", str(p))
+    monkeypatch.setenv("CHAT_GATEWAY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("CHAT_GATEWAY_INBOX_DIR", str(tmp_path / "inbox-data"))
+    monkeypatch.delenv("CHAT_GATEWAY_ENV_FILE", raising=False)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GATEWAY_ENABLE_PUBSUB", raising=False)
+
+    assert main(["check"]) == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out)["inbound_defaulted"] == []

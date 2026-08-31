@@ -62,11 +62,27 @@ apps:
     #
     # A DEFAULT CORRECTED, NOT A VERDICT about this consumer. Reversible in this
     # one line if aiteam ever wants inbound.
+    #
+    # ⚠ 2026-08-31 (CG-88): `true` IS NO LONGER THE DEFAULT. The loader denies
+    # when the key is absent, so the paragraph above is now a dated record of
+    # why this line was written rather than a description of what happens
+    # without it. The line STAYS: the default makes silence safe, it does not
+    # make silence good, and a template that states nothing teaches the next
+    # operator to state nothing. `load_registry` now reports any app that
+    # leaves the posture to it — `inbound_defaulted`, on `/healthz` and on
+    # `python3 -m chat_gateway check`.
     allow_inbound: false
 
   job-hunter:
     key_env: CHAT_GATEWAY_API_KEY__JOB_HUNTER
     identities: [job-hunter]
+    # The one tenant here that genuinely wants inbound, and until 2026-08-31 it
+    # got it the way `aiteam-harness` did — by saying nothing while the default
+    # said yes. Written now (CG-88), because the default denies and this
+    # template is what a fresh deployment copies: silence here would ship a
+    # jobhunt whose callback path is off, differing from the live registry in a
+    # way nothing would announce.
+    allow_inbound: true
 
   # An "agent" tenant for the MCP surface (CG-80): an ordinary registered app
   # whose key lives in an MCP client's config rather than in a program. It is a
