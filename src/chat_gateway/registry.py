@@ -95,10 +95,27 @@ def _require_bool(app_id: str, key: str, value) -> None:
 
     Refusing rather than coercing is this file's existing treatment of YAML's
     coercion traps — `_require_id_str` above refuses a non-string key instead
-    of calling `str()` on it, for the same reason. The cost is stated where it
-    is taken: a live registry carrying a quoted boolean stops loading, which
-    under PR 4's R1-B is a supported steady state on this gateway (reads serve,
-    nothing crosses) and prints `config error:` naming the app and the fix.
+    of calling `str()` on it — and the file's stated principle is that every
+    way a registry can be wrong should arrive as `RegistryError` (see the
+    `yaml.YAMLError` catch in `load_registry`). The sibling precedent is one
+    field away: `callback_url` beside an opted-out flag already refuses at load.
+
+    ⚠ THE COST, STATED PLAINLY BECAUSE IT IS A REAL ONE: `load_registry`
+    raising means `build_runtime` raises, which means `main` prints
+    `config error: …` and exits **2**. The gateway DOES NOT START. There is no
+    degraded mode here, and any reading of this as "reads still serve" is
+    importing another project's ruling about a different file. So this is a new
+    way to take the gateway down, on a registry nobody in this checkout can
+    read (two of its three copies are off-repo).
+
+    ⚠ It is taken anyway, and the alternative is named: DENY-and-warn on a
+    non-boolean would carry no outage risk at all, and it was declined because
+    it silently discards what an author wrote — `allow_inbound: "true"` would
+    become a refusal reported only in a log line, which is the same
+    "configuration says one thing, gateway does another" shape in the other
+    direction. What bounds the risk here is that a non-boolean cannot arrive by
+    OMISSION, which is the accidental case: it has to be typed, both readable
+    copies use plain booleans, and the message names the app and the fix.
     """
     if not isinstance(value, bool):
         raise RegistryError(

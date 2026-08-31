@@ -81,7 +81,7 @@ pre-merge review and both are recorded at their sites.)
 |---|---|---|
 | the **bearer key** | `auth.py:22-38` | one secret authenticates both projects; rotating it for one silently disables the other |
 | the **app id** | `auth.py:34-37` | `aitrader` is the id used for everything below |
-| the **destination spaces** | `registry.route_for`, `registry.py:214-225` | pmtrader's alerts land in `aitrader`'s alert space and its quiet traffic in `aitrader`'s reports space |
+| the **destination spaces** | `registry.route_for`, `registry.py:231-242` | pmtrader's alerts land in `aitrader`'s alert space and its quiet traffic in `aitrader`'s reports space |
 | the **dedupe namespace** | `service.py:335`, `notifications.py:231-248` | dedupe is keyed `(app_id, dedupe_key)`; the window and the occurrence counters are `aitrader`'s |
 | the **delivery log** | `service.py:337, 341, 633-635` | `GET /v1/deliveries` is per-source and capped; each project's traffic evicts the other's history |
 | the **heartbeat namespace** | `service.py:519, 611-621, 623-629` | checks are keyed on the app id; `GET /v1/heartbeat/aitrader` would list pmtrader's checks, and a `check_id` collision is two systems refreshing one check |
@@ -125,15 +125,24 @@ BQ-031 predicts so the two records can be compared.
 
 ## 3. The registry shape, as it actually is
 
-Read off `registry.py`'s dataclasses (`Identity` at `:113-119`, `App` at
-`:141-171`) and the loader's validation (`registry.py:353-394`), not off an
+Read off `registry.py`'s dataclasses (`Identity` at `:130-136`, `App` at
+`:158-188`) and the loader's validation (`registry.py:370-411`), not off an
 example.
 
-⚠ **Every `registry.py` line citation in this document was re-measured on
-2026-08-31 (CG-88), by searching for the sentence each one quotes rather than
-by adding a band.** That change inserted a strict-boolean helper and a
-default-deny block, so all six moved. The `App` dataclass span grew from 9 lines
-to 31 because the field now carries its reasoning at the site.
+⚠ **Every `registry.py` line citation in this repository was re-measured on
+2026-08-31 (CG-88) by pinning each one to the CONTENT it claims to point at,
+never by adding a band.** That change inserted a strict-boolean helper and a
+default-deny block, so all **sixteen** moved — ten here, five in
+`docs/consumers/aitrader.md`, one in `docs/BUILDER_QUEUE.md`. The `App`
+dataclass span grew from 9 lines to 31 because the field now carries its
+reasoning at the site.
+
+⚠⚠ **They moved TWICE inside that one PR, and the second time was caused by the
+commit that fixed something else** — a four-line refusal message became seven,
+and every anchor below it shifted again. **A re-pointed citation is only correct
+as of the edit that measured it**, which is why the final pass was a script that
+resolves each citation against its own quoted content rather than a list of
+numbers somebody typed once.
 
 ### `identities:` — **destinations.** Where a message can go.
 
@@ -249,7 +258,7 @@ no agent can do.**
   everywhere in §2's table) and it fixes every namespacing row. **What it does
   not fix: both projects' traffic still arrives in one room.** ⚠ It also makes
   that space have **two owning apps** for inbound routing —
-  `registry.apps_for_space` (`registry.py:227-238`) returns every app owning an
+  `registry.apps_for_space` (`registry.py:244-255`) returns every app owning an
   identity homed in a space, and `adapters/pubsub.py:691` looks them up and `:693` fans out
   to all of them. Inert today, because both apps would be `allow_inbound: false`; it
   stops being inert the moment either one is flipped.
@@ -263,7 +272,7 @@ one it is solving. Registration fixes *identity*; new spaces fix *separation*.
 places at two different times:
 
 - **`/v1/notify` with no route for that severity → `503`**, not a silent drop.
-  `route_for` raises (`registry.py:220-224`) and `emit_notification` converts it
+  `route_for` raises (`registry.py:237-241`) and `emit_notification` converts it
   (`service.py:332-334`). The detail is actionable and names the fix — the message with its two
   interpolations shown as placeholders:
   `app '<app_id>' has no notify route for severity '<severity>' (add routes: {severity: identity} to the registry)`.
@@ -496,8 +505,8 @@ Three checks, none of which posts to a Chat space:
    on an unknown identity, a route that does not point at one of the app's own
    identities, an unknown severity, a missing `key_env`, or a `callback_url`
    without `allow_inbound`, or — since CG-88 — an `allow_inbound` that is not
-   a real YAML boolean (`registry.py:353-394`; **353**, not the `App(...)`
-   construction at `:372`, because the `key_env` raise and CG-88's
+   a real YAML boolean (`registry.py:370-411`; **353**, not the `App(...)`
+   construction at `:389`, because the `key_env` raise and CG-88's
    `_require_bool` call both sit above it, and an earlier draft cited a range
    that excluded one of the conditions it listed). **Six conditions now, not
    five.** A registry that loads has
@@ -505,8 +514,8 @@ Three checks, none of which posts to a Chat space:
 2. **`GET /healthz`.** Carries `registry.health()` (`service.py:777`), which
    reports per app `key_configured` — is the `key_env` variable set — and per
    identity `env_resolved` and `space_set`. ⚠ **It is NOT booleans only**, and an
-   earlier draft of this line said it was: `registry.py:246` also emits each
-   identity's `mode` (a string) and `:250` each app's `identities` (a list of
+   earlier draft of this line said it was: `registry.py:263` also emits each
+   identity's `mode` (a string) and `:267` each app's `identities` (a list of
    names), and since CG-88 `inbound_defaulted` names every app that left its
    inbound posture to the loader. **The load-bearing half is the true one — no env-var VALUES and no
    URLs** — and it is on an **unauthenticated** response, which `service.py:765-766`

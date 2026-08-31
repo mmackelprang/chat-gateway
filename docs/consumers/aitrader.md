@@ -122,7 +122,7 @@ app; there is no way to read another app's log. See §6.
 ## 3. Severity routing — config, not code
 
 Resolution is `routes[severity]`, falling back to `routes["default"]` if you ever
-add one (`registry.py:214-225`), then re-checked against your identity allowlist
+add one (`registry.py:231-242`), then re-checked against your identity allowlist
 (hard rule #4). As committed in `config/registry.example.yaml`:
 
 | `severity` | identity | space |
@@ -519,9 +519,9 @@ inbound features. It is enforced in code, not merely omitted:
 
 | # | Path | Enforcement | Where |
 |---|---|---|---|
-| 0 | **Saying nothing** | `allow_inbound` **defaults to `false`** — an app whose entry omits the key gets no inbound path, and one that writes a non-boolean is refused at load. This is why points 1–4 do not depend on a YAML line surviving three copies of one file | `registry.py:141-171` (the field, with its reasoning) and `:353-394` (the loader) |
+| 0 | **Saying nothing** | `allow_inbound` **defaults to `false`** — an app whose entry omits the key gets no inbound path, and one that writes a non-boolean is refused at load. This is why points 1–4 do not depend on a YAML line surviving three copies of one file | `registry.py:158-188` (the field, with its reasoning) and `:370-411` (the loader) |
 | 1 | **Passive polling** | `GET /v1/inbox` → **403** `inbound is disabled for this app (no-inbound-control contract — gateway hard rule #6)` | `service.py:242-247` |
-| 2 | **`callback_url` push** | Setting `callback_url` on this app is a **registry validation error at process start** — the gateway refuses to boot: `app 'aitrader': callback_url requires allow_inbound: true — an opted-out tenant gets NO inbound path (hard rule #6)` | `registry.py:379-383` |
+| 2 | **`callback_url` push** | Setting `callback_url` on this app is a **registry validation error at process start** — the gateway refuses to boot: `app 'aitrader': callback_url requires allow_inbound: true — an opted-out tenant gets NO inbound path (hard rule #6)` | `registry.py:396-400` |
 | 3 | **Event dispatch** | An opted-out app is skipped before anything is written: nothing to the inbox, nothing forwarded, nothing to the audit trail | `adapters/pubsub.py:648-660` |
 | 4 | **Card convention** | `GET /v1/identities` returns `interaction: {"enabled": false, "reason": "inbound is disabled for this app (hard rule #6) — card interactions from it are never routed anywhere"}` — this app is never even handed a routing target | `service.py:85-88` |
 
@@ -564,7 +564,7 @@ Read carefully, because two things about them are easy to get wrong:
 
 **What this means for aitrader specifically, stated precisely rather than
 reassuringly.** A "candidate" is an app owning an identity **homed in the event's
-space** (`registry.apps_for_space`, `registry.py:227-238`), and an identity with
+space** (`registry.apps_for_space`, `registry.py:244-255`), and an identity with
 an empty `space` is homed nowhere.
 
 ⚠ **CORRECTED 2026-07-30, and the correction matters more than the original
