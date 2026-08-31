@@ -122,7 +122,10 @@ facts. The whole of it is `docs/consumers/pmtrader-registration-handoff.md`.
 
 ⛔ **MEASURED, through the real loader rather than a YAML read:
 `load_registry("config/registry.yaml")` returns `['aiteam-harness', 'job-hunter',
-'aitrader']`, and `grep -rn pmtrader config/ src/ docs/` exits 1.** pmtrader
+'aitrader']`, and at `0c0d8e3` `grep -rn pmtrader config/ src/ docs/` exits 1.**
+⚠ **That command does not reproduce after this merge — the handoff itself puts the
+name into `docs/`, which is stated at the site. The durable form is `config/ src/`,
+and it stays empty until somebody registers the app.** pmtrader
 authenticates with `aitrader`'s bearer token and `authenticate` (`auth.py:22-38`)
 resolves the app id from the registry key whose `key_env` matches that token — so
 **ten** surfaces are borrowed, not one: the key, the app id, the destination

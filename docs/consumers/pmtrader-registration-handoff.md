@@ -38,11 +38,19 @@ documented test/dev interpreter (`python3`, `CLAUDE.md` § Layout).
 
 | # | Claim | How it was checked | Result |
 |---|---|---|---|
-| 1 | pmtrader is not a registered app | `grep -rn pmtrader config/ src/ docs/` | **exit 1, zero hits.** `git grep -n pmtrader` — zero hits |
+| 1 | pmtrader is not a registered app | `grep -rn pmtrader config/ src/ docs/`, and `git grep -n pmtrader`, **both at `0c0d8e3`** | **exit 1, zero hits**, both ways. ⚠ **The `docs/` half of that command does not reproduce after this file merges** — see the note below the table |
 | 2 | the registry registers exactly three apps | `load_registry("config/registry.yaml")` — the **real loader**, not a YAML read | `['aiteam-harness', 'job-hunter', 'aitrader']` |
 | 3 | the app id comes from the key, never from the request | read `auth.py:22-38` | `authenticate` iterates `registry.apps`, constant-time-compares the presented bearer against `os.environ[app.key_env]`, and **returns the registry's YAML key** for the first match |
-| 4 | the client's `source` cannot override it | read `notifications.py:82-83`, `service.py:466-467` | `source` is `str | None`, described *"informational; the authenticated app is authoritative"*; `notify()` calls `emit_notification(app_id, n)` and **`n.source` is read by nothing on the path** |
+| 4 | the client's `source` cannot override it | read `notifications.py:82-83`, `service.py:466-467` | `source` is `str \| None`, described *"informational; the authenticated app is authoritative"*; `notify()` calls `emit_notification(app_id, n)` and **`n.source` is read by nothing on the path** |
 | 5 | the consumer doc says so in the same words | `docs/consumers/aitrader.md:53` | *"**accepted and ignored.** The authenticated app is authoritative — the gateway uses your key-derived app id everywhere (routing, dedupe, the delivery log)."* |
+
+⚠⚠ **THE ZERO-HITS MEASUREMENT IS FALSIFIED BY THIS FILE, DELIBERATELY, AND IT IS
+STATED HERE RATHER THAN LEFT FOR A READER TO TRIP OVER.** At `0c0d8e3` the name
+`pmtrader` appeared nowhere in `config/`, `src/` or `docs/`. This document puts it
+in `docs/`. **The reproducible form from here on is `grep -rn pmtrader config/
+src/`** — that stays empty until somebody actually registers the app, which is the
+claim that matters. A `docs/` hit is this file talking about the problem, not the
+gateway knowing about pmtrader.
 
 **So: pmtrader authenticates with `aitrader`'s bearer token, and the gateway sees
 every pmtrader message as `aitrader`.** `pmtrader`'s own `DEFAULT_SOURCE =
@@ -408,7 +416,7 @@ those two was checked.
 
 | Where | What it holds |
 |---|---|
-| `~/prj/pmtrader` `docs/OPERATOR_ALERTING.md` §3 | *"The registration problem — read this before minting a key."* **Option A — register `pmtrader` as its own app (recommended)** and **Option B — reuse `aitrader`'s key**, with six named costs. Written from pmtrader's end, and accurate about this repo. ⚠ **No document in THIS repo had recorded any of it before now** — that is measurable and was measured: `grep -rn pmtrader` here returns nothing (§1) |
+| `~/prj/pmtrader` `docs/OPERATOR_ALERTING.md` §3 | *"The registration problem — read this before minting a key."* **Option A — register `pmtrader` as its own app (recommended)** and **Option B — reuse `aitrader`'s key**, with six named costs. Written from pmtrader's end, and accurate about this repo when written. ⚠ **No document in THIS repo had recorded any of it before now** — measured at `0c0d8e3` (§1). ⚠⚠ **This file falsifies one sentence of it:** §3 opens *"`grep -rn 'pmtrader' /mnt/d/prj/chat-gateway/` returns **zero hits**"*, which stops being true the moment this merges. **Not corrected here — `~/prj/pmtrader` was read-only** — and flagged so whoever next touches that file knows why |
 | `~/prj/pmtrader` `docs/BUILDER_QUEUE.md` § BQ-031 | the blocked row and its three options — see §7 |
 | this repo `docs/consumers/aitrader.md` | the shape a notify + dead-man consumer contract takes here; §7 carries the dead-man cadence |
 | this repo `docs/consumers/jobhunt-handoff.md` | the shape of a *consumer* handoff, for whoever writes pmtrader's contract |
@@ -432,3 +440,7 @@ flagged because a reader in a hurry will otherwise copy it.
 - **Whether the NAS registry has drifted from this checkout's (§6)** — stated as
   a hazard with its evidence and its limit.
 - **BQ-031's disposition (§7)** — the owner's, and registration does not decide it.
+- **One knock-on this document creates and does not repair:** pmtrader's
+  `docs/OPERATOR_ALERTING.md` §3 opens with a zero-hits grep over this repo that
+  this file falsifies. `~/prj/pmtrader` was read-only in this pass, so it is
+  flagged in §9 rather than fixed.
