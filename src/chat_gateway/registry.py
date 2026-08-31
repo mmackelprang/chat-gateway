@@ -103,9 +103,9 @@ def _require_bool(app_id: str, key: str, value) -> None:
     if not isinstance(value, bool):
         raise RegistryError(
             f"app {app_id!r}: {key} must be a YAML boolean (true/false), not "
-            f"{type(value).__name__} {value!r}. Quoted booleans are the trap: "
-            f'`{key}: "false"` is a non-empty STRING, which is truthy — it '
-            "would have granted exactly what it appears to refuse."
+            f"{type(value).__name__} {value!r}. Refused rather than coerced, "
+            f'because coercion inverts it: `{key}: "false"` is a non-empty '
+            "STRING, which is truthy — it would grant what it appears to refuse."
         )
 
 

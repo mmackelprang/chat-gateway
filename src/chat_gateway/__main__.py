@@ -66,10 +66,10 @@ def build_runtime():
     # evidence.
     if registry.inbound_defaulted:
         print(
-            "registry: WARNING — no allow_inbound written for "
-            f"{', '.join(registry.inbound_defaulted)}; "
-            "each inherits the default, which is DENY (hard rule #6). "
-            "Write the key explicitly so the posture is the file's, not the loader's.",
+            "registry: WARNING — allow_inbound is not written for: "
+            f"{', '.join(registry.inbound_defaulted)}. "
+            "The default is DENY (hard rule #6); write the key explicitly so "
+            "the posture is the file's rather than the loader's.",
             file=sys.stderr, flush=True,
         )
     state_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
