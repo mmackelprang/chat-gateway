@@ -89,7 +89,10 @@ interactions and replies forward whole (action id + params, sender, space,
 message/thread ids, an at-least-once dedupe key), with short retries and a
 loud in-thread failure notice when the tenant is unreachable. Per-user
 authorization allowlists refuse anyone else in-thread. Opt-out
-(`allow_inbound: false`) is absolute and validated.
+(`allow_inbound: false`) is absolute and validated — and **opt-out is the
+default**: an app whose registry entry says nothing about inbound has none
+(CG-88, 2026-08-31; before that the default was `true`, so omitting the key
+granted it). `/healthz` names any app that left the decision to the loader.
 
 Consumer contracts live in [`docs/consumers/`](docs/consumers/):
 [aitrader](docs/consumers/aitrader.md) (notify + dead-man, no-inbound) and

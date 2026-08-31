@@ -452,7 +452,7 @@ apps:
   job-hunter:
     key_env: CHAT_GATEWAY_API_KEY__JOB_HUNTER     # env-var NAME; the key lives in .env
     identities: [job-hunter]
-    allow_inbound: true                            # already the default; explicit once inbound is live
+    allow_inbound: true                            # REQUIRED for inbound since CG-88 (2026-08-31) — the default is now DENY
     callback_url: "http://127.0.0.1:8710/chat-callback"    # appserver-local — see the port note
     allowed_users: [mark@mackelprang.com]          # R4 — exactly one
     unreachable_message: "⚠️ couldn't reach jobhunt — use the review UI"   # R7
