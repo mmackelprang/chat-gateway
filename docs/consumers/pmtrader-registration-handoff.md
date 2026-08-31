@@ -126,7 +126,7 @@ BQ-031 predicts so the two records can be compared.
 ## 3. The registry shape, as it actually is
 
 Read off `registry.py`'s dataclasses (`Identity` at `:130-136`, `App` at
-`:158-188`) and the loader's validation (`registry.py:370-411`), not off an
+`:158-188`) and the loader's validation (`registry.py:370-435`), not off an
 example.
 
 ⚠ **Every `registry.py` line citation in this repository was re-measured on
@@ -422,6 +422,29 @@ subsection below actually rests on.
 the queue carried the wrong state in between. `docs/BUILDER_QUEUE.md` § CG-61
 records it as *"⚠ **Merging is not finishing**"*.
 
+### ⛔ CG-88 gave the drift above a way to stop the gateway — read this before installing either copy
+
+⚠⚠ **MEASURED 2026-08-31 against both loaders.** An app entry carrying a
+`callback_url` and **no** `allow_inbound` **loaded before CG-88** — inbound on,
+by the old default — and **refuses to load after it**, because
+`callback_url requires allow_inbound: true` now fires. In this repo a registry
+that does not load is not a degraded mode: `main` prints `config error:` and
+exits **2**, and the gateway does not start.
+
+⚠ **It is producible by OMISSION**, which is what makes it the realistic one —
+a quoted boolean has to be typed, this only has to be *not* typed. ✅ **Both
+copies anyone here can read are safe**: the dev-box `config/registry.yaml` and
+the committed `registry.example.yaml` each write `allow_inbound: true` beside
+`job-hunter`'s callback. ⚠ **The NAS copy is the one nobody can read**, and
+§"install step" above overwrites it with a checkout's — so the diff this section
+already asks for is now a **boot** question and not only a drift question.
+
+✅ **The refusal names the cause.** When the key is absent it appends: *"⚠
+`allow_inbound` is not written for this app at all — it DEFAULTED to true until
+2026-08-31 (CG-88) and now defaults to false…"*. ⚠ **Appended, never woven in**:
+`docs/consumers/aitrader.md` §8 quotes the unhinted message verbatim and that
+tenant writes its own `false`, so the hint cannot fire there.
+
 ### ⚠ A drift observation, offered as a hazard rather than a finding
 
 Measured here: this checkout's `config/registry.yaml` has an mtime of
@@ -505,7 +528,7 @@ Three checks, none of which posts to a Chat space:
    on an unknown identity, a route that does not point at one of the app's own
    identities, an unknown severity, a missing `key_env`, or a `callback_url`
    without `allow_inbound`, or — since CG-88 — an `allow_inbound` that is not
-   a real YAML boolean (`registry.py:370-411`; **353**, not the `App(...)`
+   a real YAML boolean (`registry.py:370-435`; **353**, not the `App(...)`
    construction at `:389`, because the `key_env` raise and CG-88's
    `_require_bool` call both sit above it, and an earlier draft cited a range
    that excluded one of the conditions it listed). **Six conditions now, not

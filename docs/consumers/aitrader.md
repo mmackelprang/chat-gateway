@@ -519,7 +519,7 @@ inbound features. It is enforced in code, not merely omitted:
 
 | # | Path | Enforcement | Where |
 |---|---|---|---|
-| 0 | **Saying nothing** | `allow_inbound` **defaults to `false`** — an app whose entry omits the key gets no inbound path, and one that writes a non-boolean is refused at load. This is why points 1–4 do not depend on a YAML line surviving three copies of one file | `registry.py:158-188` (the field, with its reasoning) and `:370-411` (the loader) |
+| 0 | **Saying nothing** | `allow_inbound` **defaults to `false`** — an app whose entry omits the key gets no inbound path, and one that writes a non-boolean is refused at load. This is why points 1–4 do not depend on a YAML line surviving three copies of one file | `registry.py:158-188` (the field, with its reasoning) and `:370-435` (the loader) |
 | 1 | **Passive polling** | `GET /v1/inbox` → **403** `inbound is disabled for this app (no-inbound-control contract — gateway hard rule #6)` | `service.py:242-247` |
 | 2 | **`callback_url` push** | Setting `callback_url` on this app is a **registry validation error at process start** — the gateway refuses to boot: `app 'aitrader': callback_url requires allow_inbound: true — an opted-out tenant gets NO inbound path (hard rule #6)` | `registry.py:396-400` |
 | 3 | **Event dispatch** | An opted-out app is skipped before anything is written: nothing to the inbox, nothing forwarded, nothing to the audit trail | `adapters/pubsub.py:648-660` |

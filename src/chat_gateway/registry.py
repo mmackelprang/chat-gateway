@@ -394,9 +394,33 @@ def load_registry(path: str | Path) -> Registry:
                   allowed_users=[str(u).lower() for u in (spec.get("allowed_users") or [])],
                   unreachable_message=str(spec.get("unreachable_message") or ""))
         if app.callback_url and not app.allow_inbound:
+            # CG-88's one realistic outage path, and it is the reason this hint
+            # exists rather than a stronger guard. MEASURED 2026-08-31 against
+            # both loaders: an entry with a `callback_url` and NO
+            # `allow_inbound` LOADED before this change (inbound on, by the old
+            # default) and REFUSES to load after it — and `load_registry`
+            # raising means the gateway does not start at all. Unlike the
+            # quoted-boolean case, this one is producible by OMISSION, which is
+            # the accidental case, and neither of the two off-repo registry
+            # copies can be read from any checkout to rule it out.
+            #
+            # So the refusal names what changed under the operator's feet. The
+            # message is appended to rather than rewritten: the unhinted form
+            # is quoted verbatim in `docs/consumers/aitrader.md` §8 enforcement
+            # point 2, and that tenant WRITES its `false`, so the hint cannot
+            # fire there and that quotation stays byte-exact.
+            hint = ""
+            if raw_inbound is None:
+                hint = (
+                    ". ⚠ `allow_inbound` is not written for this app at all — it "
+                    "DEFAULTED to true until 2026-08-31 (CG-88) and now defaults "
+                    "to false, so a registry like this one loaded before that "
+                    "date and does not now. If this tenant is meant to have "
+                    "inbound, write `allow_inbound: true`"
+                )
             raise RegistryError(
                 f"app {app_id!r}: callback_url requires allow_inbound: true — "
-                "an opted-out tenant gets NO inbound path (hard rule #6)"
+                f"an opted-out tenant gets NO inbound path (hard rule #6){hint}"
             )
         for name in app.identities:
             if name not in identities:

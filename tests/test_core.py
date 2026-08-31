@@ -591,3 +591,58 @@ def test_check_is_SILENT_when_every_app_states_its_own_posture(tmp_path, monkeyp
     captured = capsys.readouterr()
     assert captured.err == ""
     assert json.loads(captured.out)["inbound_defaulted"] == []
+
+
+def test_a_callback_url_with_no_allow_inbound_now_refuses_AND_says_what_changed(tmp_path):
+    """CG-88's one realistic outage path, pinned with the mitigation.
+
+    MEASURED against both loaders on 2026-08-31: this registry LOADED on `main`
+    — inbound on, by the old default — and refuses here. `load_registry`
+    raising means `build_runtime` raises and `main` exits 2, so the gateway does
+    not start. Unlike a quoted boolean, this shape is producible by OMISSION.
+
+    The refusal therefore has to name what changed under the operator's feet,
+    because the unhinted message sends them looking for a flag that is not in
+    the file.
+    """
+    p = tmp_path / "r.yaml"
+    p.write_text(
+        "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+        "apps:\n  two-way:\n    key_env: K\n    identities: [pm]\n"
+        '    callback_url: "http://127.0.0.1:8710/chat-callback"\n',
+        encoding="utf-8")
+    with pytest.raises(RegistryError) as exc:
+        load_registry(p)
+    assert "callback_url requires allow_inbound: true" in str(exc.value)
+    assert "not written for this app at all" in str(exc.value)
+    assert "CG-88" in str(exc.value)
+
+
+def test_the_hint_does_NOT_fire_for_a_tenant_that_wrote_its_refusal(tmp_path):
+    """`docs/consumers/aitrader.md` §8 enforcement point 2 quotes this message
+    verbatim, and that tenant WRITES `allow_inbound: false`.
+
+    So the hint must be appended, never woven in: an entry that stated its
+    posture is not a victim of the default change, and telling it about CG-88
+    would be both wrong and a silent edit to a quoted published guarantee.
+    """
+    p = tmp_path / "r.yaml"
+    p.write_text(
+        "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+        "apps:\n  aitrader:\n    key_env: K\n    identities: [pm]\n"
+        "    allow_inbound: false\n"
+        '    callback_url: "http://127.0.0.1:8710/chat-callback"\n',
+        encoding="utf-8")
+    with pytest.raises(RegistryError) as exc:
+        load_registry(p)
+    assert str(exc.value) == (
+        "app 'aitrader': callback_url requires allow_inbound: true — "
+        "an opted-out tenant gets NO inbound path (hard rule #6)"
+    )
+    quoted = (Path(__file__).resolve().parents[1]
+              / "docs" / "consumers" / "aitrader.md").read_text(encoding="utf-8")
+    assert str(exc.value) in quoted, (
+        "aitrader.md §8 quotes this message verbatim — the quotation and the "
+        "code have to move together or the published guarantee cites bytes "
+        "the gateway no longer emits"
+    )

@@ -209,9 +209,17 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   mutation:** flipping the `App` dataclass default back to `True` left the whole
   suite passing, because `load_registry` now passes the field explicitly on
   every path — two sites, and only one of them was bound (0h). It has its own
-  test now. ⚠ **Merged is not in effect, again** (CG-61's lesson, CG-80's
-  repeat): the default is applied at **load**, so a running gateway keeps the
-  posture it booted with and the NAS gets this at its next redeploy.
+  test now. ⛔ **AND ONE MEASURED OUTAGE PATH, which is NOT the quoted boolean:**
+  an app with a `callback_url` and **no** `allow_inbound` **loaded before this
+  change and refuses after it** — `callback_url requires allow_inbound: true`
+  now fires, and here a registry that does not load means `main` exits 2 and the
+  gateway does not start. **Producible by OMISSION**, so it is the realistic one;
+  both readable copies are safe and the third cannot be read (0d). The refusal
+  names CG-88 and the one-line fix. ⚠ **Merged is not in effect, again**
+  (CG-61's lesson, CG-80's repeat): the default is applied at **load**, so a
+  running gateway keeps the posture it booted with and the NAS gets this at its
+  next redeploy — **which is also when this outage path would first be able to
+  bite.**
 - **The live project is `chat-gateway-gw` (`#860649224827`), and it is the only
   one.** `chat-gateway-prod` — which every "Cloud resources now exist" note in
   this file used to describe — was **deleted 2026-07-30**, along with E1's
