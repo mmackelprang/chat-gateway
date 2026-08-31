@@ -704,8 +704,16 @@ def test_a_raising_scan_is_counted_but_the_cumulative_one_never_clears():
     as "not accepted for delivery". It is never actually called here (`scan_once`
     is stubbed and the store is empty), but a fake that would misreport if it
     were is a trap for whoever copies it next.
+
+    ⚠ AND IT TAKES `**k`, which it did not until 2026-08-31 — the docstring
+    above named the trap and then was one. CG-86 gave `notify_fn` a
+    keyword-only `severity`, and `lambda *a: True` does not accept a keyword
+    argument at all: had `scan_once` ever reached it, this fake would have
+    raised `TypeError` rather than misreporting, which is the louder failure
+    but still not the one the test is about.
     """
-    mon = HeartbeatMonitor(HeartbeatStore(), lambda *a: True, interval_seconds=0.01)
+    mon = HeartbeatMonitor(HeartbeatStore(), lambda *a, **k: True,
+                           interval_seconds=0.01)
     calls = {"n": 0}
 
     def flaky():

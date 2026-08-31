@@ -487,8 +487,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # remove a LIVE source's alert route, and its on-schedule pings start
         # returning 422 — so `last_seen` freezes, the check drifts into
         # `is_missed`, and the moment the route is restored the gateway
-        # delivers `[ALERT] heartbeat missed: daily-run` for a source that
-        # never stopped pinging. A registry misconfiguration becomes a
+        # delivers a missed-check alert for a source that never stopped
+        # pinging. (That measurement delivered `[ALERT] heartbeat missed:
+        # daily-run`; CG-86 retired that wire shape on 2026-08-31 and the title
+        # is now `[aitrader] heartbeat daily-run — missed, no refresh for …`.
+        # The measurement is unchanged — only its rendering moved — so the
+        # quote is dropped rather than updated, because a quoted string in this
+        # comment is a second copy of a title that lives in `_title`.)
+        # A registry misconfiguration becomes a
         # FABRICATED outage, on the very source this feature exists to watch.
         # The dead-man switch must never be the thing that invents the death.
         #

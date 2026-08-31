@@ -12,7 +12,7 @@ MESSAGE POLICY (CG-86). Every message about a check — the thread root, the
 first alert, each reminder, and the recovery notice — carries ONE
 `thread_key` (`thread_key_for`), because the check is the durable subject the
 owner's chat policy threads on. Titles lead with the source and carry the
-DELTA (`[<source>] heartbeat <id> - still missed, 7d02h`), never a severity
+DELTA (`[<source>] heartbeat <id> — still missed, 7d02h`), never a severity
 word: the gateway's own `severity_prefix()` supplies that, and a title that
 repeats it renders it twice. This module composes those strings; `service.py`
 routes and renders them.
@@ -233,8 +233,11 @@ class Check:
     #: ⚠ IT MUST SURVIVE `refresh()`, which builds a brand-new `Check` on every
     #: call — that is its documented semantics, and a field left to this default
     #: would re-post a thread root on EVERY heartbeat ping. `refresh` carries it
-    #: over explicitly; `test_the_thread_root_is_not_reposted_after_a_refresh`
-    #: pins it.
+    #: over explicitly;
+    #: `test_the_thread_root_is_posted_once_per_check_and_not_after_a_refresh`
+    #: pins it. (That name was wrong here until 2026-08-31 — it cited a test
+    #: that has never existed, so the pin it promises was unverifiable by
+    #: anyone following the citation.)
     thread_started: bool = False
     #: How many alerts this outage has produced. Drives `repeat_after`'s
     #: escalating backoff, and distinguishes the first miss from a reminder.
@@ -338,8 +341,13 @@ def alert_message(check: Check, now: dt.datetime,
                    f"missed, no refresh for {elapsed}" if first
                    else f"still missed, {elapsed}")
     nxt = format_elapsed(repeat_after(check.alert_count + 1, repeat_s))
+    # ⚠ `alert_count`, NOT `alert_count + 1`. The count is how many alerts have
+    # ALREADY gone out, so the first reminder — the second alert — is reminder
+    # ONE. It was labelled `(reminder 2)` until 2026-08-31: a human-facing
+    # ordinal that started at two, because it was counting alerts under a word
+    # that means something else.
     lead = (f"missed, no refresh for {elapsed}" if first
-            else f"still missed, {elapsed} (reminder {check.alert_count + 1})")
+            else f"still missed, {elapsed} (reminder {check.alert_count})")
     body = (
         f"{_utc_stamp(now)} · {lead}\n"
         f"No refresh since {check.last_seen} (schedule {check.schedule}, "
@@ -555,9 +563,15 @@ class HeartbeatStore:
         reason each of them records: `_finish`'s mid-flight window
         (delivery.py, "losing an alert is the worse failure"), `_journal_write`
         ("at most one duplicate on the next boot"), and `Inbox._audit` (unacked,
-        so Google redelivers). A duplicate "heartbeat missed" costs one
-        redundant phone notification; a dropped one costs the whole feature,
-        silently, for 24 hours.
+        so Google redelivers). A duplicate reminder costs one redundant phone
+        notification; a dropped one costs the whole feature, silently, for
+        `repeat_after(alert_count)` — 24h only at the first rung, and up to a
+        WEEK at `MAX_REPEAT_S`. ⚠ That figure read a flat "24 hours" and quoted
+        the retired `heartbeat missed: <id>` title until 2026-08-31; CG-86's
+        own backoff widened the cost of a drop by up to 7×, which makes THIS
+        argument stronger, not weaker. It is the whole justification for
+        leaving `_save()` unguarded below, so the number has to be the real
+        one.
 
         `_save()` stays UNGUARDED on purpose. It is now on the far side of the
         notify, so raising is honest — the alert is already queued and the raise
@@ -751,8 +765,18 @@ class HeartbeatMonitor:
         undeliverable = 0
         first_error: Exception | None = None
         for check in fired:
-            key = check.thread_key()
             try:
+                # ⚠ INSIDE THE `try`, and it sat outside it until 2026-08-31.
+                # CG-76's invariant is that one check cannot strand another,
+                # and that invariant is POSITIONAL: every line in this loop
+                # body has to be under the isolation, or the isolation is a
+                # property of where somebody happened to put a statement.
+                # Honest about reachability rather than overclaiming — no
+                # JSON-representable `source` or `check_id` is known to make
+                # `thread_key_for` raise (an f-string and a sha256 accept
+                # anything `json.loads` produces), so this is moved for the
+                # invariant and NOT because a raise was found.
+                key = check.thread_key()
                 if not check.thread_started:
                     # CG-86 D3. The Thread Title, posted once per check, before
                     # the alert that will reply to it.
@@ -770,12 +794,29 @@ class HeartbeatMonitor:
                     # alert ATTEMPTS not accepted for delivery, and a thread
                     # root is not an alert; feeding it in would inflate the
                     # dropped-ALERT number with something no alert was lost to.
-                    # It is not thereby invisible: a root and its alert share
-                    # one route and one severity, so whatever refuses the root
-                    # refuses the alert one line later and IS counted — and a
-                    # root that RAISES sets `first_error`, degrading /healthz
-                    # through `scan_failures` exactly as any other per-check
-                    # failure does.
+                    # It is not thereby invisible. A root and its alert share
+                    # one ROUTE — both are routed `alert` (D2) — so a route
+                    # refusal refuses the alert one line later and IS counted;
+                    # and a root that RAISES sets `first_error`, degrading
+                    # /healthz through `scan_failures` exactly as any other
+                    # per-check failure does.
+                    #
+                    # ⚠ THEY DO NOT SHARE A RENDER SEVERITY, and this comment
+                    # claimed they shared "one route and one severity" until
+                    # 2026-08-31. The universal form is false and the exception
+                    # is live: `Notification`'s `_info_fits_one_text_field`
+                    # validator applies to `info` and NOT to `alert`, so a root
+                    # can be refused by validation where its alert passes on
+                    # the identical strings. MEASURED — the root's title caps
+                    # at 200 and its body carries the source twice, the
+                    # check_id twice and the ≤128 thread key against
+                    # `info_max_combined_length()` = 3989, so the shortest
+                    # breaching app id is 1,621 characters at `check_id` = 100,
+                    # and the registry caps app ids nowhere. Unreachable in
+                    # practice, and narrowed rather than machined: such a root
+                    # RAISES, so `first_error` still degrades /healthz, and
+                    # what goes uncounted is only the ALERT-shaped counter —
+                    # which is exactly the intent.
                     try:
                         root_title, root_body = thread_root_message(check)
                         if self._notify(check.source, root_title, root_body,
