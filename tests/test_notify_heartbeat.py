@@ -100,6 +100,24 @@ def make_client(registry, clock, tmp_path, adapter=None, log=None):
 AUTH = {"Authorization": "Bearer cgk_trader"}
 
 
+def rendered_as(adapter, severity):
+    """The adapter's sends that RENDERED as `severity`, in order.
+
+    CG-86 put more than one message on the dead-man path — a quiet thread root,
+    the alert, its reminders, and an all-clear — so `len(adapter.sent)` stopped
+    being the alert count. Filtering on `severity_prefix()` rather than on
+    `.cards` keeps the thread root and the recovery notice apart from each
+    other where a test needs that, and derives the discriminator from the
+    renderer instead of writing a copy of it down.
+
+    ⚠ EVERY ONE OF THEM IS *ROUTED* `alert` (CG-86 D2), so `identity` does not
+    discriminate here and must not be used to. That is the property
+    `test_every_monitor_message_is_routed_to_the_alert_identity` exists for.
+    """
+    prefix = severity_prefix(severity)
+    return [(i, m) for i, m in adapter.sent if m.text.startswith(prefix)]
+
+
 # --- routing + rendering -----------------------------------------------------
 
 def test_severity_routing_and_rendering(registry, tmp_path):
@@ -506,9 +524,17 @@ def test_weekday_deadman_no_weekend_false_alarm(registry, tmp_path):
     clock.now = dt.datetime(2026, 7, 27, 23, 0, tzinfo=UTC)
     assert app.state.monitor.scan_once() == 1
     app.state.dispatcher.process_due()
-    assert len(adapter.sent) == 1
-    ident, msg = adapter.sent[0]
-    assert ident == "aitrader-alerts" and "heartbeat missed: daily-run" in msg.text
+    # TWO messages now, not one: CG-86 opens the check's thread with a quiet
+    # root and then replies to it with the alert. Both go to the ALERT
+    # identity — severity picks the space, and a thread split across two
+    # spaces threads nothing.
+    assert len(adapter.sent) == 2
+    assert [i for i, _ in adapter.sent] == ["aitrader-alerts"] * 2
+    (_, root), = rendered_as(adapter, "info")
+    (_, msg), = rendered_as(adapter, "alert")
+    assert "🧵 Heartbeat daily-run" in root.text
+    assert "[aitrader] heartbeat daily-run — missed, no refresh for" in msg.text
+    assert root.thread_key == msg.thread_key == "hb:aitrader:daily-run"
     # repeat suppressed within the daily backoff...
     clock.now += dt.timedelta(minutes=30)
     assert app.state.monitor.scan_once() == 0
@@ -759,7 +785,9 @@ def test_a_second_outage_inside_the_dedupe_window_is_still_alerted(registry, tmp
     clock.now += dt.timedelta(seconds=300)
     assert app.state.monitor.scan_once() == 1
     app.state.dispatcher.process_due()
-    assert len(adapter.sent) == 1
+    # Counted as ALERTS, not as sends: CG-86's thread root and its all-clear
+    # ride the same adapter, and this test is about neither.
+    assert len(rendered_as(adapter, "alert")) == 1
 
     # Recovered, refreshed — a brand-new check with `last_alerted` cleared.
     clock.now += dt.timedelta(seconds=60)
@@ -770,7 +798,7 @@ def test_a_second_outage_inside_the_dedupe_window_is_still_alerted(registry, tmp
     clock.now += dt.timedelta(seconds=300)
     assert app.state.monitor.scan_once() == 1
     app.state.dispatcher.process_due()
-    assert len(adapter.sent) == 2, "the second real outage must alert"
+    assert len(rendered_as(adapter, "alert")) == 2, "the second real outage must alert"
     assert client.get("/healthz").json()["heartbeats"]["alerts_undeliverable"] == 0
 
 
@@ -812,7 +840,11 @@ def test_an_exhausted_retry_ladder_is_counted_and_degrades_healthz(registry, tmp
     assert adapter.sent == []
     assert app.state.dispatcher.pending() == 0
     body = client.get("/healthz").json()
-    assert body["delivery"]["delivery_failures"] == 1
+    # TWO exhausted jobs since CG-86, not one: the check's thread root is a
+    # message of its own and rides the same broken transport as the alert it
+    # opens the thread for. The property under test is unchanged — an accepted
+    # message that never lands is COUNTED — and it now counts both.
+    assert body["delivery"]["delivery_failures"] == 2
     assert body["delivery"]["pass_failures"] == 0        # nothing RAISED
     assert body["status"] == "degraded"
     assert any("exhausted the retry ladder" in r for r in body["reasons"])
@@ -829,10 +861,10 @@ def test_one_tenants_failing_notify_does_not_strand_anothers_alert(tmp_path):
 
     sent = []
 
-    def notify(source, title, body, key):
+    def notify(source, title, body, key, thread_key, severity="alert"):
         if source == "job-hunter":
             raise RuntimeError("no route")
-        sent.append(source)
+        sent.append((source, severity))
         return True
 
     monitor = HeartbeatMonitor(store, notify)
@@ -840,7 +872,10 @@ def test_one_tenants_failing_notify_does_not_strand_anothers_alert(tmp_path):
     with pytest.raises(RuntimeError):
         monitor.scan_once()
 
-    assert sorted(sent) == ["aiteam-harness", "aitrader"]
+    # Alerts only — every check also opens its thread with a quiet root, and
+    # the isolation claim is about the ALERT.
+    assert sorted(s for s, sev in sent if sev == "alert") == [
+        "aiteam-harness", "aitrader"]
     # The two that succeeded are marked; the one that failed is not, and
     # re-fires on the next scan.
     assert [c.source for c in store.due_alerts()] == ["job-hunter"]
@@ -884,7 +919,8 @@ def test_a_failing_save_no_longer_suppresses_the_alert(registry, tmp_path, monke
         app.state.monitor.scan_once()
 
     app.state.dispatcher.process_due()
-    assert len(adapter.sent) == 1, "the alert must be sent before the mark"
+    assert len(rendered_as(adapter, "alert")) == 1, \
+        "the alert must be sent before the mark"
 
     # No in-process storm: the live store IS marked, so the next scan is quiet.
     assert app.state.heartbeats.due_alerts() == []
@@ -977,7 +1013,7 @@ def test_a_failed_REPEAT_alert_is_counted_even_though_missed_does_not_move(
     clock.now += dt.timedelta(seconds=300)
     assert app.state.monitor.scan_once() == 1
     app.state.dispatcher.process_due()
-    assert len(adapter.sent) == 1
+    assert len(rendered_as(adapter, "alert")) == 1
     assert client.get("/healthz").json()["heartbeats"]["missed"] == 1
 
     # Chat becomes unreachable, and the 24h REPEAT comes due.
@@ -989,7 +1025,7 @@ def test_a_failed_REPEAT_alert_is_counted_even_though_missed_does_not_move(
         clock.now += dt.timedelta(seconds=4000)
 
     body = client.get("/healthz").json()
-    assert len(adapter.sent) == 1, "the repeat never landed"
+    assert len(rendered_as(adapter, "alert")) == 1, "the repeat never landed"
     # THE POINT: `missed` is unchanged — it was already 1 — and on `main` that
     # was the whole of the observable state. Now something else moved.
     assert body["heartbeats"]["missed"] == 1
@@ -1101,7 +1137,7 @@ def test_the_counters_survive_a_mark_alerted_that_raises(tmp_path, monkeypatch):
 
     routed = {"job-hunter": False}
 
-    def notify(source, title, body, key):
+    def notify(source, title, body, key, thread_key, severity="alert"):
         return routed.get(source, True)
 
     monitor = HeartbeatMonitor(store, notify)
@@ -1140,11 +1176,12 @@ def test_a_notify_that_is_accepted_but_not_enqueued_is_reported_as_unaccepted(
     client, app, adapter = make_client(registry, clock, tmp_path)
     emit = app.state.monitor._notify
 
-    assert emit("aitrader", "heartbeat missed: c", "body", "hb:c") is True
+    key = "hb:aitrader:c"
+    assert emit("aitrader", "heartbeat missed: c", "body", "hb:c", key) is True
     # Second call inside the deduper's window -> {"status": "deduped"} -> the
     # branch. Not an exception, and a 202 to the caller; only the return value
     # distinguishes it from a real acceptance.
-    assert emit("aitrader", "heartbeat missed: c", "body", "hb:c") is False
+    assert emit("aitrader", "heartbeat missed: c", "body", "hb:c", key) is False
 
     app.state.dispatcher.process_due()
     assert len(adapter.sent) == 1
