@@ -565,8 +565,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # above the `try`, that raise would 500 the liveness ping and cause the
         # exact fabricated outage this whole block is written not to cause.
         #
-        # ⚠ AND `alert_count > 0`, WHICH IS NOT REDUNDANT WITH `missed` — it is
-        # the DEPLOY-TRANSITION guard, added in CG-86's pre-merge review. A
+        # ⚠ AND `alert_count > 0`, WHICH IS THE DEPLOY-TRANSITION GUARD — added
+        # in CG-86's pre-merge review. State its scope exactly, because the
+        # loose form is the one that gets it deleted: for every state THIS
+        # release writes it IS redundant, since `mark_alerted` is the only
+        # writer of `status = "missed"` anywhere in `src/` and it increments
+        # `alert_count` in the same loop body under the same lock (MEASURED
+        # 2026-08-31). It is not redundant for a state some
+        # OTHER version wrote, and that is the entire case for it. A
         # `heartbeats.json` row written before this release loads with
         # `status: "missed"`, `thread_started=False` and `alert_count=0`; if it
         # refreshes before the next scan, the all-clear is the FIRST message
