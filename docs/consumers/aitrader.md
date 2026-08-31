@@ -122,7 +122,7 @@ app; there is no way to read another app's log. See §6.
 ## 3. Severity routing — config, not code
 
 Resolution is `routes[severity]`, falling back to `routes["default"]` if you ever
-add one (`registry.py:148-159`), then re-checked against your identity allowlist
+add one (`registry.py:235-246`), then re-checked against your identity allowlist
 (hard rule #4). As committed in `config/registry.example.yaml`:
 
 | `severity` | identity | space |
@@ -479,22 +479,117 @@ of it — at load time, at the door, and at dispatch.** That is a stronger claim
 than "no such mechanism exists", because it survives the gateway growing more
 inbound features. It is enforced in code, not merely omitted:
 
+> ⚠⚠ **AMENDED 2026-08-31 (CG-88), AND THE AMENDMENT IS TO THE BASIS RATHER
+> THAN TO THE GUARANTEE.** Every enforcement point below reads
+> `app.allow_inbound`, and until this date **that field defaulted to `True`** —
+> so all four rested on one `allow_inbound: false` line being present in
+> `config/registry.yaml`. That file has **three copies and only one of them is
+> in git** (`pmtrader-registration-handoff.md` §6), and `docs/deploy/nas.md`'s
+> install step overwrites the box's copy with a checkout's. **Dropped,
+> reformatted away, or missing from a copy, the line's absence INVERTED this
+> guarantee in silence** — nothing logged it, nothing counted it, and
+> `/healthz` read `ok`.
+>
+> **The default is now DENY.** Absence is refusal, so the table below no longer
+> depends on a line surviving three files; it depends on the loader. The line
+> stays written, and `registry.example.yaml` says why at the site: the default
+> makes silence safe, it does not make silence good.
+>
+> ⚠ **A second inversion in the same field is closed with it.** `bool("false")`
+> is `True`, so `allow_inbound: "false"` — a *quoted* boolean, which is exactly
+> what a YAML formatter or a templating pass produces without being asked —
+> read as **true** under the old loader: the entry granted precisely what it
+> appeared to refuse. A non-boolean value there is now a load-time
+> `RegistryError` naming the app.
+>
+> ⚠ **What did NOT change, stated because this is the tempting inference:** no
+> enforcement point below moved, no new one was added, and this app's live
+> entry is untouched. **The guarantee is exactly as strong as it was; what
+> changed is what it rests on.** Nor is the fix retroactive to a *running*
+> gateway — the default is applied at load, so it reaches a deployment when its
+> process next starts, which for the NAS is its next redeploy.
+>
+> ⚠ **And one thing this cannot reach: the NAS registry copy still cannot be
+> read from here.** The default protects an entry that says nothing; it cannot
+> tell you what the box's file actually says. ⚠ **ONE copy, not two — corrected
+> in pre-merge review.** The dev-box `config/registry.yaml` is gitignored, so it
+> is absent from a fresh clone, but it is readable on the dev machine and it was
+> read; only the NAS file is unknown, **and it has provably diverged** — it
+> gained `agent-mcp` in place on 2026-08-11 and the dev copy has no such block.
+> Diff the copies before installing either — `/healthz` publishes
+> `registry.inbound_defaulted`, which names every app whose posture came from
+> the loader rather than from the file, and is empty when every entry states
+> its own.
+>
+> ⚠⚠ **BUT `/healthz` ANSWERS FOR THE REGISTRY THE PROCESS LOADED AT BOOT, NOT
+> FOR THE FILE ON DISK** — named in pre-merge review, because the sentence above
+> invites exactly the wrong use. An operator who edits the NAS file and then
+> reads `/healthz` **without restarting** is reassured by a stale answer. Only
+> `python3 -m chat_gateway check` re-reads the file.
+
 | # | Path | Enforcement | Where |
 |---|---|---|---|
-| 1 | **Passive polling** | `GET /v1/inbox` → **403** `inbound is disabled for this app (no-inbound-control contract — gateway hard rule #6)` | `service.py:242-247` |
-| 2 | **`callback_url` push** | Setting `callback_url` on this app is a **registry validation error at process start** — the gateway refuses to boot: `app 'aitrader': callback_url requires allow_inbound: true — an opted-out tenant gets NO inbound path (hard rule #6)` | `registry.py:272-276` |
-| 3 | **Event dispatch** | An opted-out app is skipped before anything is written: nothing to the inbox, nothing forwarded, nothing to the audit trail | `adapters/pubsub.py:648-660` |
-| 4 | **Card convention** | `GET /v1/identities` returns `interaction: {"enabled": false, "reason": "inbound is disabled for this app (hard rule #6) — card interactions from it are never routed anywhere"}` — this app is never even handed a routing target | `service.py:85-88` |
+| 0 | **Saying nothing** | `allow_inbound` **defaults to `false`** — an app whose entry omits the key gets no inbound path, and one that writes a non-boolean is refused at load. This is why points 1–4 do not depend on a YAML line surviving three copies of one file | `registry.py:160-192` (the field, with its reasoning) and `:374-439` (the loader) |
+| 1 | **Passive polling** | `GET /v1/inbox` → **403** `inbound is disabled for this app (no-inbound-control contract — gateway hard rule #6)` | `service.py:640-645` |
+| 2 | **`callback_url` push** | Setting `callback_url` on this app is a **registry validation error at process start** — the gateway refuses to boot: `app 'aitrader': callback_url requires allow_inbound: true — an opted-out tenant gets NO inbound path (hard rule #6)` | `registry.py:400-428` — the guard at `:400`, the quoted message at `:426-428` |
+| 3 | **Event dispatch** | An opted-out app is skipped before anything is written: nothing to the inbox, nothing forwarded, nothing to the audit trail | `adapters/pubsub.py:697-709` |
+| 4 | **Card convention** | `GET /v1/identities` returns `interaction: {"enabled": false, "reason": "inbound is disabled for this app (hard rule #6) — card interactions from it are never routed anywhere"}` — this app is never even handed a routing target | `service.py:244-247` |
 
 Point 2 is the one that makes this a *contract* rather than a setting: the
 gateway **will not start** in a configuration that gives aitrader an inbound
 path. There is no runtime state in which a misconfiguration quietly opens one.
 
+Point 0 is the one that makes it survive an **edit**, which is a different
+hazard: point 2 catches a `callback_url` added beside an opted-out flag, and it
+was never able to catch the flag itself going missing.
+
+> ⚠⚠ **THREE OF THE FOUR `Where` CITATIONS IN THE TABLE ABOVE POINTED AT
+> UNRELATED CODE, and they were repaired opportunistically on 2026-08-31 by
+> CG-88. ⚠ THIS IS NOT A NEW FINDING AND MUST NOT BE READ AS ONE.** CG-69
+> measured it on **2026-08-03** and its queue row has carried the number ever
+> since: *"8 of the 14 code citations in the live contracts point at the wrong
+> code, three of them in `aitrader.md`'s hard-rule-#6 enforcement table"*. These
+> are those three. CG-88 was editing this table anyway and fixed them in
+> passing; **it did not find them.**
+>
+> What they were: row 1 (`/v1/inbox` → 403) cited `service.py:242-247`, which is
+> row 4's card-convention block; row 4 cited `service.py:85-88`, a comment about
+> a **poll timeout**; row 3 cited `adapters/pubsub.py:648-660`, which is
+> `normalize_event`'s try/except. **A reader auditing this guarantee by
+> following its citations landed on unrelated code three times out of four.**
+> Re-measured against the code before repair.
+>
+> ⚠⚠ **AND THIS PR BROKE A FOURTH ONE OF ITS OWN, IN THE PASS THAT REPAIRED
+> THE OTHER THREE — found in pre-merge review, 2026-08-31.** Row 2's citation
+> was re-pointed to `registry.py:396-400`, which held the `if` and the first
+> lines of a comment and **none of the message the row quotes**. ⚠ **THOSE TWO
+> NUMBERS ARE A RECORD OF A PAST ERROR, NOT A POINTER — do not "repair" them.**
+> They name where the broken citation pointed on the day it was broken; the
+> file has moved since, and re-pointing them would destroy the evidence of what
+> went wrong. Row 2 above is the live citation. The cause is
+> exact and is the finding: the checking script pinned that span's END by
+> **offset** (`start + 4`) instead of by content, so when a comment block was
+> inserted between the guard and its `raise`, the checker went on agreeing.
+> **A citation checker that resolves one end by content and the other by
+> arithmetic verifies half a citation.** Repaired here, and the script now
+> resolves both ends by content.
+>
+> ⚠⚠ **CG-69 IS NOT DISCHARGED BY THIS.** It is a process control over all
+> fourteen; three being fixed by a passer-by is precisely the ad-hoc repair the
+> row exists because of, and its own design already measured that
+> **name-anchored citations are 0 of 8 wrong** where line-anchored ones rot.
+> The `registry.py` citations in this repo are now re-resolved by content in a
+> script CG-88 used; **the `service.py` and `pubsub.py` ones have no such check
+> and can go stale again the next time either file is edited.**
+
 Widening this requires explicit user sign-off naming hard rule #6. Your own
 contract's reasoning — a two-way path is a security hole in a system placing
 real-money trades; the brakes release only at the machine — is recorded in the
 committed registry beside the flag, so nobody removes it thinking it was a
-default.
+default. ⚠ **That sentence was written against the old loader and is kept
+because it aged into being literally true**: removing the flag no longer opens
+anything, so the reasoning beside it is now protecting a statement of intent
+rather than the guarantee itself.
 
 ### What `/healthz` now shows, and what it does not (CG-12, shipped 2026-07-30)
 
@@ -518,7 +613,7 @@ Read carefully, because two things about them are easy to get wrong:
 
 **What this means for aitrader specifically, stated precisely rather than
 reassuringly.** A "candidate" is an app owning an identity **homed in the event's
-space** (`registry.apps_for_space`, `registry.py:161-172`), and an identity with
+space** (`registry.apps_for_space`, `registry.py:248-259`), and an identity with
 an empty `space` is homed nowhere.
 
 ⚠ **CORRECTED 2026-07-30, and the correction matters more than the original

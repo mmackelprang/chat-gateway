@@ -51,6 +51,34 @@ def build_runtime():
         print(f"env: loaded {load_env_file(env_file)} key(s) from {env_file}", flush=True)
 
     registry = load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml"))
+    # CG-88. `allow_inbound` now defaults to DENY, and an app that inherits it
+    # is named here rather than refused. The refusal was the alternative and it
+    # was declined: of the three registry copies, the NAS one cannot be read
+    # from here (docs/consumers/pmtrader-registration-handoff.md §6), so
+    # "required, no default" would have bet the service on a file nobody can
+    # read. ⚠ ONE copy, not two — corrected in pre-merge review. The dev-box
+    # `config/registry.yaml` is gitignored, so it is absent from a fresh clone,
+    # but it is present and readable on this machine and it WAS read. This is the half of that shape which cannot cause an outage BY
+    # OMISSION ALONE — annotated 2026-08-31 in pre-merge review, because the
+    # unqualified sentence is false: at `registry.py:400`, omission PLUS a
+    # `callback_url` trips rule #6's validation and the gateway exits 2. Every
+    # other site carrying this claim was annotated a commit earlier; this one
+    # was missed, which is the two-homes defect arriving inside the fix for it.
+    #
+    # stderr, not stdout: `check` writes machine-readable JSON to stdout one
+    # branch below, and a warning that lands in a `| jq` pipeline is a warning
+    # somebody silences. Silent when the list is empty — the always-on channel
+    # is `registry.health()`, which reports `inbound_defaulted: []` on every
+    # `/healthz` and every `check`, so absence of this line is never the only
+    # evidence.
+    if registry.inbound_defaulted:
+        print(
+            "registry: WARNING — allow_inbound is not written for: "
+            f"{', '.join(registry.inbound_defaulted)}. "
+            "The default is DENY (hard rule #6); write the key explicitly so "
+            "the posture is the file's rather than the loader's.",
+            file=sys.stderr, flush=True,
+        )
     state_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
     # ONE home for each of these two paths, deliberately: the Inbox WRITES the
     # audit dir and the quarantine dir, and the RetentionSweeper below is

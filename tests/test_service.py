@@ -21,6 +21,11 @@ apps:
   aiteam-harness:
     key_env: SVC_KEY_AITEAM
     identities: [pm-familyworkspace]
+    # WRITTEN, not defaulted (CG-88). The inbox 200, the routing-target 200 and
+    # the opted-in half of the opted-out test all need this app to accept
+    # inbound; before 2026-08-31 they inherited it from the loader. Four tests
+    # here went red when the default flipped to deny.
+    allow_inbound: true
 """
 
 
@@ -1730,3 +1735,83 @@ def test_a_dead_scan_thread_outranks_the_raising_counter(env):
     assert "NOT RUNNING" in from_chain[0] and "restart the service" in from_chain[0]
     assert "consecutive scans have RAISED" not in from_chain[0]
     assert "WEDGED rather than erroring" not in from_chain[0]
+
+
+# ---------------------------------------------------------------------------
+# CG-88 — the default reaches the door, and `/healthz` says who relied on it
+# ---------------------------------------------------------------------------
+
+SILENT_APP_YAML = REGISTRY_YAML + """  says-nothing:
+    key_env: SVC_KEY_SILENT
+    identities: [pm-familyworkspace]
+"""
+
+
+def test_an_app_that_never_mentions_inbound_is_403_at_the_door(tmp_path, monkeypatch):
+    """CG-88 end to end: the loader default is what `/v1/inbox` enforces.
+
+    ⚠ THE FIXTURE'S SILENCE IS THE CONTROL. `says-nothing` writes no
+    `allow_inbound`, so this test would have returned **200** before
+    2026-08-31 — an app nobody granted inbound to, polling a tenant inbox. An
+    assertion built on an entry that WROTE `false` would pass under either
+    default and prove nothing about this change (0h).
+
+    The opted-in app on the same gateway still gets its 200 two lines down,
+    because a refusal that refuses everyone is not a control either.
+    """
+    assert "allow_inbound" not in SILENT_APP_YAML.split("says-nothing:")[1], (
+        "this control binds only while `says-nothing` stays silent"
+    )
+    monkeypatch.setenv("SVC_KEY_AITEAM", "cgk_test_key")
+    monkeypatch.setenv("SVC_KEY_SILENT", "cgk_silent")
+    monkeypatch.setenv("SVC_HOOK_FW", "https://x.example/hook")
+    client = _client_for(tmp_path, SILENT_APP_YAML)
+
+    denied = client.get("/v1/inbox", headers={"Authorization": "Bearer cgk_silent"})
+    assert denied.status_code == 403
+    assert "hard rule #6" in denied.json()["detail"]
+    assert client.get("/v1/inbox", headers=AUTH).status_code == 200
+
+    # ...and the same silence closes the card-routing target, which is the
+    # other half of what an opted-out tenant is refused (§8 enforcement point 4).
+    interaction = client.get(
+        "/v1/identities", headers={"Authorization": "Bearer cgk_silent"}
+    ).json()["interaction"]
+    assert interaction["enabled"] is False
+
+
+def test_healthz_names_the_apps_that_relied_on_the_default_without_degrading(tmp_path,
+                                                                            monkeypatch):
+    """Hard rule #5 applied to a configuration smell rather than to a fault.
+
+    The list is published because an operator diffing three registry copies —
+    two of them off-repo — has nothing else that says which posture came from a
+    file and which came from the loader.
+
+    It is deliberately NOT an input to `status` and never a `reasons` entry, at
+    any length: the gateway is DENYING, which is the safe answer, so degrading
+    here would report a guarantee working as a fault and teach an operator that
+    `degraded` is the normal reading. That is the verdict `suppressed_opt_out`
+    and `files_deleted` already got, for the same reason.
+    """
+    monkeypatch.setenv("SVC_KEY_AITEAM", "cgk_test_key")
+    monkeypatch.setenv("SVC_KEY_SILENT", "cgk_silent")
+    monkeypatch.setenv("SVC_HOOK_FW", "https://x.example/hook")
+    client = _client_for(tmp_path, SILENT_APP_YAML)
+
+    body = client.get("/healthz").json()
+    assert body["registry"]["inbound_defaulted"] == ["says-nothing"]
+    assert body["status"] == "ok"
+    assert body["reasons"] == []
+    # `?strict=1` is driven by `reasons`, so it must not 503 on this either.
+    assert client.get("/healthz?strict=1").status_code == 200
+
+
+def test_healthz_reports_an_empty_list_when_every_app_states_its_posture(env):
+    """The control for the test above: the field must discriminate.
+
+    `REGISTRY_YAML` writes `allow_inbound: true`, so an empty list here is the
+    difference between "reports reliance" and "reports a constant".
+    """
+    client, _, _ = env
+    assert client.get("/healthz").json()["registry"]["inbound_defaulted"] == []

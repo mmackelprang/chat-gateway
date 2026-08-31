@@ -81,7 +81,7 @@ pre-merge review and both are recorded at their sites.)
 |---|---|---|
 | the **bearer key** | `auth.py:22-38` | one secret authenticates both projects; rotating it for one silently disables the other |
 | the **app id** | `auth.py:34-37` | `aitrader` is the id used for everything below |
-| the **destination spaces** | `registry.route_for`, `registry.py:148-159` | pmtrader's alerts land in `aitrader`'s alert space and its quiet traffic in `aitrader`'s reports space |
+| the **destination spaces** | `registry.route_for`, `registry.py:235-246` | pmtrader's alerts land in `aitrader`'s alert space and its quiet traffic in `aitrader`'s reports space |
 | the **dedupe namespace** | `service.py:335`, `notifications.py:231-248` | dedupe is keyed `(app_id, dedupe_key)`; the window and the occurrence counters are `aitrader`'s |
 | the **delivery log** | `service.py:337, 341, 633-635` | `GET /v1/deliveries` is per-source and capped; each project's traffic evicts the other's history |
 | the **heartbeat namespace** | `service.py:519, 611-621, 623-629` | checks are keyed on the app id; `GET /v1/heartbeat/aitrader` would list pmtrader's checks, and a `check_id` collision is two systems refreshing one check |
@@ -125,9 +125,30 @@ BQ-031 predicts so the two records can be compared.
 
 ## 3. The registry shape, as it actually is
 
-Read off `registry.py`'s dataclasses (`Identity` at `:81-87`, `App` at
-`:109-117`) and the loader's validation (`registry.py:263-287`), not off an
+Read off `registry.py`'s dataclasses (`Identity` at `:132-138`, `App` at
+`:160-192`) and the loader's validation (`registry.py:374-439`), not off an
 example.
+
+⚠ **Every `registry.py` line citation in this repository was re-measured on
+2026-08-31 (CG-88) by pinning each one to the CONTENT it claims to point at,
+never by adding a band.** That change inserted a strict-boolean helper and a
+default-deny block, so all **sixteen** moved — ten here, five in
+`docs/consumers/aitrader.md`, one in `docs/BUILDER_QUEUE.md`. The `App`
+dataclass span grew from 9 lines to 31 because the field now carries its
+reasoning at the site.
+
+⚠⚠ **`**370**` ABOVE IS WRITTEN AS BOLD PROSE, NOT AS A CITATION, AND THE
+SWEEP COULD NOT SEE IT — it read `**353**`, a leftover from an intermediate
+measurement, until pre-merge review caught it by reading.** Same blind-spot
+class as a bare `:N` continuation: a script that matches citation SYNTAX cannot
+see a line number written as a number. **The sweep is a floor, not a census.**
+
+⚠⚠ **They moved TWICE inside that one PR, and the second time was caused by the
+commit that fixed something else** — a four-line refusal message became seven,
+and every anchor below it shifted again. **A re-pointed citation is only correct
+as of the edit that measured it**, which is why the final pass was a script that
+resolves each citation against its own quoted content rather than a list of
+numbers somebody typed once.
 
 ### `identities:` — **destinations.** Where a message can go.
 
@@ -145,17 +166,36 @@ example.
 |---|---|---|---|
 | `key_env` | str | **required** — `RegistryError` if absent | the env-var NAME of that app's bearer key |
 | `identities` | list[str] | `[]` | the hard-rule-#4 allowlist. Every name must exist, or load fails |
-| `allow_inbound` | bool | ⚠ **`True`** | see the trap below |
+| `allow_inbound` | bool | **`False`** since CG-88 (2026-08-31); ⚠ **`True`** before it | see the trap below — it is now a trap about the PAST, and about a value that must be a real boolean |
 | `routes` | dict | `{}` | severity → identity, for `/v1/notify`. Every routed identity must be in this app's own `identities` |
 | `callback_url` | str | `""` | inbound push. **Requires `allow_inbound: true`** — otherwise a load-time `RegistryError` |
 | `allowed_users`, `unreachable_message` | | | two-way tenants only; not relevant to a notify-only app |
 
-⚠⚠ **`allow_inbound` defaults to `True`, so omitting it is not "off".** This is
-not hypothetical: `aiteam-harness` had inbound on for its whole life *because
-`true` is the default* — it never asked for it — and CG-61 exists to write the
-`false` explicitly. `registry.example.yaml:77` records the lesson at the
-`agent-mcp` entry: *"`allow_inbound: false` and it is WRITTEN, not defaulted
-(CG-61's lesson)."* **Whatever the owner decides in §4.3, write it.**
+⚠⚠ **`allow_inbound` DEFAULTED to `True` until 2026-08-31, so omitting it was
+not "off".** This was not hypothetical: `aiteam-harness` had inbound on for its
+whole life *because `true` was the default* — it never asked for it — and CG-61
+exists to write the `false` explicitly. `registry.example.yaml:93` records the
+lesson at the `agent-mcp` entry: *"`allow_inbound: false` and it is WRITTEN, not
+defaulted (CG-61's lesson)."*
+
+✅ **CG-88 (2026-08-31) closed it: the default is now `False`.** Omitting the
+key is off. **`registry.py` is where that fact lives**; this table restates it
+because a registration handoff whose field table is wrong about a security
+default is worse than no table.
+
+⚠ **The instruction below did NOT change, and the reason it survives is the
+point of the fix rather than an argument against it. Whatever the owner decides
+in §4.3, WRITE IT.** A default makes silence *safe*; it does not make silence
+*good*. An entry that states nothing tells the next reader nothing, cannot be
+diffed against the other two registry copies, and — since the loader now reports
+every app that leaned on it — shows up by name in `inbound_defaulted` on
+`/healthz` and in `python3 -m chat_gateway check`.
+
+⚠ **A second trap in the same field, closed by the same change: a QUOTED
+boolean.** `allow_inbound: "false"` is a non-empty string, which is truthy, so
+the old loader read it as **true** — the entry granted precisely what it
+appeared to refuse. `load_registry` now refuses any non-boolean value there
+with a `RegistryError` naming the app. **Write `true` / `false` unquoted.**
 
 ### The worked example — `aitrader`, redacted
 
@@ -224,7 +264,7 @@ no agent can do.**
   everywhere in §2's table) and it fixes every namespacing row. **What it does
   not fix: both projects' traffic still arrives in one room.** ⚠ It also makes
   that space have **two owning apps** for inbound routing —
-  `registry.apps_for_space` (`registry.py:161-172`) returns every app owning an
+  `registry.apps_for_space` (`registry.py:248-259`) returns every app owning an
   identity homed in a space, and `adapters/pubsub.py:691` looks them up and `:693` fans out
   to all of them. Inert today, because both apps would be `allow_inbound: false`; it
   stops being inert the moment either one is flipped.
@@ -238,7 +278,7 @@ one it is solving. Registration fixes *identity*; new spaces fix *separation*.
 places at two different times:
 
 - **`/v1/notify` with no route for that severity → `503`**, not a silent drop.
-  `route_for` raises (`registry.py:154-158`) and `emit_notification` converts it
+  `route_for` raises (`registry.py:241-245`) and `emit_notification` converts it
   (`service.py:332-334`). The detail is actionable and names the fix — the message with its two
   interpolations shown as placeholders:
   `app '<app_id>' has no notify route for severity '<severity>' (add routes: {severity: identity} to the registry)`.
@@ -360,14 +400,20 @@ There are three registry files and only one of them is in git:
 | `config/registry.yaml` (dev box) | **no** — `.gitignore:7` | the live file this checkout loads |
 | `/mnt/datapool/apps/chat-gateway/config/registry.yaml` (NAS) | **no** | what the running service reads |
 
-`registry.example.yaml:82-85` states the rule at the site, for the `agent-mcp`
+`registry.example.yaml:98-101` states the rule at the site, for the `agent-mcp`
 tenant: *"⚠ REGISTERING THIS FOR REAL IS AN OPERATOR ACTION, NOT A PR. The live
 `config/registry.yaml` is gitignored and the key is a new secret, so this example
 is a template and nothing more. Until an operator mints a key, writes the entry
 and restarts, the MCP surface has no caller."*
 
+⚠ **All three `registry.example.yaml` line citations in this document were
+re-measured on 2026-08-31 and moved by `+16`** — CG-88 added comment blocks to
+the `aiteam-harness` and `job-hunter` entries above them. Re-pointed by
+searching for each quoted sentence, not by adding a band: `:77`→`:93`,
+`:82-85`→`:98-101`, `:87-91`→`:103-107`. The quoted text is unchanged.
+
 ⚠⚠ **Read that with the qualifier its own file attaches five lines below it**,
-`registry.example.yaml:87-91`: *"^ Still true of any FRESH deployment, which is
+`registry.example.yaml:103-107`: *"^ Still true of any FRESH deployment, which is
 why it stays. On the NAS it was DONE on 2026-08-11 (docs/deploy/nas.md §10) — key
 minted over stdin, this block written into the live registry,
 `GATEWAY_ENABLE_MCP` set — and the surface has since delivered a real message.
@@ -381,6 +427,29 @@ subsection below actually rests on.
 **78 minutes after** a measurement that had recorded it as still outstanding, and
 the queue carried the wrong state in between. `docs/BUILDER_QUEUE.md` § CG-61
 records it as *"⚠ **Merging is not finishing**"*.
+
+### ⛔ CG-88 gave the drift above a way to stop the gateway — read this before installing either copy
+
+⚠⚠ **MEASURED 2026-08-31 against both loaders.** An app entry carrying a
+`callback_url` and **no** `allow_inbound` **loaded before CG-88** — inbound on,
+by the old default — and **refuses to load after it**, because
+`callback_url requires allow_inbound: true` now fires. In this repo a registry
+that does not load is not a degraded mode: `main` prints `config error:` and
+exits **2**, and the gateway does not start.
+
+⚠ **It is producible by OMISSION**, which is what makes it the realistic one —
+a quoted boolean has to be typed, this only has to be *not* typed. ✅ **Both
+copies anyone here can read are safe**: the dev-box `config/registry.yaml` and
+the committed `registry.example.yaml` each write `allow_inbound: true` beside
+`job-hunter`'s callback. ⚠ **The NAS copy is the one nobody can read**, and
+§"install step" above overwrites it with a checkout's — so the diff this section
+already asks for is now a **boot** question and not only a drift question.
+
+✅ **The refusal names the cause.** When the key is absent it appends: *"⚠
+`allow_inbound` is not written for this app at all — it DEFAULTED to true until
+2026-08-31 (CG-88) and now defaults to false…"*. ⚠ **Appended, never woven in**:
+`docs/consumers/aitrader.md` §8 quotes the unhinted message verbatim and that
+tenant writes its own `false`, so the hint cannot fire there.
 
 ### ⚠ A drift observation, offered as a hazard rather than a finding
 
@@ -464,17 +533,20 @@ Three checks, none of which posts to a Chat space:
 1. **Load it.** `load_registry("config/registry.yaml")` raises `RegistryError`
    on an unknown identity, a route that does not point at one of the app's own
    identities, an unknown severity, a missing `key_env`, or a `callback_url`
-   without `allow_inbound` (`registry.py:263-287` — **263**, not 265: the
-   `key_env` raise sits two lines above the `App(...)` construction, and an
-   earlier draft cited a range that excluded one of the five conditions it
-   listed). A registry that loads has
+   without `allow_inbound`, or — since CG-88 — an `allow_inbound` that is not
+   a real YAML boolean (`registry.py:374-439`; **374**, not the `App(...)`
+   construction at `:393`, because the `key_env` raise and CG-88's
+   `_require_bool` call both sit above it, and an earlier draft cited a range
+   that excluded one of the conditions it listed). **Six conditions now, not
+   five.** A registry that loads has
    already passed hard rule #4's shape.
 2. **`GET /healthz`.** Carries `registry.health()` (`service.py:777`), which
    reports per app `key_configured` — is the `key_env` variable set — and per
    identity `env_resolved` and `space_set`. ⚠ **It is NOT booleans only**, and an
-   earlier draft of this line said it was: `registry.py:180` also emits each
-   identity's `mode` (a string) and `:184` each app's `identities` (a list of
-   names). **The load-bearing half is the true one — no env-var VALUES and no
+   earlier draft of this line said it was: `registry.py:267` also emits each
+   identity's `mode` (a string) and `:271` each app's `identities` (a list of
+   names), and since CG-88 `inbound_defaulted` names every app that left its
+   inbound posture to the loader. **The load-bearing half is the true one — no env-var VALUES and no
    URLs** — and it is on an **unauthenticated** response, which `service.py:765-766`
    already notes carries every app id and identity name.
 3. **`GET /v1/identities`** with the new key. Authenticated, so a `200` proves

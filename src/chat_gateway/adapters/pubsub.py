@@ -798,7 +798,13 @@ class SubscriberLoop:
         #    the operator edited the gitignored live registry, which a PR cannot
         #    touch, and `aiteam-harness` now carries an EXPLICIT
         #    `allow_inbound: false` rather than inheriting the True default.
-        #    Measured through the real `load_registry`, not assumed. So TWO
+        #    Measured through the real `load_registry`, not assumed.
+        #    ⚠ THAT LAST PHRASE IS DATED, NOT CURRENT — annotated 2026-08-31
+        #    (CG-88) rather than rewritten, because it is a true record of
+        #    2026-08-05. There is no True default any more: `allow_inbound`
+        #    defaults to FALSE, so an app inheriting it is opted OUT and this
+        #    counter can now move for a tenant that never said anything.
+        #    `Registry.inbound_defaulted` names those apps at /healthz. So TWO
         #    tenants are opted out and this integer POOLS their traffic instead
         #    of decomposing to one — PARTIAL mitigation, and not a reason to skip
         #    the /healthz ACL (production-readiness arc spec §7 D2), which was

@@ -292,6 +292,13 @@ apps:
   aiteam-harness:
     key_env: K
     identities: [pm-familyworkspace]
+    # WRITTEN, not defaulted (CG-88). Every dispatch test below depends on this
+    # app receiving inbound, and until 2026-08-31 they got it from a loader
+    # default nobody had chosen — so a suite full of inbound assertions was
+    # resting on the very defect CG-88 closes. Six of them turned red the moment
+    # the default flipped, which is the honest measure of how load-bearing the
+    # old default was.
+    allow_inbound: true
 """
 
 
@@ -1136,10 +1143,18 @@ def test_on_suppressed_is_called_with_the_declining_app_id_and_its_reason(tmp_pa
 
 # D1's shape in the smallest registry that has it: ONE space, ONE owner, and that
 # owner opted out. Derived from `REGISTRY_YAML` above rather than rewritten, so
-# the delta between the two is exactly the single line CG-61 adds — and the two
-# shape assertions opening the test below fail loudly if this append ever lands
-# on a different app than the one it names.
-SOLE_OWNER_OPTED_OUT_REGISTRY_YAML = REGISTRY_YAML + "    allow_inbound: false\n"
+# the delta between the two is exactly that app's inbound posture — and the two
+# shape assertions opening the test below fail loudly if this ever lands on a
+# different app than the one it names.
+#
+# A FLIP, not an append, since CG-88: the base fixture now writes
+# `allow_inbound: true`, so appending a second `allow_inbound` line would have
+# produced a duplicate YAML key — which PyYAML resolves silently, last one wins.
+# It would have kept this test green while making the fixture a specimen of the
+# exact silent-resolution defect the repo hit in another config file.
+SOLE_OWNER_OPTED_OUT_REGISTRY_YAML = REGISTRY_YAML.replace(
+    "allow_inbound: true", "allow_inbound: false")
+assert "allow_inbound: false" in SOLE_OWNER_OPTED_OUT_REGISTRY_YAML
 
 
 def test_an_opted_out_owner_reaches_neither_its_inbox_nor_unrouted_nor_disk(tmp_path):
