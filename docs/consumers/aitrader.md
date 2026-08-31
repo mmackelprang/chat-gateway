@@ -137,6 +137,14 @@ routing; a **valid** severity with no route is a **503** naming the fix. A route
 pointing at an identity you are not granted is rejected at **registry load**, not
 at request time.
 
+⚠ **`routes[severity]` is no longer the whole story — one path decouples them
+(added 2026-08-31, CG-86).** Every dead-man message is **routed** by your
+`alert` route whatever it **renders** as, so a thread root and an all-clear
+arrive in `aitrader-alerts` rendered `info`. The table above still describes
+`POST /v1/notify` exactly. §7 has the reason and the full consequence, and is
+the only home for it — severity picks the destination SPACE, and threading is
+per-space.
+
 ---
 
 ## 4. Rendering — what actually lands in the space
@@ -292,7 +300,9 @@ Anything else → `bad schedule '<x>' (use weekdays | daily | every:<N><s|m|h|d>
 unit suffix. It is stripped but **not** lowercased, so `2h` works and **`2H`
 fails** with `bad duration '2H' (use e.g. 90s, 30m, 2h, 1d)`.
 
-**The weekend roll** (`heartbeat.py:75-85`), which is the no-false-alarm
+**The weekend roll** (~~`heartbeat.py:75-85`~~ **`heartbeat.py::Check.next_due`,
+its `while local.weekday() >= 5` roll — re-pointed 2026-08-31, CG-86**), which
+is the no-false-alarm
 guarantee: the due date is computed, converted into `tz`, and then
 `while local.weekday() >= 5: local += 1 day` — Saturday and Sunday both roll
 forward to Monday, in **your** timezone, default **`America/New_York`**. The
@@ -396,6 +406,18 @@ check** each call. So a refresh clears `status` back to `ok` and resets
 there is no separate update call. Validation runs before any mutation, so a bad
 refresh leaves the existing check untouched.
 
+⚠ **"Brand-new" is no longer literally true, and taking it literally now gives
+you the wrong answer — corrected 2026-08-31 (CG-86).** Two fields cross the
+refresh, and they cross it in opposite directions:
+
+| field | across a refresh | why |
+|---|---|---|
+| `thread_started` | **carried over** | the thread's durable subject is the CHECK, not the outage. Reset, it would re-open a Chat thread on **every ping** |
+| `alert_count` | **reset to 0** | a recovery ends the outage, so the next one starts its backoff ladder at 1d |
+
+Everything else really is rebuilt. A reader applying "brand-new" to the whole
+object concludes that a refresh re-opens your thread; it does not.
+
 **Registration now fails fast if we could never alert you — registration, not
 refresh.** The **first** `POST /v1/heartbeat` for a given `check_id` resolves
 your `alert` route before storing the check and returns **422** if there isn't
@@ -416,8 +438,12 @@ gateway degrades `/healthz` (`heartbeats.alerts_undeliverable` +
 after its notification is accepted into the durable queue. If the gateway dies
 between sending and recording, you get the alert **twice** rather than not at
 all — the same trade the delivery queue's replay already makes, and for the same
-reason: a duplicate "heartbeat missed" costs you one redundant notification, a
-dropped one costs you the feature.
+reason: a duplicate missed-check alert costs you one redundant notification, a
+dropped one costs you the feature. ⚠ **Corrected 2026-08-31 (CG-86)**: this
+said *a duplicate "heartbeat missed"*, quoting the wire shape struck as
+superseded earlier in this same section, and it understated the cost of a drop
+— a dropped alert is silent until the next rung of the backoff, which is 24h at
+its shortest and up to a **week** at the ceiling.
 
 **Persistence:** `<CHAT_GATEWAY_STATE_DIR>/heartbeats.json`, written atomically
 (temp file + replace). Checks survive a gateway restart.

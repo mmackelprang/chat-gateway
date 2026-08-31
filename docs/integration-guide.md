@@ -109,7 +109,10 @@ goes missed and tells nobody.
 call, a **refresh of an existing check is your liveness ping and is always
 accepted**, even after the route disappears — refusing it would freeze
 `last_seen`, drive the check into the missed state, and manufacture a
-"heartbeat missed" alert for a source that never died. A route removed *after*
+missed-check alert for a source that never died (⚠ this named the alert by its
+title, `"heartbeat missed"`, until **2026-08-31** — CG-86 retired that wire
+shape, and titles now lead with your app id and carry the elapsed delta; the
+guarantee is unchanged). A route removed *after*
 registration is covered at runtime instead: `heartbeats.alerts_undeliverable`
 and `heartbeats.checks_undeliverable` degrade `/healthz`, and the check is left
 unmarked so it delivers the moment the route is restored.
@@ -812,7 +815,14 @@ you need to react to a human's reply, use the per-tenant `callback_url` push or
 delivery-log tool. `POST /v1/messages` is synchronous, so an agent gets an
 answer it can act on; `POST /v1/notify` returns `202 enqueued`, which it cannot.
 Dead-man checks are deliberately absent — a check registered by an agent session
-goes missed the moment that session ends, and then pages a human daily.
+goes missed the moment that session ends, and then ~~pages a human daily~~
+**pages a human on the escalating backoff, forever: 1d, 2d, 4d, then weekly,
+and it never stops on its own** (corrected 2026-08-31, CG-86). ⚠ **The backoff
+does not weaken this rationale, it sharpens it.** The exclusion never rested on
+the cadence; it rests on there being no session left to refresh or delete the
+check, so the reminders run until a human intervenes — and a *weekly* reminder
+about a job nobody remembers registering is easier to ignore than a daily one,
+not harder to accumulate.
 
 **`cards` is an opaque array here exactly as it is on `POST /v1/messages`.** The
 gateway does not build cards and does not describe their structure to a model;

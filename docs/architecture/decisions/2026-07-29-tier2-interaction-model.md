@@ -448,8 +448,18 @@ off a consumer's vocabulary?*
 - The gateway defines the **name**. It never reads the **value** — no branch, no
   enum of permitted ids, no validation that jobhunt sends `verdict`. The value is
   relocated from `params` to `action.id` and forwarded verbatim.
-- It is structurally identical to `thread_key`: a gateway-defined field an
-  application must set, whose value is opaque to the gateway. That precedent has
+- It is structurally identical to `thread_key`: a gateway-defined field
+  ~~an application must set~~ **an application sets on its own messages**, whose
+  value is opaque to the gateway. ⚠ **Narrowed 2026-08-31 (CG-86)**: the
+  gateway now composes a `thread_key` of its own on one path — the dead-man
+  monitor threads every message about a check on `hb:<source>:<check_id>`
+  (`heartbeat.py::thread_key_for`), which no application sets or sees. **The
+  load-bearing half is untouched and is what this bullet is actually citing:
+  the gateway never reads the value.** No branch keys off it anywhere; it is
+  passed through to Chat's threading mechanics whoever wrote it. That the
+  gateway may now also AUTHOR one, for its own subject, strengthens the
+  transport argument rather than weakening it — authoring an opaque routing
+  token is not interpreting a tenant's vocabulary. That precedent has
   existed on the outbound side since v0.1. The inbound side never needed one
   because *Google* supplied the slot. Topic-as-function consumed Google's slot;
   either the gateway supplies a replacement or `action.id` is permanently dead

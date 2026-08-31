@@ -563,15 +563,17 @@ class HeartbeatStore:
         reason each of them records: `_finish`'s mid-flight window
         (delivery.py, "losing an alert is the worse failure"), `_journal_write`
         ("at most one duplicate on the next boot"), and `Inbox._audit` (unacked,
-        so Google redelivers). A duplicate reminder costs one redundant phone
-        notification; a dropped one costs the whole feature, silently, for
-        `repeat_after(alert_count)` — 24h only at the first rung, and up to a
-        WEEK at `MAX_REPEAT_S`. ⚠ That figure read a flat "24 hours" and quoted
-        the retired `heartbeat missed: <id>` title until 2026-08-31; CG-86's
-        own backoff widened the cost of a drop by up to 7×, which makes THIS
-        argument stronger, not weaker. It is the whole justification for
-        leaving `_save()` unguarded below, so the number has to be the real
-        one.
+        so Google redelivers). A duplicate missed-check alert costs one
+        redundant phone notification; a dropped one costs the whole feature,
+        silently, for `repeat_after(alert_count)` — 24h only at the FIRST rung,
+        and up to a WEEK at `MAX_REPEAT_S`.
+
+        ⚠ That figure read a flat "24 hours", and quoted the retired
+        `heartbeat missed: <id>` title, until 2026-08-31. CG-86's own backoff
+        widened the cost of a drop by up to **7×** (`MAX_REPEAT_S /
+        DEFAULT_REPEAT_S`), which makes THIS argument stronger rather than
+        weaker — and this argument is the whole justification for leaving
+        `_save()` unguarded below, so the number has to be the real one.
 
         `_save()` stays UNGUARDED on purpose. It is now on the far side of the
         notify, so raising is honest — the alert is already queued and the raise
