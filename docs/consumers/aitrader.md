@@ -520,10 +520,10 @@ inbound features. It is enforced in code, not merely omitted:
 | # | Path | Enforcement | Where |
 |---|---|---|---|
 | 0 | **Saying nothing** | `allow_inbound` **defaults to `false`** — an app whose entry omits the key gets no inbound path, and one that writes a non-boolean is refused at load. This is why points 1–4 do not depend on a YAML line surviving three copies of one file | `registry.py:158-188` (the field, with its reasoning) and `:370-435` (the loader) |
-| 1 | **Passive polling** | `GET /v1/inbox` → **403** `inbound is disabled for this app (no-inbound-control contract — gateway hard rule #6)` | `service.py:242-247` |
+| 1 | **Passive polling** | `GET /v1/inbox` → **403** `inbound is disabled for this app (no-inbound-control contract — gateway hard rule #6)` | `service.py:640-645` |
 | 2 | **`callback_url` push** | Setting `callback_url` on this app is a **registry validation error at process start** — the gateway refuses to boot: `app 'aitrader': callback_url requires allow_inbound: true — an opted-out tenant gets NO inbound path (hard rule #6)` | `registry.py:396-400` |
-| 3 | **Event dispatch** | An opted-out app is skipped before anything is written: nothing to the inbox, nothing forwarded, nothing to the audit trail | `adapters/pubsub.py:648-660` |
-| 4 | **Card convention** | `GET /v1/identities` returns `interaction: {"enabled": false, "reason": "inbound is disabled for this app (hard rule #6) — card interactions from it are never routed anywhere"}` — this app is never even handed a routing target | `service.py:85-88` |
+| 3 | **Event dispatch** | An opted-out app is skipped before anything is written: nothing to the inbox, nothing forwarded, nothing to the audit trail | `adapters/pubsub.py:697-709` |
+| 4 | **Card convention** | `GET /v1/identities` returns `interaction: {"enabled": false, "reason": "inbound is disabled for this app (hard rule #6) — card interactions from it are never routed anywhere"}` — this app is never even handed a routing target | `service.py:244-247` |
 
 Point 2 is the one that makes this a *contract* rather than a setting: the
 gateway **will not start** in a configuration that gives aitrader an inbound
@@ -532,6 +532,30 @@ path. There is no runtime state in which a misconfiguration quietly opens one.
 Point 0 is the one that makes it survive an **edit**, which is a different
 hazard: point 2 catches a `callback_url` added beside an opted-out flag, and it
 was never able to catch the flag itself going missing.
+
+> ⚠⚠ **THREE OF THE FOUR `Where` CITATIONS IN THE TABLE ABOVE POINTED AT
+> UNRELATED CODE, and they were repaired opportunistically on 2026-08-31 by
+> CG-88. ⚠ THIS IS NOT A NEW FINDING AND MUST NOT BE READ AS ONE.** CG-69
+> measured it on **2026-08-03** and its queue row has carried the number ever
+> since: *"8 of the 14 code citations in the live contracts point at the wrong
+> code, three of them in `aitrader.md`'s hard-rule-#6 enforcement table"*. These
+> are those three. CG-88 was editing this table anyway and fixed them in
+> passing; **it did not find them.**
+>
+> What they were: row 1 (`/v1/inbox` → 403) cited `service.py:242-247`, which is
+> row 4's card-convention block; row 4 cited `service.py:85-88`, a comment about
+> a **poll timeout**; row 3 cited `adapters/pubsub.py:648-660`, which is
+> `normalize_event`'s try/except. **A reader auditing this guarantee by
+> following its citations landed on unrelated code three times out of four.**
+> Re-measured against the code before repair.
+>
+> ⚠⚠ **CG-69 IS NOT DISCHARGED BY THIS.** It is a process control over all
+> fourteen; three being fixed by a passer-by is precisely the ad-hoc repair the
+> row exists because of, and its own design already measured that
+> **name-anchored citations are 0 of 8 wrong** where line-anchored ones rot.
+> The `registry.py` citations in this repo are now re-resolved by content in a
+> script CG-88 used; **the `service.py` and `pubsub.py` ones have no such check
+> and can go stale again the next time either file is edited.**
 
 Widening this requires explicit user sign-off naming hard rule #6. Your own
 contract's reasoning — a two-way path is a security hole in a system placing
