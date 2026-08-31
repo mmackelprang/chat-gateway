@@ -209,7 +209,8 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   mutation:** flipping the `App` dataclass default back to `True` left the whole
   suite passing, because `load_registry` now passes the field explicitly on
   every path — two sites, and only one of them was bound (0h). It has its own
-  test now. ⛔ **AND ONE MEASURED OUTAGE PATH, which is NOT the quoted boolean:**
+  test now, and **nine single-site mutations are RED**, each applied alone with
+  `__pycache__` cleared on both the mutated and the reverted run. ⛔ **AND ONE MEASURED OUTAGE PATH, which is NOT the quoted boolean:**
   an app with a `callback_url` and **no** `allow_inbound` **loaded before this
   change and refuses after it** — `callback_url requires allow_inbound: true`
   now fires, and here a registry that does not load means `main` exits 2 and the
