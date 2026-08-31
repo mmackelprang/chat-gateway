@@ -13,14 +13,26 @@ from chat_gateway import delivery as delivery_module
 from chat_gateway.delivery import DeliveryLog, Dispatcher
 from chat_gateway.envelope import TEXT_MAX, DeliveryResult
 from chat_gateway.heartbeat import (
+    DEFAULT_REPEAT_S,
+    MAX_REPEAT_S,
+    MAX_THREAD_KEY_LEN,
+    MAX_TITLE_LEN,
+    Check,
     HeartbeatError,
     HeartbeatMonitor,
     HeartbeatStore,
+    alert_message,
+    format_elapsed,
     parse_schedule,
+    recovery_message,
+    repeat_after,
+    thread_key_for,
+    thread_root_message,
 )
 from chat_gateway.inbox import Inbox
 from chat_gateway.notifications import (
     INFO_BODY_SEPARATOR,
+    SEVERITY_EMOJI,
     Deduper,
     Notification,
     dedupe_counter,
@@ -98,6 +110,24 @@ def make_client(registry, clock, tmp_path, adapter=None, log=None):
 
 
 AUTH = {"Authorization": "Bearer cgk_trader"}
+
+
+def rendered_as(adapter, severity):
+    """The adapter's sends that RENDERED as `severity`, in order.
+
+    CG-86 put more than one message on the dead-man path — a quiet thread root,
+    the alert, its reminders, and an all-clear — so `len(adapter.sent)` stopped
+    being the alert count. Filtering on `severity_prefix()` rather than on
+    `.cards` keeps the thread root and the recovery notice apart from each
+    other where a test needs that, and derives the discriminator from the
+    renderer instead of writing a copy of it down.
+
+    ⚠ EVERY ONE OF THEM IS *ROUTED* `alert` (CG-86 D2), so `identity` does not
+    discriminate here and must not be used to. That is the property
+    `test_every_monitor_message_is_routed_to_the_alert_identity` exists for.
+    """
+    prefix = severity_prefix(severity)
+    return [(i, m) for i, m in adapter.sent if m.text.startswith(prefix)]
 
 
 # --- routing + rendering -----------------------------------------------------
@@ -506,9 +536,17 @@ def test_weekday_deadman_no_weekend_false_alarm(registry, tmp_path):
     clock.now = dt.datetime(2026, 7, 27, 23, 0, tzinfo=UTC)
     assert app.state.monitor.scan_once() == 1
     app.state.dispatcher.process_due()
-    assert len(adapter.sent) == 1
-    ident, msg = adapter.sent[0]
-    assert ident == "aitrader-alerts" and "heartbeat missed: daily-run" in msg.text
+    # TWO messages now, not one: CG-86 opens the check's thread with a quiet
+    # root and then replies to it with the alert. Both go to the ALERT
+    # identity — severity picks the space, and a thread split across two
+    # spaces threads nothing.
+    assert len(adapter.sent) == 2
+    assert [i for i, _ in adapter.sent] == ["aitrader-alerts"] * 2
+    (_, root), = rendered_as(adapter, "info")
+    (_, msg), = rendered_as(adapter, "alert")
+    assert "🧵 Heartbeat daily-run" in root.text
+    assert "[aitrader] heartbeat daily-run — missed, no refresh for" in msg.text
+    assert root.thread_key == msg.thread_key == "hb:aitrader:daily-run"
     # repeat suppressed within the daily backoff...
     clock.now += dt.timedelta(minutes=30)
     assert app.state.monitor.scan_once() == 0
@@ -666,8 +704,16 @@ def test_a_raising_scan_is_counted_but_the_cumulative_one_never_clears():
     as "not accepted for delivery". It is never actually called here (`scan_once`
     is stubbed and the store is empty), but a fake that would misreport if it
     were is a trap for whoever copies it next.
+
+    ⚠ AND IT TAKES `**k`, which it did not until 2026-08-31 — the docstring
+    above named the trap and then was one. CG-86 gave `notify_fn` a
+    keyword-only `severity`, and `lambda *a: True` does not accept a keyword
+    argument at all: had `scan_once` ever reached it, this fake would have
+    raised `TypeError` rather than misreporting, which is the louder failure
+    but still not the one the test is about.
     """
-    mon = HeartbeatMonitor(HeartbeatStore(), lambda *a: True, interval_seconds=0.01)
+    mon = HeartbeatMonitor(HeartbeatStore(), lambda *a, **k: True,
+                           interval_seconds=0.01)
     calls = {"n": 0}
 
     def flaky():
@@ -759,7 +805,9 @@ def test_a_second_outage_inside_the_dedupe_window_is_still_alerted(registry, tmp
     clock.now += dt.timedelta(seconds=300)
     assert app.state.monitor.scan_once() == 1
     app.state.dispatcher.process_due()
-    assert len(adapter.sent) == 1
+    # Counted as ALERTS, not as sends: CG-86's thread root and its all-clear
+    # ride the same adapter, and this test is about neither.
+    assert len(rendered_as(adapter, "alert")) == 1
 
     # Recovered, refreshed — a brand-new check with `last_alerted` cleared.
     clock.now += dt.timedelta(seconds=60)
@@ -770,7 +818,7 @@ def test_a_second_outage_inside_the_dedupe_window_is_still_alerted(registry, tmp
     clock.now += dt.timedelta(seconds=300)
     assert app.state.monitor.scan_once() == 1
     app.state.dispatcher.process_due()
-    assert len(adapter.sent) == 2, "the second real outage must alert"
+    assert len(rendered_as(adapter, "alert")) == 2, "the second real outage must alert"
     assert client.get("/healthz").json()["heartbeats"]["alerts_undeliverable"] == 0
 
 
@@ -812,7 +860,11 @@ def test_an_exhausted_retry_ladder_is_counted_and_degrades_healthz(registry, tmp
     assert adapter.sent == []
     assert app.state.dispatcher.pending() == 0
     body = client.get("/healthz").json()
-    assert body["delivery"]["delivery_failures"] == 1
+    # TWO exhausted jobs since CG-86, not one: the check's thread root is a
+    # message of its own and rides the same broken transport as the alert it
+    # opens the thread for. The property under test is unchanged — an accepted
+    # message that never lands is COUNTED — and it now counts both.
+    assert body["delivery"]["delivery_failures"] == 2
     assert body["delivery"]["pass_failures"] == 0        # nothing RAISED
     assert body["status"] == "degraded"
     assert any("exhausted the retry ladder" in r for r in body["reasons"])
@@ -829,10 +881,10 @@ def test_one_tenants_failing_notify_does_not_strand_anothers_alert(tmp_path):
 
     sent = []
 
-    def notify(source, title, body, key):
+    def notify(source, title, body, key, thread_key, severity="alert"):
         if source == "job-hunter":
             raise RuntimeError("no route")
-        sent.append(source)
+        sent.append((source, severity))
         return True
 
     monitor = HeartbeatMonitor(store, notify)
@@ -840,7 +892,10 @@ def test_one_tenants_failing_notify_does_not_strand_anothers_alert(tmp_path):
     with pytest.raises(RuntimeError):
         monitor.scan_once()
 
-    assert sorted(sent) == ["aiteam-harness", "aitrader"]
+    # Alerts only — every check also opens its thread with a quiet root, and
+    # the isolation claim is about the ALERT.
+    assert sorted(s for s, sev in sent if sev == "alert") == [
+        "aiteam-harness", "aitrader"]
     # The two that succeeded are marked; the one that failed is not, and
     # re-fires on the next scan.
     assert [c.source for c in store.due_alerts()] == ["job-hunter"]
@@ -884,7 +939,8 @@ def test_a_failing_save_no_longer_suppresses_the_alert(registry, tmp_path, monke
         app.state.monitor.scan_once()
 
     app.state.dispatcher.process_due()
-    assert len(adapter.sent) == 1, "the alert must be sent before the mark"
+    assert len(rendered_as(adapter, "alert")) == 1, \
+        "the alert must be sent before the mark"
 
     # No in-process storm: the live store IS marked, so the next scan is quiet.
     assert app.state.heartbeats.due_alerts() == []
@@ -977,7 +1033,7 @@ def test_a_failed_REPEAT_alert_is_counted_even_though_missed_does_not_move(
     clock.now += dt.timedelta(seconds=300)
     assert app.state.monitor.scan_once() == 1
     app.state.dispatcher.process_due()
-    assert len(adapter.sent) == 1
+    assert len(rendered_as(adapter, "alert")) == 1
     assert client.get("/healthz").json()["heartbeats"]["missed"] == 1
 
     # Chat becomes unreachable, and the 24h REPEAT comes due.
@@ -989,7 +1045,7 @@ def test_a_failed_REPEAT_alert_is_counted_even_though_missed_does_not_move(
         clock.now += dt.timedelta(seconds=4000)
 
     body = client.get("/healthz").json()
-    assert len(adapter.sent) == 1, "the repeat never landed"
+    assert len(rendered_as(adapter, "alert")) == 1, "the repeat never landed"
     # THE POINT: `missed` is unchanged — it was already 1 — and on `main` that
     # was the whole of the observable state. Now something else moved.
     assert body["heartbeats"]["missed"] == 1
@@ -1101,7 +1157,7 @@ def test_the_counters_survive_a_mark_alerted_that_raises(tmp_path, monkeypatch):
 
     routed = {"job-hunter": False}
 
-    def notify(source, title, body, key):
+    def notify(source, title, body, key, thread_key, severity="alert"):
         return routed.get(source, True)
 
     monitor = HeartbeatMonitor(store, notify)
@@ -1140,11 +1196,12 @@ def test_a_notify_that_is_accepted_but_not_enqueued_is_reported_as_unaccepted(
     client, app, adapter = make_client(registry, clock, tmp_path)
     emit = app.state.monitor._notify
 
-    assert emit("aitrader", "heartbeat missed: c", "body", "hb:c") is True
+    key = "hb:aitrader:c"
+    assert emit("aitrader", "heartbeat missed: c", "body", "hb:c", key) is True
     # Second call inside the deduper's window -> {"status": "deduped"} -> the
     # branch. Not an exception, and a 202 to the caller; only the return value
     # distinguishes it from a real acceptance.
-    assert emit("aitrader", "heartbeat missed: c", "body", "hb:c") is False
+    assert emit("aitrader", "heartbeat missed: c", "body", "hb:c", key) is False
 
     app.state.dispatcher.process_due()
     assert len(adapter.sent) == 1
@@ -1185,3 +1242,714 @@ def test_a_refresh_between_selection_and_marking_leaves_the_check_ok(tmp_path):
     live = store.list_for("aitrader")[0]
     assert (live.status, live.last_alerted) == ("ok", "")
     assert store.due_alerts() == [], "and the revived check is not due"
+
+
+# --- CG-86: one thread per check, and the messages that go in it -------------
+#
+# The observed defect was four consecutive days of byte-identical, top-level
+# `⚠️ 🔴 [ALERT] heartbeat missed: candle-crawl` messages on a check whose state
+# had not moved in seven days — no thread, no delta, no all-clear, and a flat
+# daily repeat. Everything below pins one of the four halves of that.
+#
+# ⚠ THE FIXTURE'S `alert` AND `info` ROUTES ARE TWO DIFFERENT IDENTITIES, and
+# that is not incidental — it is the whole of §2's finding. `route_for` is
+# `routes.get(severity) or routes.get("default")`, so severity picks the SPACE
+# as well as the rendering, and threading is per-space. Several tests here are
+# only meaningful because those two resolve differently.
+
+def _drive_to_missed(client, app, clock, check_id="daily-run"):
+    """Register a fast check and take it into `missed` with one scan."""
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": check_id, "schedule": "every:60s", "grace": "60s"})
+    assert r.status_code == 200
+    clock.now += dt.timedelta(seconds=300)
+    fired = app.state.monitor.scan_once()
+    app.state.dispatcher.process_due()
+    return fired
+
+
+def test_the_first_transition_into_missed_still_alerts(registry, tmp_path):
+    """The non-negotiable. CG-86 changed the CADENCE OF REMINDERS, nothing else.
+
+    Escalating backoff, a thread root posted first, and a new title format all
+    sit on the path a first miss takes, and any of the three could have delayed
+    or swallowed it. `alert_due` returns True unconditionally while
+    `last_alerted` is empty — no backoff, no ceiling and no alert count can
+    reach that branch — and this is where that is asserted rather than reasoned.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    assert _drive_to_missed(client, app, clock) == 1
+
+    alerts = rendered_as(adapter, "alert")
+    assert len(alerts) == 1
+    _, msg = alerts[0]
+    assert "missed, no refresh for" in msg.text
+    assert client.get("/healthz").json()["heartbeats"]["missed"] == 1
+
+
+def test_every_message_about_one_check_carries_the_same_thread_key(
+        registry, tmp_path):
+    """Root, first alert, reminder and all-clear — one thread, one key.
+
+    The durable subject is the CHECK, so the key is derived from its identity
+    and from nothing that moves. This is the assertion the whole change exists
+    to make true: before it, `_monitor_notify` never set `thread_key` at all
+    and every dead-man message was a new top-level post.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    _drive_to_missed(client, app, clock)          # root + first alert
+    clock.now += dt.timedelta(seconds=DEFAULT_REPEAT_S)
+    assert app.state.monitor.scan_once() == 1     # reminder
+    app.state.dispatcher.process_due()
+    client.post("/v1/heartbeat", headers=AUTH, json={                # all-clear
+        "check_id": "daily-run", "schedule": "every:60s", "grace": "60s"})
+    app.state.dispatcher.process_due()
+
+    assert len(adapter.sent) == 4, "root, alert, reminder, all-clear"
+    keys = {m.thread_key for _, m in adapter.sent}
+    assert keys == {"hb:aitrader:daily-run"}
+    assert all(k for k in keys), "an empty thread_key threads nothing"
+
+
+def test_every_monitor_message_is_routed_to_the_alert_identity(
+        registry, tmp_path):
+    """⚠ THE ONE THAT MATTERS MOST (CG-86 §2), and the fixture is the argument.
+
+    `aitrader`'s `info` route points at `aitrader-reports` and its `alert` route
+    at `aitrader-alerts` — a DIFFERENT identity, hence a different Chat space in
+    production. Threading is per-space. So a thread root or an all-clear that
+    was routed by its RENDER severity would post into a room where nobody
+    watching the alert would ever see it: not merely a wrong thread, but a
+    RESOLVED that closes an alert its reader cannot see. That is why
+    `emit_notification` takes `route_severity` and why `_monitor_notify` passes
+    `"alert"` for all four messages.
+
+    Two of the four messages here render `info`, so if the decoupling were
+    removed this test fails on the identity while every other test in this file
+    stays green.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    # The premise, asserted rather than assumed: a fixture whose two routes
+    # collapsed to one identity would make everything below vacuous.
+    assert registry.route_for("aitrader", "info").name == "aitrader-reports"
+    assert registry.route_for("aitrader", "alert").name == "aitrader-alerts"
+
+    _drive_to_missed(client, app, clock)
+    client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "every:60s", "grace": "60s"})
+    app.state.dispatcher.process_due()
+
+    assert [i for i, _ in adapter.sent] == ["aitrader-alerts"] * 3
+    assert "aitrader-reports" not in [i for i, _ in adapter.sent]
+    # ...and two of the three really did RENDER as the quiet severity, which is
+    # what makes the routing claim non-trivial.
+    assert len(rendered_as(adapter, "info")) == 2
+    assert len(rendered_as(adapter, "alert")) == 1
+
+
+def test_the_thread_root_is_posted_once_per_check_and_not_after_a_refresh(
+        registry, tmp_path):
+    """⚠ `thread_started` MUST SURVIVE `refresh()`, which builds a brand-new
+    `Check` on every call — that is its documented semantics, and it is what
+    makes CG-76's selection race safe, so it is not going to change.
+
+    A field left to its `False` default would therefore re-post the thread root
+    on EVERY heartbeat ping: aitrader pings on schedule, so that is a Thread
+    Title every few minutes, forever. `refresh_seen` carries it over explicitly
+    and this is the pin.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    _drive_to_missed(client, app, clock)
+    assert len([m for _, m in adapter.sent if "🧵" in m.text]) == 1
+
+    # Recover, then miss again twice over, with refreshes in between.
+    for _ in range(3):
+        client.post("/v1/heartbeat", headers=AUTH, json={
+            "check_id": "daily-run", "schedule": "every:60s", "grace": "60s"})
+        clock.now += dt.timedelta(seconds=300)
+        app.state.monitor.scan_once()
+        app.state.dispatcher.process_due()
+
+    assert len([m for _, m in adapter.sent if "🧵" in m.text]) == 1, \
+        "the thread root opens the thread once, for the life of the check"
+    assert app.state.heartbeats.list_for("aitrader")[0].thread_started is True
+
+
+def _root_failing_monitor(tmp_path, clock, root):
+    """A monitor whose THREAD ROOT fails and whose ALERT does not.
+
+    ⚠ THE FAKE DISCRIMINATES ON `severity`, NOT ON `source`, AND THAT IS THE
+    WHOLE POINT OF THESE TWO TESTS. Every other notify fake in this file keys
+    on `source`, so it fails a check's root and its alert together — which can
+    never exercise the case the inner `try` in `scan_once` exists for:
+    root-fails, alert-succeeds. Measured before these tests were written:
+    deleting that inner `try` left all 506 tests passing.
+
+    `severity` is the RENDER severity, and it is the only thing that
+    distinguishes the two messages at this seam — `info` is the quiet thread
+    root, `alert` is the alert. Both are ROUTED `alert` (CG-86 D2), so the
+    route cannot be the discriminator here either.
+
+    Returns `(monitor, store, seen)`; `root(...)` is what the root call does.
+    """
+    store = HeartbeatStore(tmp_path / "hb.json", now_fn=clock)
+    store.refresh("aitrader", "daily-run", "every:60s", "60s")
+    seen: list[tuple[str, str]] = []
+
+    def notify(source, title, body, key, thread_key, *, severity="alert"):
+        seen.append((severity, title))
+        if severity == "info":
+            return root()
+        return True
+
+    return HeartbeatMonitor(store, notify), store, seen
+
+
+def test_a_thread_root_that_RAISES_never_strands_the_check_s_alert(tmp_path):
+    """⚠ THE INNER `try` IN `scan_once` IS WHAT THIS PINS, and until this test
+    existed nothing did — deleting that `try` left the whole suite green.
+
+    A thread root is DECORATIVE; the alert is the thing this feature exists to
+    deliver. If a root that raises could reach the per-check `except`, the
+    alert would never be attempted, the check would be counted undeliverable,
+    and it would go on failing on every scan for as long as whatever broke the
+    root stayed broken — a new CG-76-class silent door opened by the fix for
+    one. So the root's failure is captured beside the alert, not in front of
+    it.
+
+    Three scans, because one is not enough to show the door stays shut: the
+    root is retried on each (its check never latches `thread_started`) and
+    fails on each, and the alert lands on each.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    monitor, store, seen = _root_failing_monitor(
+        tmp_path, clock, lambda: (_ for _ in ()).throw(RuntimeError("root refused")))
+
+    clock.now += dt.timedelta(seconds=300)
+    # The waits are `repeat_after(alert_count)` exactly — 1d after the first
+    # alert, 2d after the second (CG-86 D5).
+    for n, wait in enumerate((0, DEFAULT_REPEAT_S, 2 * DEFAULT_REPEAT_S)):
+        clock.now += dt.timedelta(seconds=wait)
+        # `scan_once` re-raises the root's failure, so /healthz still degrades
+        # through `scan_failures` — the root is not swallowed, only deferred.
+        with pytest.raises(RuntimeError, match="root refused"):
+            monitor.scan_once()
+        severities = [s for s, _ in seen]
+        assert severities.count("alert") == n + 1, "the alert must still fire"
+        assert severities.count("info") == n + 1, "and the root is re-attempted"
+
+    check = store.list_for("aitrader")[0]
+    assert check.alert_count == 3, "every alert was accepted and marked"
+    assert check.thread_started is False, \
+        "a root that never lands must never latch as started"
+    # ⚠ A FAILED ROOT IS NOT A FAILED ALERT. `alerts_undeliverable` counts
+    # alert ATTEMPTS not accepted for delivery; no alert was lost here, and a
+    # root fed into that counter would inflate the dropped-ALERT number with
+    # something no alert was lost to.
+    assert monitor.alerts_undeliverable == 0
+    assert monitor.checks_undeliverable == 0
+
+
+def test_a_thread_root_that_is_REFUSED_never_strands_the_check_s_alert(tmp_path):
+    """The same isolation for the OTHER failure shape: a root that returns
+    `False` — refused for want of a route, or deduped — rather than raising.
+
+    ⚠ THIS ARM DOES **NOT** PIN THE INNER `try`, AND SAYING SO IS THE POINT.
+    A `False` raises nothing, so the `try` is not on its path and deleting it
+    leaves this test green — measured, not assumed. What this pins is the
+    neighbouring property, which no test covered either: the root's RETURN
+    VALUE does not gate the alert. A `continue` or an early `return` on a
+    falsy root would strand the alert exactly as a propagating raise would,
+    and would look like tidying.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 12, 0, tzinfo=UTC))
+    monitor, store, seen = _root_failing_monitor(tmp_path, clock, lambda: False)
+
+    clock.now += dt.timedelta(seconds=300)
+    for n, wait in enumerate((0, DEFAULT_REPEAT_S, 2 * DEFAULT_REPEAT_S)):
+        clock.now += dt.timedelta(seconds=wait)
+        assert monitor.scan_once() == 1, "one alert accepted, every scan"
+        severities = [s for s, _ in seen]
+        assert severities.count("alert") == n + 1
+        assert severities.count("info") == n + 1
+
+    check = store.list_for("aitrader")[0]
+    assert check.alert_count == 3
+    assert check.thread_started is False, \
+        "a refused root must never latch as started"
+    assert monitor.alerts_undeliverable == 0
+    assert monitor.checks_undeliverable == 0
+
+
+def test_a_healthy_refresh_of_an_ok_check_delivers_nothing(registry, tmp_path):
+    """⚠ THE HIGHEST-RISK LINE IN CG-86, and the reason D6 is transition-only.
+
+    Registering and refreshing are the same call and aitrader pings on
+    schedule, so an all-clear condition that is even slightly too wide posts to
+    Chat on every ping. Zero sends across a registration and several healthy
+    refreshes is the only assertion that catches that, and it must stay exact —
+    "not many" would pass for a condition that fired one ping in ten.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    body = {"check_id": "daily-run", "schedule": "every:60s", "grace": "60s"}
+    for _ in range(6):
+        assert client.post("/v1/heartbeat", headers=AUTH, json=body).status_code == 200
+        clock.now += dt.timedelta(seconds=30)
+        assert app.state.monitor.scan_once() == 0
+        app.state.dispatcher.process_due()
+
+    assert adapter.sent == [], "a live source must produce no chat traffic at all"
+    assert app.state.dispatcher.pending() == 0
+    assert client.get("/v1/deliveries", headers=AUTH).json()["deliveries"] == []
+
+
+def test_a_missed_check_that_refreshes_delivers_exactly_one_recovery(
+        registry, tmp_path):
+    """RESOLVED, threaded under the alert it closes, rendered `info`.
+
+    There was no all-clear path in `src/` at all before CG-86 — a missed -> ok
+    transition delivered nothing and `refresh()` silently reset `status`. It is
+    rendered `info` because the policy routes RESOLVED to the quiet lane, and
+    that is only safe BECAUSE it threads under an alert the reader was already
+    notified about; see the routing test above for the other half.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    _drive_to_missed(client, app, clock)
+    before = len(adapter.sent)
+
+    clock.now += dt.timedelta(seconds=120)
+    assert client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "every:60s",
+        "grace": "60s"}).status_code == 200
+    app.state.dispatcher.process_due()
+
+    new = adapter.sent[before:]
+    assert len(new) == 1, "exactly one all-clear, and only on the transition"
+    ident, msg = new[0]
+    assert ident == "aitrader-alerts"
+    assert msg.text.startswith(severity_prefix("info"))
+    assert msg.thread_key == "hb:aitrader:daily-run"
+    assert "recovered after 7m" in msg.text
+    assert "Action: none" in msg.text
+
+    # A second refresh, now that the check is `ok`, adds nothing.
+    client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "every:60s", "grace": "60s"})
+    app.state.dispatcher.process_due()
+    assert len(adapter.sent) == before + 1
+
+
+def test_a_pre_CG_86_missed_row_that_refreshes_posts_no_orphan_all_clear(
+        registry, tmp_path):
+    """⚠ THE DEPLOY TRANSITION, and it is the one shape `status == "missed"`
+    alone gets wrong.
+
+    A `heartbeats.json` row written by the previous release loads with
+    `status: "missed"`, `thread_started=False` and `alert_count=0`: it was
+    alerted, but by a build that posted no thread root and set no thread key.
+    If it refreshes before the next scan, an all-clear gated on the status
+    alone would be the FIRST message ever posted on that thread key — a
+    `RESOLVED` starting its own thread, which is the exact rule CG-86 cites.
+
+    `previous.alert_count > 0` is what suppresses it, and nothing is lost:
+    before this PR a recovery delivered nothing at all, so the migrated row
+    keeps precisely the behaviour it already had. The check is suppressed, not
+    broken — the second half of this test drives it missed again and watches
+    the thread open normally.
+    """
+    path = tmp_path / "hb.json"
+    path.write_text(json.dumps({"checks": [{
+        "source": "aitrader", "check_id": "daily-run", "schedule": "every:60s",
+        "grace": "60s", "tz": "America/New_York",
+        "last_seen": "2026-07-24T20:30:00+00:00",
+        "last_alerted": "2026-07-27T23:00:00+00:00", "status": "missed",
+    }]}), encoding="utf-8")
+
+    clock = Clock(dt.datetime(2026, 7, 28, 12, 0, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+    migrated = app.state.heartbeats.list_for("aitrader")[0]
+    assert (migrated.status, migrated.thread_started, migrated.alert_count) == \
+        ("missed", False, 0), "the premise: this is what a pre-CG-86 row loads as"
+
+    body = {"check_id": "daily-run", "schedule": "every:60s", "grace": "60s"}
+    assert client.post("/v1/heartbeat", headers=AUTH, json=body).status_code == 200
+    app.state.dispatcher.process_due()
+
+    assert adapter.sent == [], "an all-clear here would start its own thread"
+    assert client.get("/v1/deliveries", headers=AUTH).json()["deliveries"] == []
+
+    # Suppressed, not broken: the very next outage opens the thread and alerts
+    # in the normal way, and its recovery is threaded because by then there is
+    # something of ours for it to close.
+    clock.now += dt.timedelta(seconds=300)
+    assert app.state.monitor.scan_once() == 1
+    app.state.dispatcher.process_due()
+    assert len(rendered_as(adapter, "info")) == 1     # the thread root
+    assert len(rendered_as(adapter, "alert")) == 1    # the alert
+    client.post("/v1/heartbeat", headers=AUTH, json=body)
+    app.state.dispatcher.process_due()
+    assert len(rendered_as(adapter, "info")) == 2, "now the all-clear IS owed"
+
+
+def test_a_check_whose_ROOT_failed_but_whose_ALERT_landed_still_gets_its_all_clear(
+        registry, tmp_path):
+    """⚠ WHY THE GATE IS `alert_count`, NOT `not previous.thread_started`.
+
+    `thread_started` is `False` in two states that look identical from the
+    field and are opposite in fact: no thread exists (the pre-CG-86 row above),
+    and a thread DOES exist because the alert created it after its root failed
+    — the adapter posts with `REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`, so an
+    alert on an unopened key opens it. `scan_once`'s inner `try` exists
+    precisely so that combination can happen.
+
+    Gating on `not previous.thread_started` would swallow the all-clear for the
+    alert the reader is actually looking at. `alert_count` increments only in
+    `mark_alerted`, i.e. only once a threaded alert was ACCEPTED, so it answers
+    the question that matters — is there a message of ours on this thread for
+    this to close?
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+    body = {"check_id": "daily-run", "schedule": "every:60s", "grace": "60s"}
+    assert client.post("/v1/heartbeat", headers=AUTH, json=body).status_code == 200
+
+    # Break the ROOT only. The recovery notice does not go through
+    # `monitor._notify` at all — `refresh_heartbeat` calls the shared
+    # `_monitor_notify` closure directly — so this cannot mask the assertion.
+    original = app.state.monitor._notify
+
+    def root_refusing(source, title, body_, key, thread_key, *, severity="alert"):
+        if severity == "info":
+            raise RuntimeError("root refused")
+        return original(source, title, body_, key, thread_key, severity=severity)
+
+    app.state.monitor._notify = root_refusing
+    clock.now += dt.timedelta(seconds=300)
+    with pytest.raises(RuntimeError, match="root refused"):
+        app.state.monitor.scan_once()
+    app.state.monitor._notify = original
+    app.state.dispatcher.process_due()
+
+    check = app.state.heartbeats.list_for("aitrader")[0]
+    assert (check.status, check.thread_started, check.alert_count) == \
+        ("missed", False, 1), "the state the simpler gate would have misread"
+    assert len(rendered_as(adapter, "alert")) == 1
+    assert rendered_as(adapter, "info") == [], "the root never landed"
+
+    clock.now += dt.timedelta(seconds=120)
+    assert client.post("/v1/heartbeat", headers=AUTH, json=body).status_code == 200
+    app.state.dispatcher.process_due()
+
+    (ident, msg), = rendered_as(adapter, "info")
+    assert ident == "aitrader-alerts"
+    assert "recovered after" in msg.text
+    assert msg.thread_key == "hb:aitrader:daily-run", \
+        "and it closes the alert's own thread, which the alert opened"
+
+
+def test_a_recovery_that_raises_does_not_fail_the_heartbeat_request(
+        registry, tmp_path, monkeypatch):
+    """⚠ REFRESHING **IS** THE LIVENESS PING, so nothing in the all-clear may
+    fail it.
+
+    A 5xx here freezes `last_seen`, drives the check into `is_missed`, and the
+    gateway then delivers a missed-check alert for a source that never stopped
+    pinging — the fabricated outage `refresh_heartbeat`'s own comment records as
+    measured end-to-end against a real server.
+
+    Both arms, because they fail in different places: the DELIVERY arm (the
+    queue refuses the message) and the COMPOSITION arm (`heartbeats.json` is
+    validated nowhere on load, so a corrupted `last_seen` makes the elapsed
+    delta raise while it is being formatted — which is why the composition sits
+    inside the guard rather than above it).
+    """
+    import chat_gateway.service as service_module
+
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+    body = {"check_id": "daily-run", "schedule": "every:60s", "grace": "60s"}
+
+    # --- delivery arm ---
+    # ⚠ Restored by hand, NOT by `monkeypatch.undo()`: the `registry` fixture
+    # shares this test's `monkeypatch` object, so an undo would also unset
+    # `T_KEY_AITRADER` and every later request would 401 instead of asserting
+    # what it was written to assert.
+    _drive_to_missed(client, app, clock)
+    original_enqueue = app.state.dispatcher.enqueue
+    app.state.dispatcher.enqueue = \
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("queue down"))
+    r = client.post("/v1/heartbeat", headers=AUTH, json=body)
+    assert r.status_code == 200, "the liveness ping outranks the all-clear"
+    assert app.state.heartbeats.list_for("aitrader")[0].status == "ok"
+    app.state.dispatcher.enqueue = original_enqueue
+
+    rows = client.get("/v1/deliveries", headers=AUTH).json()["deliveries"]
+    failed = [d for d in rows if d["status"] == "failed"]
+    assert len(failed) == 1 and "recovery notice not sent" in failed[0]["detail"]
+    # hard rule #2 / CG-29: the failure names a TYPE, never a URL or a payload.
+    assert failed[0]["detail"].endswith("RuntimeError")
+
+    # --- composition arm ---
+    _drive_to_missed(client, app, clock, check_id="second-run")
+    monkeypatch.setattr(service_module, "recovery_message",
+                        lambda *a, **k: (_ for _ in ()).throw(ValueError("bad last_seen")))
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "second-run", "schedule": "every:60s", "grace": "60s"})
+    assert r.status_code == 200
+
+
+def test_the_missed_alert_backs_off_one_day_then_two_then_four_then_weekly(
+        registry, tmp_path):
+    """CG-86 D5. Each wait is exactly `repeat_after(alerts_so_far)`.
+
+    Asserted at both edges of every window — one second short is silent, one
+    second past fires — so a rung that quietly reverted to the flat 24h window
+    fails on the "still silent" half rather than passing by luck.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+    base = DEFAULT_REPEAT_S
+
+    assert _drive_to_missed(client, app, clock) == 1        # alert 1
+
+    for expected in (base, 2 * base, 4 * base, MAX_REPEAT_S, MAX_REPEAT_S):
+        clock.now += dt.timedelta(seconds=expected - 1)
+        assert app.state.monitor.scan_once() == 0, f"early at {expected}s"
+        clock.now += dt.timedelta(seconds=1)
+        assert app.state.monitor.scan_once() == 1, f"due at {expected}s"
+
+    app.state.dispatcher.process_due()
+    assert len(rendered_as(adapter, "alert")) == 6
+    assert app.state.heartbeats.list_for("aitrader")[0].alert_count == 6
+
+
+def test_four_consecutive_days_no_longer_produce_four_identical_alerts(
+        registry, tmp_path):
+    """The observed defect, reproduced as a scenario and shown not to recur.
+
+    Four daily scans over a check whose state never moves used to emit four
+    byte-identical top-level messages. Now: three, in one thread, with three
+    different elapsed deltas in their titles — so no two are the same message,
+    which is what makes a reminder policy-legal rather than an "unchanged
+    state" post.
+    """
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+
+    _drive_to_missed(client, app, clock)                     # day 0
+    for _ in range(4):                                       # days 1..4
+        clock.now += dt.timedelta(days=1)
+        app.state.monitor.scan_once()
+    app.state.dispatcher.process_due()
+
+    alerts = [m for _, m in rendered_as(adapter, "alert")]
+    assert len(alerts) == 3, "day 0, day 1, day 3 — not four in a row"
+    titles = [m.text for m in alerts]
+    assert len(set(titles)) == 3, "no two reminders may be byte-identical"
+    assert {m.thread_key for m in alerts} == {"hb:aitrader:daily-run"}
+
+
+def test_a_dead_man_title_leads_with_the_source_and_carries_no_severity(
+        registry, tmp_path):
+    """The policy's title rule, on all four messages this path can emit.
+
+    ⚠ NO SEVERITY WORD AND NO SEVERITY EMOJI, because the gateway's own
+    `severity_prefix()` is prepended by the renderer — a title carrying its own
+    would render it twice, which is what the observed
+    `⚠️ 🔴 [ALERT] heartbeat missed: …` was.
+
+    ⚠ AND LEADING WITH `[<source>]` HAS A SECOND PAYOFF: a check misfiled under
+    the wrong project announces it in its own title. The observed `candle-crawl`
+    was registered under `aitrader` while nothing in aitrader produced it.
+    """
+    now = dt.datetime(2026, 8, 31, 15, 47, 52, tzinfo=UTC)
+    check = Check(source="aitrader", check_id="candle-crawl",
+                  schedule="every:15m", grace="45m",
+                  last_seen="2026-08-24T14:45:55+00:00")
+    fired = Check(**{**check.__dict__, "alert_count": 3})
+
+    titles = [thread_root_message(check)[0], alert_message(check, now)[0],
+              alert_message(fired, now)[0], recovery_message(check, now)[0]]
+    for title in titles:
+        assert title.startswith("[aitrader] "), title
+        for severity in ("alert", "warning", "info"):
+            assert severity.upper() not in title
+            assert SEVERITY_EMOJI[severity] not in title
+        assert len(title) <= MAX_TITLE_LEN
+
+    assert titles[1] == "[aitrader] heartbeat candle-crawl — missed, no refresh for 7d01h"
+    assert titles[2] == "[aitrader] heartbeat candle-crawl — still missed, 7d01h"
+    assert titles[3] == "[aitrader] heartbeat candle-crawl — recovered after 7d01h"
+
+    # Every body opens with its own UTC timestamp and closes with an `Action:`
+    # line, including when the action is `none` — silence is not information.
+    for body in (alert_message(check, now)[1], alert_message(fired, now)[1],
+                 recovery_message(check, now)[1]):
+        assert body.startswith("2026-08-31T15:47:52Z · ")
+        assert body.splitlines()[-1].startswith("Action: ")
+    assert thread_root_message(check)[1].splitlines()[-1] == \
+        "Action: none — this message opens the thread."
+
+
+def test_an_overlong_thread_key_is_capped_and_still_distinguishes(registry):
+    """⚠ CG-86 D1, and the cap is a DROPPED-ALERT guard rather than tidiness.
+
+    `Notification.thread_key` is `max_length=128` and `HeartbeatIn.check_id`
+    allows 100, while nothing anywhere caps an app id — the registry does not.
+    A `ValidationError` raised inside `_monitor_notify` is not an
+    `HTTPException`, so it would escape to `scan_once`'s per-check `except`, be
+    counted undeliverable, and the alert would never be sent FOR THE LIFE OF
+    THAT CHECK: a new CG-76-class silent door opened by the fix for one.
+    """
+    source = "a-very-long-application-identifier-" * 2
+    check_id = "c" * 100
+    key = thread_key_for(source, check_id)
+    assert len(key) == MAX_THREAD_KEY_LEN
+    assert Notification(severity="alert", title="t", thread_key=key)
+
+    # Two inputs that share a 128-character prefix must not share a thread —
+    # the digest is over the FULL key, which is what the colliding pair differs
+    # in, never over the truncated head, which is what they have in common.
+    other = thread_key_for(source, check_id + "-second")
+    assert other != key and len(other) == MAX_THREAD_KEY_LEN
+    assert key[:100] == other[:100], "the collision this guards is real"
+
+    # And a key that fits is left exactly alone — no digest, no truncation.
+    assert thread_key_for("aitrader", "daily-run") == "hb:aitrader:daily-run"
+
+
+def test_the_composition_caps_match_the_notification_model():
+    """`heartbeat.py` composes for a model it deliberately does not import.
+
+    Keeping the render layer out of this module's imports costs two written-down
+    numbers, so they are pinned against the real pydantic fields here. A
+    `max_length` lowered in `notifications.py` without this would silently
+    re-open the dropped-alert door the caps exist to close.
+    """
+    def max_len(field):
+        return next(m.max_length for m in Notification.model_fields[field].metadata
+                    if hasattr(m, "max_length"))
+
+    assert MAX_THREAD_KEY_LEN == max_len("thread_key")
+    assert MAX_TITLE_LEN == max_len("title")
+
+
+def test_repeat_after_escalates_and_ceilings():
+    assert repeat_after(0) == DEFAULT_REPEAT_S      # nothing sent yet
+    assert repeat_after(1) == DEFAULT_REPEAT_S
+    assert repeat_after(2) == 2 * DEFAULT_REPEAT_S
+    assert repeat_after(3) == 4 * DEFAULT_REPEAT_S
+    assert repeat_after(4) == MAX_REPEAT_S          # 8d would exceed the week
+    assert repeat_after(99) == MAX_REPEAT_S
+    assert repeat_after(2, base=60) == 120
+    # ⚠ IT ONLY EVER LENGTHENS, which is what preserves
+    # `test_repeat_window_must_exceed_the_dedupe_window` a fortiori.
+    assert all(repeat_after(n) >= DEFAULT_REPEAT_S for n in range(0, 40))
+
+
+def test_format_elapsed_at_every_unit_boundary():
+    """Two significant units, truncating, in the policy's own spelling.
+
+    Truncating rather than rounding is the load-bearing half: `1d23h59m` must
+    read `1d23h`, because a duration that has not reached the next unit must
+    never be reported as though it had.
+    """
+    assert format_elapsed(0) == "0s"
+    assert format_elapsed(59) == "59s"
+    assert format_elapsed(60) == "1m"
+    assert format_elapsed(3599) == "59m"
+    assert format_elapsed(3600) == "1h00m"
+    assert format_elapsed(8040) == "2h14m"          # the policy's own example
+    assert format_elapsed(86399) == "23h59m"
+    assert format_elapsed(86400) == "1d00h"
+    assert format_elapsed(802800) == "9d07h"        # the policy's own example
+    assert format_elapsed(MAX_REPEAT_S) == "7d00h"
+    assert format_elapsed(-5) == "0s", "a backwards clock renders no minus sign"
+
+
+def test_a_heartbeats_json_carrying_an_UNKNOWN_key_still_loads(tmp_path):
+    """⚠ THE ROLLBACK DIRECTION, AND IT POINTS FORWARD — see `_load`'s
+    docstring for what it cannot do.
+
+    `Check(**row)` makes every field addition a BOOT failure for the previous
+    image: `create_app` builds the store, the store loads the file, and an
+    unexpected keyword raises before the app exists. CG-86 added two fields, so
+    a rollback to a pre-CG-86 image is exactly that failure — and nothing
+    committed now can fix an image that already shipped.
+
+    What is fixable is the NEXT one. From this release on, an unknown key is
+    dropped rather than fatal, so a state file written by a newer image still
+    loads here. The unknown key below stands in for that future field.
+
+    ⚠ THE KEY SET IS FILTERED, NOT THE VALUES. `status` below is a real field
+    with a real value and survives; nothing here validates it.
+    """
+    path = tmp_path / "hb.json"
+    path.write_text(json.dumps({"checks": [{
+        "source": "aitrader", "check_id": "daily-run", "schedule": "every:60s",
+        "grace": "60s", "tz": "America/New_York",
+        "last_seen": "2026-07-24T20:30:00+00:00",
+        "last_alerted": "2026-07-27T23:00:00+00:00", "status": "missed",
+        "thread_started": True, "alert_count": 4,
+        # A field some later release adds, that this one has never heard of.
+        "escalation_tier": "paging",
+    }]}), encoding="utf-8")
+
+    check = HeartbeatStore(path).list_for("aitrader")[0]
+    assert (check.status, check.thread_started, check.alert_count) == \
+        ("missed", True, 4), "every KNOWN field survives the filter"
+    assert not hasattr(check, "escalation_tier")
+    # And the row it did not understand is not written back out — `_save`
+    # serialises the dataclass, so the unknown key is dropped on the next
+    # write. Recorded rather than fixed: preserving it would mean carrying an
+    # unvalidated blob through a file this gateway is the only writer of.
+    assert "escalation_tier" not in json.dumps(
+        {"checks": [check.__dict__]})
+
+
+def test_a_heartbeats_json_written_before_CG_86_still_loads(tmp_path):
+    """The on-disk shape gained two fields, and an upgrade must not lose checks.
+
+    `HeartbeatStore._load` builds a `Check` from a row's known keys, so a row
+    written by the previous release — no `thread_started`, no `alert_count` —
+    loads only because both defaults exist. This test asserts the LOAD, and
+    nothing else; ⚠ it used to claim the migration behaviour too ("an existing
+    missed check re-opens its thread once"), which is true only on the
+    miss-again path and is exercised nowhere here. Corrected 2026-08-31 in
+    CG-86's pre-merge review.
+
+    Where the two migration paths ARE pinned:
+
+    - miss again — the check has no thread, so its next alert opens one and its
+      ladder restarts at 1d, the pre-CG-86 cadence
+      (`test_the_thread_root_is_posted_once_per_check_and_not_after_a_refresh`
+      covers the once-per-check half).
+    - refresh first — `alert_count == 0` suppresses the all-clear, so a
+      `RESOLVED` cannot be the first message on a thread key nothing has ever
+      posted to
+      (`test_a_pre_CG_86_missed_row_that_refreshes_posts_no_orphan_all_clear`).
+    """
+    path = tmp_path / "hb.json"
+    path.write_text(json.dumps({"checks": [{
+        "source": "aitrader", "check_id": "daily-run", "schedule": "weekdays",
+        "grace": "2h", "tz": "America/New_York",
+        "last_seen": "2026-07-24T20:30:00+00:00",
+        "last_alerted": "2026-07-27T23:00:00+00:00", "status": "missed",
+    }]}), encoding="utf-8")
+
+    check = HeartbeatStore(path).list_for("aitrader")[0]
+    assert (check.status, check.thread_started, check.alert_count) == \
+        ("missed", False, 0)
+    assert check.thread_key() == "hb:aitrader:daily-run"

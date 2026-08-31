@@ -61,7 +61,7 @@ printed in full (see below), and `mcp.py`, the opt-in MCP server surface (CG-80)
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 491 passing.
+`python` is 3.13.7) — offline, 511 passing.
 
 ## Current status (2026-07-31)
 
@@ -80,7 +80,9 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   routing/rendering, dedupe windows, async dispatcher with retry backoff +
   per-source delivery log, titles-only logging) and /v1/heartbeat (dead-man
   monitor; tz-aware `weekdays` schedule rolls weekend due-dates to Monday;
-  daily repeat; JSON-persisted checks). US market holidays deliberately not
+  ~~daily repeat~~ **escalating repeat, one Chat thread per check and an
+  all-clear on recovery — corrected 2026-08-31 (CG-86)**; JSON-persisted
+  checks). US market holidays deliberately not
   modeled (contract says widen grace).
 - **BOTH queues are durable, since CG-54 (#45, 2026-07-31)** — outbound
   delivery *and* the inbound inbox, which the brief's scope missed. Undelivered
@@ -151,6 +153,22 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   count itself is the finding worth carrying:** four rounds of looking produced
   four different answers, and it is six rather than four only because somebody
   was asked to check the checker (spec §0).
+- **And it alerted into the void for its whole life — the dead-man path never
+  set a `thread_key` (CG-86, 2026-08-31).** `Notification.thread_key` is a
+  declared field and `render` propagates it on both branches; `_monitor_notify`
+  simply never set one, so every dead-man alert this project ever sent was an
+  unthreaded top-level post, re-posted byte-identically every 24h for as long as
+  a check stayed missed. **There was also no all-clear at all** — a missed→ok
+  transition delivered nothing. ⚠ **The finding worth carrying is not the
+  threading, it is that SEVERITY PICKS THE SPACE:** `route_for` is
+  `routes.get(severity) or routes.get("default")`, and `aitrader`'s `alert` and
+  `info` routes are two different identities, so a quiet-rendered all-clear
+  would have posted into a room where nobody watching the alert could see it.
+  `emit_notification` gained `route_severity` and every monitor message now
+  routes `alert` whatever it renders as — **threading and routing are one
+  decision, and anything that splits them re-opens this.** Do not restate the
+  cadence here; it has one home, `docs/consumers/aitrader.md` §7, and the design
+  is `docs/superpowers/specs/2026-08-31-dead-man-message-policy-design.md`.
 - **The live project is `chat-gateway-gw` (`#860649224827`), and it is the only
   one.** `chat-gateway-prod` — which every "Cloud resources now exist" note in
   this file used to describe — was **deleted 2026-07-30**, along with E1's

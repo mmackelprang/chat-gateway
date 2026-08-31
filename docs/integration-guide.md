@@ -57,10 +57,38 @@ curl -s $GW/v1/notify -H "$AUTH" -H "$JSON" -d '{
 
 Register/refresh in one call. If no refresh arrives by `schedule + grace`,
 the gateway fires an `alert`-severity notification on your alert route,
-repeating daily until you refresh or delete. Schedules: `weekdays` (due
+~~repeating daily until you refresh or delete~~ **repeating on an escalating
+backoff — 1d, 2d, 4d, then weekly — until you refresh or delete (corrected
+2026-08-31, CG-86)**. Schedules: `weekdays` (due
 dates falling Sat/Sun roll to Monday in `tz`, default America/New_York —
 **US market holidays are NOT modeled; widen `grace` to cover them**, e.g.
 `74h` spans a Monday holiday), `daily`, `every:<N><s|m|h|d>`.
+
+⚠ **The FIRST transition into `missed` is unaffected and alerts on the very
+next scan.** CG-86 changed the cadence of REMINDERS only; no backoff, ceiling
+or alert count can delay a first miss. Nothing is suppressed either — the
+reminder keeps arriving, and each carries a fresh elapsed delta in its title,
+so no two are the same message. The cause was a check that had not changed
+state in seven days producing four consecutive days of byte-identical alerts.
+
+**One Chat thread per check, and an all-clear (CG-86).** Every message about a
+check shares one `thread_key`, `hb:<source>:<check_id>`: a thread root posted
+once at the first alert, the alert, its reminders, and — new — a **recovery
+notice on the `missed` → `ok` transition only**. A refresh of a check that was
+already `ok` delivers nothing.
+
+⚠ **ALL OF THEM ARE ROUTED BY YOUR `alert` ROUTE, WHATEVER THEY RENDER AS.**
+Severity picks the destination SPACE as well as the loudness
+(`route_for(app, severity)`), and threading is per-space — so a thread root or
+an all-clear routed by its own quiet render severity would post into a
+different space from the alert it belongs to, where nobody watching that alert
+would see it. The thread root and the recovery therefore **render `info` and
+route `alert`**: expect quiet-looking messages in your alert space.
+
+⚠ **Titles carry no severity word or emoji.** They are `[<app>] <subject> —
+<what changed>`; the gateway's own `severity_prefix()` supplies the severity,
+and a title repeating it renders it twice. Bodies open with a UTC timestamp
+line and close with an `Action:` line, including when the action is `none`.
 
 ```bash
 curl -s $GW/v1/heartbeat -H "$AUTH" -H "$JSON" -d '{
@@ -81,7 +109,10 @@ goes missed and tells nobody.
 call, a **refresh of an existing check is your liveness ping and is always
 accepted**, even after the route disappears — refusing it would freeze
 `last_seen`, drive the check into the missed state, and manufacture a
-"heartbeat missed" alert for a source that never died. A route removed *after*
+missed-check alert for a source that never died (⚠ this named the alert by its
+title, `"heartbeat missed"`, until **2026-08-31** — CG-86 retired that wire
+shape, and titles now lead with your app id and carry the elapsed delta; the
+guarantee is unchanged). A route removed *after*
 registration is covered at runtime instead: `heartbeats.alerts_undeliverable`
 and `heartbeats.checks_undeliverable` degrade `/healthz`, and the check is left
 unmarked so it delivers the moment the route is restored.
@@ -784,7 +815,14 @@ you need to react to a human's reply, use the per-tenant `callback_url` push or
 delivery-log tool. `POST /v1/messages` is synchronous, so an agent gets an
 answer it can act on; `POST /v1/notify` returns `202 enqueued`, which it cannot.
 Dead-man checks are deliberately absent — a check registered by an agent session
-goes missed the moment that session ends, and then pages a human daily.
+goes missed the moment that session ends, and then ~~pages a human daily~~
+**pages a human on the escalating backoff, forever: 1d, 2d, 4d, then weekly,
+and it never stops on its own** (corrected 2026-08-31, CG-86). ⚠ **The backoff
+does not weaken this rationale, it sharpens it.** The exclusion never rested on
+the cadence; it rests on there being no session left to refresh or delete the
+check, so the reminders run until a human intervenes — and a *weekly* reminder
+about a job nobody remembers registering is easier to ignore than a daily one,
+not harder to accumulate.
 
 **`cards` is an opaque array here exactly as it is on `POST /v1/messages`.** The
 gateway does not build cards and does not describe their structure to a model;

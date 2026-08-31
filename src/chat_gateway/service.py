@@ -28,8 +28,10 @@ from . import __version__
 from .auth import AuthError, authenticate
 from .delivery import DeliveryLog, Dispatcher
 from .envelope import CG_ACTION_KEY, DeliveryResult, OutboundMessage
+from .errors import describe_exception
 from .heartbeat import (
     DEFAULT_TZ, HeartbeatError, HeartbeatMonitor, HeartbeatStore,
+    recovery_message,
 )
 from .inbox import Inbox
 from .mcp import TOOL_NAMES as MCP_TOOL_NAMES, build_router as build_mcp_router
@@ -308,9 +310,26 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     # -- notify pipeline (shared by the endpoint and the heartbeat monitor) ---
-    def emit_notification(app_id: str, n: Notification) -> dict:
+    def emit_notification(app_id: str, n: Notification, *,
+                          route_severity: str | None = None) -> dict:
+        """Route, dedupe, render and enqueue one notification.
+
+        ⚠ `route_severity` DECOUPLES THE DESTINATION FROM THE RENDERING, and
+        only the dead-man path passes it (CG-86 D2). `registry.route_for` is
+        `routes.get(severity) or routes.get("default")`, so severity picks the
+        SPACE as well as the loudness — in the shipped registry `aitrader`'s
+        `alert` and `info` routes are two different identities. Threading is
+        per-space, so a check's thread root or all-clear emitted as plain
+        `info` would post into a room where nobody watching the alert would
+        ever see it, which is the policy's "a RESOLVED that starts a new thread
+        is a bug" in a worse form.
+
+        Defaulting to `None` leaves every existing caller byte-identical: the
+        route is `n.severity` unless someone says otherwise, and one caller
+        does.
+        """
         try:
-            identity = registry.route_for(app_id, n.severity)
+            identity = registry.route_for(app_id, route_severity or n.severity)
         except RegistryError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         deliver, occurrences = dedupe.check(app_id, n.dedupe_key)
@@ -323,8 +342,9 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         return {"status": "enqueued", "id": entry_id, "occurrences": occurrences}
 
     def _monitor_notify(source: str, title: str, body: str,
-                        dedupe_key: str | None) -> bool:
-        """Emit a dead-man alert. Returns whether it was ACCEPTED for delivery.
+                        dedupe_key: str | None, thread_key: str | None,
+                        *, severity: str = "alert") -> bool:
+        """Emit one dead-man message. Returns whether it was ACCEPTED for delivery.
 
         THE RETURN VALUE IS THE FIX (CG-76). This function used to return None
         and swallow two different failures:
@@ -345,11 +365,36 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         reported as a transient fault either. `scan_once` counts the `False`
         and declines to mark the check, so the alert re-fires next scan and
         self-heals the moment the route is restored.
+
+        ⚠ EVERY MESSAGE IS ROUTED `alert`, WHATEVER IT RENDERS AS (CG-86 D2).
+        `severity` moves the RENDERING only — `info` for the quiet thread root
+        and the all-clear, `alert` for the alert itself — while
+        `route_severity="alert"` is passed unconditionally, so all four land in
+        the same space and can therefore thread together. It also inherits
+        CG-76's registration guard, which resolves the `alert` route before a
+        check may be stored at all, so a routed thread message is MORE reliable
+        than an `info` one, not less.
+
+        ⚠ THE RETURN CONTRACT IS UNCHANGED AND CG-76 DEPENDS ON IT: `True` only
+        when `status == "enqueued"`, `False` on `HTTPException` and on any other
+        status. `thread_key` is passed through to `Notification`, whose
+        `max_length=128` the caller has already respected —
+        `heartbeat.thread_key_for` caps it, precisely because a
+        `ValidationError` raised here is not an `HTTPException` and would
+        escape uncaught (CG-86 D1).
+
+        ⚠ `thread_key` IS REQUIRED AND HAS NO DEFAULT, deliberately. Defaulting
+        it to `None` would let a future call site post an UNTHREADED dead-man
+        message by omission — which is precisely the defect CG-86 exists to
+        close, arriving back through a signature convenience. `severity` does
+        default, because its default is the loud one and forgetting it costs
+        volume rather than a lost thread.
         """
         try:
             result = emit_notification(source, Notification(
-                severity="alert", title=title, body=body, dedupe_key=dedupe_key,
-            ))
+                severity=severity, title=title, body=body, dedupe_key=dedupe_key,
+                thread_key=thread_key,
+            ), route_severity="alert")
         except HTTPException as exc:  # registry cannot route this alert
             log.record(source, "heartbeat", title, "failed", f"no route: {exc.detail}")
             return False
@@ -442,8 +487,14 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # remove a LIVE source's alert route, and its on-schedule pings start
         # returning 422 — so `last_seen` freezes, the check drifts into
         # `is_missed`, and the moment the route is restored the gateway
-        # delivers `[ALERT] heartbeat missed: daily-run` for a source that
-        # never stopped pinging. A registry misconfiguration becomes a
+        # delivers a missed-check alert for a source that never stopped
+        # pinging. (That measurement delivered `[ALERT] heartbeat missed:
+        # daily-run`; CG-86 retired that wire shape on 2026-08-31 and the title
+        # is now `[aitrader] heartbeat daily-run — missed, no refresh for …`.
+        # The measurement is unchanged — only its rendering moved — so the
+        # quote is dropped rather than updated, because a quoted string in this
+        # comment is a second copy of a title that lives in `_title`.)
+        # A registry misconfiguration becomes a
         # FABRICATED outage, on the very source this feature exists to watch.
         # The dead-man switch must never be the thing that invents the death.
         #
@@ -477,11 +528,83 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                             f"routes: {{alert: <identity>}} to the registry"),
                 ) from exc
         try:
-            check = checks.refresh(app_id, h.check_id, h.schedule, h.grace, h.tz)
+            check, previous = checks.refresh_seen(
+                app_id, h.check_id, h.schedule, h.grace, h.tz)
         except (HeartbeatError, Exception) as exc:
             if isinstance(exc, HeartbeatError):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
             raise HTTPException(status_code=422, detail=f"bad tz or check spec: {exc}") from exc
+
+        # CG-86 D6. RESOLVED, threaded under the alert it closes.
+        #
+        # ⚠ ON THE missed -> ok TRANSITION ONLY, and this is the highest-risk
+        # line in that change. Registering and refreshing are the same call and
+        # aitrader pings on schedule, so a condition that is even slightly too
+        # wide posts to Chat on EVERY ping — thousands a day, on the one tenant
+        # whose contract calls a two-way path a security hole. `previous` is
+        # `None` for a registration and carries the pre-swap status for a
+        # refresh, both read under the store's own lock, so "was it missed
+        # before this ping" is answered by a snapshot rather than by a second
+        # read that a concurrent scan could move underneath it.
+        #
+        # ⚠ AND IT CAN NEVER FAIL THE REQUEST. Refreshing IS the liveness ping:
+        # if a routing fault, a validation error or a full delivery queue could
+        # 5xx this route, `last_seen` would freeze, the check would drift into
+        # `is_missed`, and the gateway would manufacture the fabricated outage
+        # the comment above records as measured end-to-end. The all-clear is
+        # worth strictly less than the ping, so it is attempted and its failure
+        # is recorded in the delivery log — the same place `_monitor_notify`
+        # writes its own failures — and swallowed. `describe_exception` rather
+        # than `str(exc)`: hard rule #2, this is a new write site and gets the
+        # current rule.
+        #
+        # ⚠ COMPOSING THE MESSAGE IS INSIDE THE GUARD, NOT ABOVE IT. `previous`
+        # comes off disk, and `heartbeats.json` is validated nowhere on load
+        # (`HeartbeatStore._load`) — so a hand-corrupted `last_seen` makes
+        # `recovery_message` raise while formatting an elapsed delta. Built
+        # above the `try`, that raise would 500 the liveness ping and cause the
+        # exact fabricated outage this whole block is written not to cause.
+        #
+        # ⚠ AND `alert_count > 0`, WHICH IS THE DEPLOY-TRANSITION GUARD — added
+        # in CG-86's pre-merge review. State its scope exactly, because the
+        # loose form is the one that gets it deleted: for every state THIS
+        # release writes it IS redundant, since `mark_alerted` is the only
+        # writer of `status = "missed"` anywhere in `src/` and it increments
+        # `alert_count` in the same loop body under the same lock (MEASURED
+        # 2026-08-31). It is not redundant for a state some
+        # OTHER version wrote, and that is the entire case for it. A
+        # `heartbeats.json` row written before this release loads with
+        # `status: "missed"`, `thread_started=False` and `alert_count=0`; if it
+        # refreshes before the next scan, the all-clear is the FIRST message
+        # ever posted on that thread key — a `RESOLVED` starting its own
+        # thread, which is precisely the rule this whole change cites. Nothing
+        # is lost by suppressing it: a recovery delivered nothing at all before
+        # this PR, so a migrated row keeps exactly the behaviour it had.
+        #
+        # ⚠ AND IT IS `alert_count`, NOT `not previous.thread_started`, WHICH
+        # WOULD BE WRONG. A check whose thread ROOT failed but whose ALERT
+        # succeeded has `thread_started=False` while the thread DOES exist —
+        # the alert created it, via the adapter's
+        # `REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD` — so that gate would swallow a
+        # legitimate all-clear for the alert the reader is actually looking at.
+        # That is not hypothetical: `scan_once`'s inner `try` exists to let
+        # exactly that combination happen. `alert_count` increments only in
+        # `mark_alerted`, i.e. only once a threaded alert was ACCEPTED, so it
+        # answers the question that matters here — "is there a message of ours
+        # on this thread for this to close?" — and nothing else does.
+        if (previous is not None and previous.status == "missed"
+                and previous.alert_count > 0):
+            try:
+                title, body = recovery_message(previous, checks.now())
+                _monitor_notify(app_id, title, body, None,
+                                previous.thread_key(), severity="info")
+            except Exception as exc:  # noqa: BLE001 — never fail the liveness ping
+                # `h.check_id`, not the composed title: the title may be the
+                # thing that failed to exist.
+                log.record(app_id, "heartbeat",
+                           f"heartbeat {h.check_id} recovery", "failed",
+                           f"recovery notice not sent: {describe_exception(exc)}")
+
         return {"status": "ok", "check_id": check.check_id,
                 "next_deadline": check.deadline().isoformat()}
 

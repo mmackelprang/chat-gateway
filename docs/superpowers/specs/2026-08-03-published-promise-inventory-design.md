@@ -78,7 +78,7 @@ reading the cited lines and comparing them to the sentence that cites them:
 | 5 | `aitrader.md:125` → `notifications.py:55-78` | *"One function"* — the **renderer** | `info_max_combined_length()` | ❌ `render` is at `:189` |
 | 6 | `aitrader.md:154` → `notifications.py:81-108` | **`Deduper`** | the `Notification` pydantic model | ❌ `Deduper` is at `:230` |
 | 7 | `aitrader.md:210` → `delivery.py:78-100` | *"`DeliveryLog.record()` has **no body or card parameter at all**"* | class docstring + `__init__`; `def record` begins at `:99` | ⚠ one edit from stale |
-| 8 | `aitrader.md:276` → `heartbeat.py:75-85` | the weekend roll | `next_due()`'s weekend roll | ✅ |
+| 8 | `aitrader.md:276` → `heartbeat.py:75-85` | the weekend roll | `next_due()`'s weekend roll | ✅ **at `d09a07c`; STALE since 2026-08-31 — see below** |
 | 9 | `aitrader.md:334` → `service.py:242-247` | `GET /v1/inbox` → **403**, hard rule #6 enforcement point 1 | the `create_app()` signature | ❌ the 403 is at `:383` |
 | 10 | `aitrader.md:335` → `registry.py:272-276` | `callback_url` validation error, enforcement point 2 | exactly that | ✅ |
 | 11 | `aitrader.md:336` → `adapters/pubsub.py:648-660` | the opt-out skip, enforcement point 3 | the `_unrouted` / `UNPARSEABLE` except handler | ❌ `if not app.allow_inbound:` is at `:697` |
@@ -93,6 +93,20 @@ answers.** A citation is **stale** when the code the sentence describes is *not
 inside the cited range*; **accurate** when the range contains it, even if the
 range also covers a line or two of something else; **marginal** when the range
 contains only the target's opening line and is one edit from excluding it.
+⚠ **ROW 8 WAS FALSIFIED ON 2026-08-31 BY CG-86, AND IS ANNOTATED RATHER THAN
+REWRITTEN — this table is a dated measurement, not a live index.** MEASURED
+2026-08-31: CG-86 inserted **171** lines above `Check.next_due`, which was at
+`:77` at `d09a07c` and is at `:248` now, so its weekend roll runs `:252-257`;
+`:75-85` lands on `_UNIT_S` and `_MAX_BACKOFF_SHIFT`, module constants that
+have nothing to do with the weekend. The citing sentence
+(`docs/consumers/aitrader.md`, §7's weekend roll) has been re-pointed at
+`heartbeat.py::Check.next_due` — this row's own **Replace with** column, taken
+five days late and by a different PR. ⚠ **The rot this table measured is
+therefore understated by one at every date after `d09a07c`**, and the reason is
+the table's own finding: a line-number citation goes stale silently, and
+nothing in this repo watches one. Everything below is left exactly as it was
+written.
+
 Row 8 (`heartbeat.py:75-85`) is **accurate** under that rule and was
 independently read as stale by a second reviewer, because the range *opens* on
 `status: str = "ok"` — a field declaration. It then runs through `next_due()`'s
