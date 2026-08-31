@@ -111,7 +111,53 @@ reasons; the record is `docs/deploy/nas.md` §10's 2026-08-11 entry.
 
 ---
 
-**Last updated:** 2026-08-11 (Builder — **the box caught up with `main`, and the
+**Last updated:** 2026-08-31 (Builder — **CG-86 SHIPPED ([PR #75](https://github.com/mmackelprang/chat-gateway/pull/75)): the dead-man alert
+had never threaded, and the reason it matters is not the threading.**
+
+⛔ **EVERY DEAD-MAN ALERT THIS PROJECT HAS EVER SENT WAS AN UNTHREADED TOP-LEVEL
+POST, AND THE PRIMITIVE TO FIX IT WAS ALREADY THERE.** `Notification.thread_key`
+is a declared field and `render` propagates it on both branches; `_monitor_notify`
+never set one. Owner-observed as **four consecutive days of byte-identical
+alerts** for `candle-crawl` — `last_alerted 2026-08-31T15:47:52Z` against
+`last_seen 2026-08-24T14:45:55Z`. **There was also no all-clear at all**: a
+missed→ok transition delivered nothing, so the rule that an all-clear threads
+under the alert it closes had nothing to thread under.
+
+⛔ **THE FINDING TO CARRY IS THAT SEVERITY PICKS THE SPACE, NOT THE LOUDNESS
+ALONE.** `route_for` is `routes.get(severity) or routes.get("default")`, and
+`aitrader` routes `alert → aitrader-alerts` but `info → aitrader-reports`. A
+quiet-rendered all-clear would have posted **into a different room** from the
+alert it closes. `emit_notification` gained `route_severity`; every monitor
+message now routes `alert` whatever it renders as. **Threading and routing are
+one decision on this path, and a future change that splits them re-opens the
+defect.**
+
+⚠ **TWO PRE-MERGE FINDINGS OUTRANK THE FEATURE.** (1) **The guard that makes the
+change safe was pinned by nothing** — deleting the inner `try` that stops a
+decorative thread root from stranding a real alert left **all 506 tests green**.
+0h, measured, not argued. (2) A **real bug on the deploy transition**: a
+pre-CG-86 `missed` check recovering before the next scan posted its all-clear as
+the first message on a virgin thread. ⚠ **The review's proposed gate was wrong
+and was not used**; the shipped gate is `alert_count > 0`, which is **redundant
+for every state this release writes** and non-redundant only for state another
+version wrote — which is the whole case for it, and is stated at the code site
+so nobody checks the invariant and deletes the guard.
+
+⚠ **CG-87 IS FILED, NOT FIXED, AND CG-86 KNOWINGLY ADDED TO IT.** `render`
+prints the severity twice (`text` prefix + card header) for every tenant; and
+because titles now lead with `[<app>]` per the owner's policy, the card subtitle
+reads `aitrader: [aitrader] …`. The `text` line — what a notification preview
+shows — is correct in both cases, which is why the renderer was not edited for
+every tenant to fix a card-internal cosmetic. **It needs the user's call.**
+
+⚠ **NOTHING WAS SENT TO THE LIVE GATEWAY OR ANY REAL CHAT SPACE AT ANY POINT**,
+and **no ⚠ verification-ledger flag moved** — this PR makes no new *kind* of
+Google call, it sets a field on a request shape whose threading was cleared
+2026-07-29. Suite **491 → 511**.
+
+---
+
+**Previously:** 2026-08-11 (Builder — **the box caught up with `main`, and the
 day's biggest finding is not either row that shipped.**
 
 ⛔ **A 23-HOUR PRODUCTION OUTAGE, DETECTED BY NOBODY.** `dockerd` on the NAS was
@@ -1640,6 +1686,8 @@ Parts A–G map one-to-one onto these rows, one PR each.
 | **CG-84** · **nothing monitors the gateway's own absence** — 23 h down, detected by nobody | 📋 **queued** · ⛔ **the largest finding of 2026-08-11, and it is a GAP rather than a defect** | **Filed 2026-08-11 by Builder from the outage, not from reading anything.** `dockerd` on the NAS was **SIGKILLed one second after a start attempt** on **2026-08-10 10:17:35 EDT**; systemd then latched (*"Start request repeated too quickly"*), which is how a **one-second** failure became a **~23 hour** outage. **`app.query` returned `[]` for all 11 stacks**, so this was the platform, not this app. Recovered 2026-08-11 by `systemctl reset-failed docker.service docker.socket` then `systemctl start docker`; **16 containers returned**, data intact. ⚠ **What was fixed is the LATCH, not the CAUSE — the SIGKILL is unexplained and may recur** (no kernel OOM; pool ONLINE, 38 %, clean scrub, zero errors; `docker.config` correct). ⛔ **THE ROW IS NOT THE OUTAGE. THE ROW IS THAT NOTHING SAID SO FOR A DAY.** This project has a dead-man switch whose six silent-drop doors were hunted down in CG-76 — **and it watches TENANTS' silence.** It has **no monitor for its own absence**, and it cannot get one built the same way, because the defect is structural: **every liveness signal this gateway publishes is published by the process whose liveness is in question**, so `/healthz` cannot report that it is not answering. Hard rule #5 bought **honesty**; honesty is not **availability**, and the one failure mode where honesty buys nothing is total absence — every field simply missing rather than alarming. ⚠ **It is CG-82 finding (2) one turn worse.** There, `/healthz` said `degraded` and nobody read it. Here `/healthz` said nothing at all, and *nothing was there to read*. **The dashboard tile created 2026-08-11 is a partial answer and must not be mistaken for this row** — a `siteMonitor` on `?strict=1` turns red when the gateway is gone, but it is a **pull** that a human has to be looking at, which is precisely the property that failed for 23 hours and for the four days of CG-82. ⚠ **Needs a design decision before a plan, and at least one option is outside this repo:** an external prober that pages, the gateway registering **itself** as a heartbeat check with its own dead-man switch (elegant, and it dies with the process — say so before choosing it), or a host-level supervisor. ⚠ **The SIGKILL cause is deliberately NOT this row and NOT a row at all** — the daemon is host configuration, and writes outside `/mnt/datapool/apps/chat-gateway/**` are on the standing rules' 🛑 list. It is recorded as open in `docs/deploy/nas.md` §10 (2026-08-11). No plan yet. |
 | **CG-85** · both soak samplers died ~90 min apart on two hosts — long-run evidence needs a capture that survives a host event | 📋 **queued** · ⚠ **one measured observation, one open question, one structural consequence** | **Filed 2026-08-11 by Builder.** ⚠ **THE OBSERVATION:** the dev-box `/healthz` stream stopped at `2026-08-06T21:02:42Z` and the NAS memory stream at `2026-08-06T22:29:53Z` — **two independent samplers, two different hosts, ~90 minutes apart.** ⚠ **THE OPEN QUESTION, recorded as open:** that suggests a **common cause and it is unexplained.** The inference on offer for each host separately — *"a bare background process does not survive its host going down"* — is documented for the NAS sampler and was only ever an **analogy** for the dev-box one, whose launch mechanism is documented nowhere in this repo. **Neither inference explains the coincidence**, and two separate stories for one coincidence is how a coincidence gets mistaken for an explanation. ⚠ **Not connected to the 2026-08-10 `dockerd` failure by anything but suspicion** — that is four days later, and asserting a link would be inventing one. ⛔ **THE CONSEQUENCE, which is the actual work:** this project has now lost **two** long-run runs, both to their environment rather than to their design, and **the one durability control either sampler had was aimed at the wrong end** — a 72 h ceiling stops a run that finishes, and neither did. Meanwhile the **container uptime** that was the fallback evidence was destroyed by the outage (CG-82 task 1, moot). **So there is currently no path to the `SubscriberLoop` long-run ⚠ flag that survives a host event, and CG-59 cannot be re-run credibly until there is.** ⚠ **This is a design decision the user must take, because the two obvious mechanisms are both 🛑:** a systemd unit and a cron entry are writes to system configuration outside `/mnt/datapool/apps/chat-gateway/**`. Options worth pricing: a sampler supervised by the same TrueNAS app machinery the gateway already uses; a capture that is **resumable** rather than durable, so a gap is recorded as a gap instead of resetting the claim; or accepting shorter windows and saying so in every downstream plan. ⚠ **Do NOT fold this into CG-59 or CG-82** — CG-82 owns what the dead runs *contain*, CG-59 owns the *analysis* it still owes, and this row owns *why a third run would die the same way*. No plan yet. |
 
+| **CG-86** · the dead-man alert never threaded, and re-alerted daily on an unchanged state | ✅ **shipped 2026-08-31** · [PR #75](https://github.com/mmackelprang/chat-gateway/pull/75) | **Filed and fixed 2026-08-31 from an owner observation, not from reading anything:** four consecutive days of byte-identical **top-level** alerts for `candle-crawl`, `last_alerted 2026-08-31T15:47:52Z` against `last_seen 2026-08-24T14:45:55Z`. ⚠ **THE PRIMITIVE EXISTED AND THIS PATH ALONE NEVER USED IT** — `Notification.thread_key` is a declared field and `render` propagates it on both branches, but `_monitor_notify` never set one, so **every dead-man alert this project has ever sent was unthreaded.** ⚠ **AND THERE WAS NO ALL-CLEAR AT ALL** — no recovery path existed anywhere in `src/`; a missed→ok transition delivered nothing, so *"the all-clear threads under the alert it closes"* had nothing to thread under. ⛔ **THE FINDING THAT RESHAPED THE DESIGN, AND THE ONE TO CARRY: SEVERITY PICKS THE SPACE.** `route_for` is `routes.get(severity) or routes.get("default")`, and `aitrader` routes `alert → aitrader-alerts` but `info → aitrader-reports` — **a different Chat space.** A quiet-rendered all-clear would have posted into a room where nobody watching the alert could see it: *"a RESOLVED that starts a new thread is a bug"* in a worse form. `emit_notification` gained `route_severity`; **every** monitor message now routes `alert` whatever it renders as. **Threading and routing are ONE decision here, and anything that splits them re-opens this.** ⚠ **The daily repeat was REPLACED, NOT DROPPED** — escalating backoff (1d/2d/4d/weekly), each reminder carrying a fresh elapsed delta, in the check's own thread. **A cross-check digest was considered and REFUSED**: the policy's first rule is one thread per durable subject and the subject is the CHECK, so a digest would live in a different thread from the alerts it summarises — splitting the subject and orphaning the all-clear, the very defect this row closes. ⚠ **Two pre-merge findings worth more than the feature.** (1) **The guard that makes this safe was pinned by NOTHING** — deleting the inner `try` that stops a decorative thread root from stranding a real alert left all 506 tests green; 0h, measured. (2) **A real bug on the DEPLOY transition**: a pre-CG-86 `missed` check recovering before the next scan posted its all-clear as the first message on a virgin thread. ⚠ **The review's proposed gate (`not thread_started`) was WRONG and was not used** — a check whose root failed but whose alert succeeded has `thread_started == False` while the thread exists (the alert created it via `REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`). Gated on **`alert_count > 0`**, and ⚠ **that is redundant for every state THIS release writes** — `mark_alerted` is the only writer of `status="missed"` and increments both under one lock — **non-redundant only for state another version wrote, which is the whole case for it.** Stated at the code site so a future reader who checks the invariant does not delete the guard. **491 → 511 tests.** Spec: `docs/superpowers/specs/2026-08-31-dead-man-message-policy-design.md`. ⚠ **`notifications.render`'s doubled severity was NOT touched — that is CG-87.** |
+| **CG-87** · `render` prints the severity twice, and now the app name twice, for every tenant | 📋 **queued** · **needs a user decision — it changes every tenant's rendered output** | **Filed 2026-08-31 by Builder while shipping CG-86, and deliberately not folded into it.** A notification renders `⚠️🔴 [ALERT] <title>` in the envelope's `text` field **and** `⚠️🔴 ALERT` again in the card header, so Chat shows the severity chip twice in one message — visible in the owner's own capture of the `candle-crawl` alert. ⚠ **CG-86 ADDED A SECOND INSTANCE OF THE SAME SHAPE, KNOWINGLY:** the card subtitle is `f"{app_id}: {n.title}"`, and titles now lead with `[<app>]` per the owner's policy, so the subtitle reads `aitrader: [aitrader] heartbeat …`. **The `text` line — which is what a notification preview shows — is correct in both cases**, which is why CG-86 accepted the residue rather than editing the renderer for every tenant. ⚠ **NEITHER IS THE DEFECT THE MESSAGE POLICY NAMES.** That clause — *"do not put severity in the title if the transport already supplies it"* — governs the **author's** title, and the monitor's authored title carries no severity at all. Both duplications are the **gateway rendering its own decoration twice**, in `notifications.render`, on the card branch. ⛔ **Blast radius is why this is a row and not a commit:** `alert` and `warning` for **every registered tenant**, pinned across `tests/test_notify_heartbeat.py` and `tests/test_service.py`. Options, none chosen: drop the emoji/word and the `app_id` prefix from the **card header/subtitle** and keep the `text` line; drop `severity_prefix()` from `text` **when a card is present** and keep the header; or leave it, on the argument that `text` is fallback-only for clients that cannot render cards. ⚠ **The third option is the one to check first and this row cannot check it** — whether any real client renders `text` *instead of* the card is a live-behaviour question against Google, i.e. hard rule #3, and nothing in this repo has observed it. **No plan yet.** |
 ⚠ **EVERY ROW IN THIS FILE HAS TWO HOMES — a table row here and a `### CG-XX`
 detail section below — AND THE MOST-REPEATED DEFECT IN THIS REPO IS CORRECTING
 ONE AND NOT THE OTHER.** If you change a row's status or a claim it makes, change
@@ -1647,13 +1695,17 @@ ONE AND NOT THE OTHER.** If you change a row's status or a claim it makes, chang
 here, at the head of the thing it governs, 2026-08-11, after the mistake was made
 twice in one day.
 
-⚠ **FOUR ROWS BREAK THAT PATTERN AND HAVE NO DETAIL SECTION: CG-82, CG-83, CG-84
-and CG-85.** Their table cells **are** their canonical write-up; there is nothing
+⚠ **~~FOUR~~ SIX ROWS BREAK THAT PATTERN AND HAVE NO DETAIL SECTION: CG-82,
+CG-83, CG-84, CG-85 — and CG-86 and CG-87, added 2026-08-31.** Their table cells **are** their canonical write-up; there is nothing
 below to keep in sync and nothing is missing. Said explicitly because a reader
 who has just been told every row lives in two places will otherwise go looking
 for a section that was never written, and conclude the row is incomplete. The
 convention drifted on 2026-08-10 when CG-82 and CG-83 were filed table-only;
-CG-84 and CG-85 follow it rather than reopening the question. ⚠ **Whether to keep
+CG-84, CG-85, CG-86 and CG-87 follow it rather than reopening the question.
+⚠ **The count in this sentence went stale the instant CG-86 landed** — which is
+the defect the paragraph above warns about, arriving in the paragraph that warns
+about it. Corrected in the same commit that caused it; a later reader adding a
+seventh owes the same edit. ⚠ **Whether to keep
 the two-home shape at all is a real question and it is the user's** — the split
 is the direct cause of the defect the paragraph above warns about.
 
