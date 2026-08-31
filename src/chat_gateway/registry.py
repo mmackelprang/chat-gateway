@@ -105,8 +105,10 @@ def _require_bool(app_id: str, key: str, value) -> None:
     `config error: …` and exits **2**. The gateway DOES NOT START. There is no
     degraded mode here, and any reading of this as "reads still serve" is
     importing another project's ruling about a different file. So this is a new
-    way to take the gateway down, on a registry nobody in this checkout can
-    read (two of its three copies are off-repo).
+    way to take the gateway down, on a registry this checkout cannot read: the
+    NAS copy, ONE of its three. (Not two — corrected in pre-merge review. The
+    dev-box file is gitignored, so it is absent from a fresh clone, but it is
+    present and readable on this machine and it WAS read.)
 
     ⚠ It is taken anyway, and the alternative is named: DENY-and-warn on a
     non-boolean would carry no outage risk at all, and it was declined because
@@ -177,8 +179,10 @@ class App:
     # NOT made required-with-no-default, which is the stronger shape this repo
     # family usually reaches for: a registry omitting the key would then refuse
     # to load, and `docs/deploy/nas.md`'s install step overwrites the box's
-    # registry with this checkout's copy. Neither of the two off-repo copies is
-    # readable from here, so that trade was refused rather than taken blind.
+    # registry with this checkout's copy. The NAS copy is not readable from
+    # here, so that trade was refused rather than taken blind. ⚠ ONE copy, not
+    # two: the dev-box file is gitignored (absent from a fresh clone) but
+    # present, readable and read on this machine.
     # What replaces it is `Registry.inbound_defaulted` below — the reliance is
     # reported instead of being fatal.
     allow_inbound: bool = False
@@ -401,8 +405,8 @@ def load_registry(path: str | Path) -> Registry:
             # default) and REFUSES to load after it — and `load_registry`
             # raising means the gateway does not start at all. Unlike the
             # quoted-boolean case, this one is producible by OMISSION, which is
-            # the accidental case, and neither of the two off-repo registry
-            # copies can be read from any checkout to rule it out.
+            # the accidental case, and the NAS registry copy cannot be read
+            # from here to rule it out.
             #
             # So the refusal names what changed under the operator's feet. The
             # message is appended to rather than rewritten: the unhinted form

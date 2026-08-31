@@ -82,6 +82,13 @@ apps:
     # template is what a fresh deployment copies: silence here would ship a
     # jobhunt whose callback path is off, differing from the live registry in a
     # way nothing would announce.
+    #
+    # ⚠ AND IT WRITES NO `allowed_users`, WHICH MEANS ANYONE (CG-89). That was
+    # already true when this entry was inbound-on by the default; writing the
+    # `true` makes the template say it out loud, which is the point of writing
+    # it — but a fresh deployment copying this block gets an unrestricted
+    # two-way tenant, where the live registry restricts to one address. The
+    # empty-list-means-anyone default is filed, not fixed.
     allow_inbound: true
 
   # An "agent" tenant for the MCP surface (CG-80): an ordinary registered app

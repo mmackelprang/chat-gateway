@@ -380,7 +380,8 @@ def test_the_reliance_is_REPORTED_and_a_written_value_is_not(tmp_path):
     `false` and an app that wrote nothing both end up `False` — and only the
     second is a reliance. Reporting it is the half of "make the key required"
     that cannot take a running gateway down; the other half was declined
-    because two of the three registry copies are unreadable from any checkout.
+    because the NAS registry copy cannot be read from here. (ONE copy, not two:
+    the dev-box file is gitignored but present and readable on this machine.)
     """
     p = tmp_path / "r.yaml"
     p.write_text(
@@ -406,6 +407,19 @@ def test_an_explicit_null_states_no_posture_and_is_treated_as_absent(tmp_path):
 
     YAML gives it `None`. Reading that as "written" would let an empty key
     stand in for a posture nobody chose, which is the defect one layer in.
+
+    ⚠ THE FIRST ASSERTION BELOW DOES NOT DISCRIMINATE, AND SAYING SO IS THE
+    POINT — found in pre-merge review, and MEASURED against the old loader
+    rather than reasoned about. `bool(spec.get("allow_inbound", True))` returns
+    the STORED value when the key is present, so an explicit null was already
+    `bool(None)` = False before CG-88. What binds here is the second assertion:
+    `inbound_defaulted` does not exist pre-CG-88 at all.
+
+    ⚠ And the measurement found something worth keeping. The OLD loader denied
+    an explicit null and GRANTED an absent key — two answers to one question,
+    since neither states a posture. Nobody chose that; it fell out of
+    `dict.get`'s two meanings for "missing". The new loader gives one answer to
+    both, which is why they share this code path.
     """
     p = tmp_path / "r.yaml"
     p.write_text(
@@ -470,6 +484,15 @@ def _example_with_line_removed(app_id: str, key: str) -> tuple[str, int]:
     same key under a different app. The count is returned and asserted by every
     caller: a helper that removed nothing would leave the test passing against
     the file it was supposed to have damaged.
+
+    ⚠ Known and currently harmless (pre-merge review, 2026-08-31): the
+    block-boundary test also fires on a 2-space-indented COMMENT ending in a
+    colon, and the example file has one immediately above `aitrader:`. That
+    transiently clears `in_app`, and the real header on the next line restores
+    it. A comment of that shape landing BETWEEN an app header and the targeted
+    key would suppress the removal — and `assert removed == 1` fails the test
+    rather than passing it quietly, which is the property that makes leaving
+    this alone acceptable.
     """
     text = COMMITTED_EXAMPLE.read_text(encoding="utf-8")
     out, removed, in_app, in_apps = [], 0, False, False
@@ -645,4 +668,69 @@ def test_the_hint_does_NOT_fire_for_a_tenant_that_wrote_its_refusal(tmp_path):
         "aitrader.md §8 quotes this message verbatim — the quotation and the "
         "code have to move together or the published guarantee cites bytes "
         "the gateway no longer emits"
+    )
+
+
+def test_the_directory_form_reports_reliance_and_refuses_a_non_boolean(tmp_path):
+    """jobhunt R1's one-file-per-tenant form, which has its own loader branch.
+
+    The per-app loop is shared, so this cannot diverge by construction — but
+    "cannot diverge by construction" is the sentence that precedes a divergence,
+    and the directory branch builds `data` itself. Named in pre-merge review as
+    the one path with no coverage of CG-88's behaviour.
+    """
+    d = tmp_path / "reg"
+    d.mkdir()
+    (d / "a.yaml").write_text(
+        "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+        "apps:\n  silent-tenant:\n    key_env: K1\n    identities: [pm]\n",
+        encoding="utf-8")
+    (d / "b.yaml").write_text(
+        "apps:\n  stated-tenant:\n    key_env: K2\n    identities: [pm]\n"
+        "    allow_inbound: true\n", encoding="utf-8")
+    reg = load_registry(d)
+    assert reg.apps["silent-tenant"].allow_inbound is False
+    assert reg.apps["stated-tenant"].allow_inbound is True
+    assert reg.inbound_defaulted == ["silent-tenant"]
+
+    (d / "c.yaml").write_text(
+        "apps:\n  quoted-tenant:\n    key_env: K3\n    identities: [pm]\n"
+        '    allow_inbound: "false"\n', encoding="utf-8")
+    with pytest.raises(RegistryError, match="must be a YAML boolean"):
+        load_registry(d)
+
+
+def test_the_report_is_SORTED_and_health_hands_out_a_COPY(tmp_path):
+    """Two properties of CG-88's own code that were claimed and unbound (0h).
+
+    Found in pre-merge review by mutation: `sorted(inbound_defaulted)` →
+    `list(...)` left the whole suite green, and so did dropping `health()`'s
+    defensive `list(...)`. Both were invisible for the same reason — every other
+    fixture has exactly ONE defaulted app, where sortedness and aliasing are
+    equally unobservable. **A one-element fixture cannot fail an ordering
+    claim**, which is the same shape as the repo's own note that a one-horizon
+    fixture would silently un-bind a value-equality test.
+
+    So this fixture has TWO silent apps, written in reverse-alphabetical order
+    in the YAML so insertion order and sorted order genuinely differ.
+    """
+    p = tmp_path / "r.yaml"
+    p.write_text(
+        "identities:\n  pm:\n    display: PM\n    webhook_url_env: HOOK\n"
+        "apps:\n"
+        "  zzz-silent:\n    key_env: K1\n    identities: [pm]\n"
+        "  aaa-silent:\n    key_env: K2\n    identities: [pm]\n"
+        "  mmm-stated:\n    key_env: K3\n    identities: [pm]\n"
+        "    allow_inbound: false\n", encoding="utf-8")
+    reg = load_registry(p)
+
+    assert reg.inbound_defaulted == ["aaa-silent", "zzz-silent"], (
+        "the report is sorted, so two operators diffing two boxes compare two "
+        "lists rather than two YAML orderings"
+    )
+    published = reg.health()["inbound_defaulted"]
+    assert published == ["aaa-silent", "zzz-silent"]
+    assert published is not reg.inbound_defaulted, (
+        "health() hands out a copy — a caller that mutates the published list "
+        "must not reach into the loaded registry"
     )

@@ -53,10 +53,17 @@ def build_runtime():
     registry = load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml"))
     # CG-88. `allow_inbound` now defaults to DENY, and an app that inherits it
     # is named here rather than refused. The refusal was the alternative and it
-    # was declined: two of the three registry copies are off-repo and unreadable
-    # from any checkout (docs/consumers/pmtrader-registration-handoff.md §6), so
+    # was declined: of the three registry copies, the NAS one cannot be read
+    # from here (docs/consumers/pmtrader-registration-handoff.md §6), so
     # "required, no default" would have bet the service on a file nobody can
-    # read. This is the half of that shape which cannot cause an outage.
+    # read. ⚠ ONE copy, not two — corrected in pre-merge review. The dev-box
+    # `config/registry.yaml` is gitignored, so it is absent from a fresh clone,
+    # but it is present and readable on this machine and it WAS read. This is the half of that shape which cannot cause an outage BY
+    # OMISSION ALONE — annotated 2026-08-31 in pre-merge review, because the
+    # unqualified sentence is false: at `registry.py:400`, omission PLUS a
+    # `callback_url` trips rule #6's validation and the gateway exits 2. Every
+    # other site carrying this claim was annotated a commit earlier; this one
+    # was missed, which is the two-homes defect arriving inside the fix for it.
     #
     # stderr, not stdout: `check` writes machine-readable JSON to stdout one
     # branch below, and a warning that lands in a `| jq` pipeline is a warning

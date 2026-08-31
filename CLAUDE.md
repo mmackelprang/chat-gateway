@@ -67,12 +67,21 @@ agentic applications; aiteam's harness is the first consumer, not the owner.
    quoted scalar used to grant exactly what it spelled a refusal of;
    `load_registry` refuses a non-boolean rather than coercing, which is
    `_require_id_str`'s existing treatment of the same YAML trap.
-   ⚠ **The reliance is REPORTED, not fatal.** `Registry.inbound_defaulted` names
-   every app that left the decision to the loader, on `/healthz` and as a boot
-   warning. Making the key *required* was the stronger shape and was declined:
-   a registry omitting it would refuse to load, and two of the three copies are
-   unreadable from any checkout — `docs/consumers/pmtrader-registration-handoff.md`
-   §6. **Reported is not enforced, and no document may say otherwise.**
+   ⚠ **The reliance is REPORTED, not fatal — WITH ONE MEASURED EXCEPTION, stated
+   here because the unqualified form was written first and this branch falsified
+   it three commits later.** An entry that omits the key **while carrying
+   `callback_url`** trips rule #6's own validation and the gateway exits 2
+   (`registry.py:400`). Omission alone is safe; omission plus a callback is
+   fatal. `Registry.inbound_defaulted` names every app that left the decision to
+   the loader, on `/healthz` and as a boot warning. Making the key *required*
+   was the stronger shape and was declined: a registry omitting it would refuse
+   to load **everywhere** rather than in that one shape, and **the NAS copy
+   cannot be read from here** — `docs/consumers/pmtrader-registration-handoff.md`
+   §6. ⚠ **One copy, not two.** The dev-box `config/registry.yaml` is gitignored,
+   so it is absent from a fresh clone, but it is present and readable on this
+   machine and it WAS read; only the NAS copy is genuinely unknown, and it has
+   provably diverged (it gained `agent-mcp` on 2026-08-11; the dev copy has no
+   such block). **Reported is not enforced, and no document may say otherwise.**
    ⚠⚠ **ONE FIELD WAS FIXED, NOT THE CLASS. `allowed_users` is still
    *empty = anyone*** (`adapters/pubsub.py`'s `if app.allowed_users and …`) —
    filed as **CG-89** and deliberately not changed here, because unlike
@@ -90,7 +99,7 @@ printed in full (see below), and `mcp.py`, the opt-in MCP server surface (CG-80)
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 511 passing.
+`python` is 3.13.7) — offline, 533 passing.
 
 ## Current status (2026-07-31)
 
@@ -209,14 +218,22 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   mutation:** flipping the `App` dataclass default back to `True` left the whole
   suite passing, because `load_registry` now passes the field explicitly on
   every path — two sites, and only one of them was bound (0h). It has its own
-  test now, and **nine single-site mutations are RED**, each applied alone with
+  test now, and **eleven single-site mutations are RED**, each applied alone with
   `__pycache__` cleared on both the mutated and the reverted run. ⛔ **AND ONE MEASURED OUTAGE PATH, which is NOT the quoted boolean:**
   an app with a `callback_url` and **no** `allow_inbound` **loaded before this
   change and refuses after it** — `callback_url requires allow_inbound: true`
   now fires, and here a registry that does not load means `main` exits 2 and the
   gateway does not start. **Producible by OMISSION**, so it is the realistic one;
-  both readable copies are safe and the third cannot be read (0d). The refusal
-  names CG-88 and the one-line fix. ⚠ **Merged is not in effect, again**
+  the two readable copies are safe and the NAS one cannot be read (0d). The refusal
+  names CG-88 and the one-line fix. ⚠⚠ **AND *"THE"* OUTAGE PATH IS TWO — the
+  second is quieter and was named only in pre-merge review.** An app on an
+  unreadable copy that relied on the default and *polls* `/v1/inbox` causes no
+  refusal at all: it boots, and starts getting **403s**. A space-owning one
+  silently increments `suppressed_opt_out` instead of delivering. That is the
+  design working, and the point is that its only operator-visible evidence is
+  one stderr line at boot plus a `/healthz` field deliberately excluded from
+  `status` — so **the loud path is the one that is named, and the quiet one is
+  the one that would take longer to find.** ⚠ **Merged is not in effect, again**
   (CG-61's lesson, CG-80's repeat): the default is applied at **load**, so a
   running gateway keeps the posture it booted with and the NAS gets this at its
   next redeploy — **which is also when this outage path would first be able to
