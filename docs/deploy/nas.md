@@ -816,12 +816,17 @@ repointing anything:
 **Run 2026-08-05 by Builder over SSH (CG-55). The gateway is deployed and
 serving.** This section read *"Empty. Nothing here has been run"* until then.
 
-⚠ **This section now holds TWO dated runs and they must not be read as one.** The
+⚠ **This section holds SEVERAL dated runs and they must not be read as one.** The
 2026-08-05 entry below is CG-55's first deploy and is left exactly as it was
-written. A second entry — **2026-08-11**, an unplanned 23-hour outage, its
-recovery, the first upgrade redeploy, and MCP's enablement — is appended at the
-end of the section. **Where the two disagree the later one wins, and it says so
-at each site**; nothing in the 2026-08-05 entry has been rewritten to match.
+written. **2026-08-11** — an unplanned 23-hour outage, its recovery, the first
+upgrade redeploy, and MCP's enablement — and **2026-09-10** — a sixth tenant
+registered, and the upgrade that put CG-86 and CG-88 on the box — are appended
+after it, in order. **Where two disagree the later one wins, and it says so at
+each site**; no earlier entry has been rewritten to match.
+⚠ **The count is deliberately not written as a number here any more.** It read
+*"TWO dated runs"* until 2026-09-10, when a third arrived and made it wrong —
+a moving fact that had been given a second home three paragraphs from the
+entries that are its first one. Count the `### Run` headings.
 
 Public-repo discipline (top of this file) applies to this section too: the LAN
 address, the tailnet address and the SSH destination are **measured values that
@@ -1260,6 +1265,19 @@ re-run** since the tile was written. So the tile exists in production and in no
 git history anywhere. That is an outstanding cross-repo handoff — §9's *"Artifacts
 this repo CANNOT create"* is its home, and **this repo cannot discharge it**.
 
+✅ **DISCHARGED 2026-09-10, and the reason it mattered was worse than "unrecorded".**
+homelab PR #26 back-ported the `?strict=1` form into
+`monitoring/homepage/services.yaml`. ⚠ **That directory is AUTHORED, not
+capture-derived** (homelab `monitoring/README.md`), so the repo is not a record of
+the box — it is the **source** `push-homepage-config.sh` installs onto it. For the
+four weeks this paragraph stood, the next push would have **overwritten the box's
+hand-made fix with the plain `/healthz` form**, restoring a tile that reads GREEN
+while inbound is down, with no error and no diff anyone would read. The paragraph
+above was right that the tile was in no git history; it was too mild about what
+that cost. **It is kept because the hazard class is the durable part: a hand-edit
+on a box is not a change until it lands in whatever is authoritative for that
+file — and "authoritative" is not always the box.**
+
 #### What this run did NOT do
 
 - **It did not explain the SIGKILL.** See above; open, and may recur.
@@ -1269,6 +1287,100 @@ this repo CANNOT create"* is its home, and **this repo cannot discharge it**.
 - **It did not restart the soak.** Both streams are dead and a re-run needs a
   durability design first — §11, and **CG-85**.
 - **It moved no ⚠ verification-ledger flag.**
+
+
+### Run 2026-09-10 — a sixth tenant, and the upgrade that made CG-88 real
+
+**Three separable things, and only the third was a deploy:** a tenant
+registration (`rotaryphone`), a cross-repo back-port into homelab, and the
+upgrade redeploy that finally put CG-86 and CG-88 on the box. The registration
+needed no new code and no rebuild; the upgrade was asked for afterwards, on its
+own merits.
+
+#### The registration
+
+| Step | Result |
+|---|---|
+| identity `rotaryphone-alerts` + app `rotaryphone` written to the **live** registry | one space, all three severities routed to it, `allow_inbound: false` **written** |
+| key minted (`python3 -m chat_gateway mint-key`) and both env vars installed | dev `.env` and box `.env`, the latter over **stdin**; mode `600 root:root` preserved |
+| `GET /v1/identities` with the new key | **200**, `app: rotaryphone`, `ready: true`, interaction disabled |
+| `POST /v1/notify` at `info`, then `GET /v1/deliveries` | `enqueued` id 1 → **`delivered, after 1 attempt(s)`** |
+
+⛔ **§6's registry transport would have DELETED A REGISTERED APP, and this is the
+measurement.** That step is written `sudo tee … < ./config/registry.yaml`, which
+**overwrites the box's copy with the checkout's**. On this date the box carried
+**`agent-mcp`** and the dev copy did not — running it verbatim removes that app
+**silently**, because a smaller registry loads perfectly well and `/healthz` just
+stops mentioning it. Avoided by reading the box's own copy down (base64), editing
+*that*, validating the exact bytes through the real `load_registry`, and pushing
+back with sha256 compared in both directions. §6's hazard was **predicted** in
+`docs/consumers/pmtrader-registration-handoff.md` §6 as *"a hazard with its
+evidence and its limit stated, not a measured drift"* — **it is now measured**,
+and the procedure that avoids it is `docs/registering-an-app.md` §3.
+
+#### The upgrade
+
+| Step | Result |
+|---|---|
+| source on box `1f2d886` → **`bc376b7`** | `git fetch` + `git checkout <pinned>` |
+| `docker build -t chat-gateway:local .` | image **`sha256:41c3c3b264369bb621ab7a6f50980e0a30e104e7c44e52ab6967104fac9e4087`** |
+| `sudo midclt call app.redeploy chat-gateway` | job **13679** → **SUCCESS** |
+| container after | `StartedAt 2026-09-10T17:23:13.443385662Z`, `RestartCount: 0`, running the new image |
+
+Five merged commits installed at once — CG-86, CG-88, the pmtrader handoff, and
+the registration runbook.
+
+#### ✅ CG-88 is in effect on the box — proven by a field's PRESENCE, not by a version string
+
+This gateway publishes `version: 0.1.0` and has since the beginning, so it cannot
+tell you which build is running. What can: **`/healthz`'s `registry` object gained
+`inbound_defaulted`**, a field CG-88 added and the previous image did not have.
+
+| | `registry` keys | `inbound_defaulted` |
+|---|---|---|
+| before (image of 2026-08-11) | `['apps', 'identities']` | **absent** |
+| after | `['apps', 'identities', 'inbound_defaulted']` | **`[]`** |
+
+⚠ **The absence is what identified the stale image in the first place**, four
+hours earlier, and it is a better probe than any banner: a field that does not
+exist cannot be misreported. **`[]` means no app leaned on the loader's default** —
+matching the pre-rebuild validation of the box's exact registry bytes against the
+current loader, run locally *before* the build precisely so a crash loop under
+`restart: unless-stopped` was not the way to find out.
+
+⛔ **AND THE MEASURED OUTAGE PATH DID NOT BITE.** CG-88's own note warns that an
+app carrying `callback_url` with **no** `allow_inbound` loaded before it and
+**refuses after** — `main` exits 2 and the gateway does not start. `job-hunter` is
+the only app with a callback and it writes `allow_inbound: true` explicitly, so
+the refusal had nothing to fire on. **That was checked before the build, not
+discovered after it.**
+
+#### A rollback point exists — a deliberate deviation from §9
+
+§9's *Rollback* says there is **no image history to roll back to**, because
+`docker build -t chat-gateway:local .` replaces the tag. Before building, the
+running image was tagged **`chat-gateway:rollback-20260910`**
+(`a1611d399d28`), so this upgrade *is* revertable: retag it to `:local` and
+redeploy. ⚠ **§9 is not amended by this** — it correctly describes what happens
+when nobody takes that step, which is the default. Recorded as a habit worth
+repeating, not as a property of the runbook.
+
+#### What this run did NOT do
+
+- **It did not verify `?strict=1` → 503 on the box.** Third run in a row: the boot
+  came up clean (`status: ok`, `reasons: []`), so the degraded window never opened.
+  The 503 path is still proven only in CG-59's driven local test.
+- **It did not re-run `capture.sh`**, so `GATEWAY_ENABLE_MCP` and the new compose
+  state are still uncaptured in the homelab repo. The **tile** half of that gap was
+  closed separately — see the ✅ note above.
+- **It did not restart the soak.** §11 and CG-85 stand.
+- **It did not explain the SIGKILL**, and CG-84 — the gateway's inability to report
+  its own absence — is untouched. ⚠ This run **restarted the container twice**, so
+  any uptime accrued since 2026-08-11 is spent.
+- **It moved no ⚠ verification-ledger flag** — ⚠ including on a day a **new tenant
+  delivered a real message to a real Chat space**. That is `webhook.send`, cleared
+  2026-07-29, carrying different bytes for a different app; a new tenant is not new
+  evidence about an adapter.
 
 ---
 
