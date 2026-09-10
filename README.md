@@ -102,7 +102,8 @@ Consumer contracts live in [`docs/consumers/`](docs/consumers/):
 
 - Per-app API keys (`Authorization: Bearer`, constant-time compare), minted
   with `python3 -m chat_gateway mint-key`; each app is allowlisted to specific
-  identities.
+  identities. Minting one is step 2 of five — the operator runbook for
+  registering an app is [docs/registering-an-app.md](docs/registering-an-app.md).
 - The committed registry holds **env-var names only**. Webhook URLs (which
   embed `key`+`token`) and API keys live in the runtime env / `.env` (mode
   600); the service never logs them.

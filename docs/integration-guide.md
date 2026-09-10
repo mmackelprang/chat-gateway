@@ -3,7 +3,9 @@
 Everything is a versioned JSON endpoint under `/v1/` with
 `Authorization: Bearer <your app key>`. Keys are per-app (revocable by
 rotating the env var), minted by the operator: `python3 -m chat_gateway
-mint-key`. Full schemas: `GET /docs` (OpenAPI). Stdlib-only Python client:
+mint-key`. Registering a new app end to end — the four decisions, the registry
+entry, the env vars and how to verify without sending anything —
+is [docs/registering-an-app.md](registering-an-app.md). Full schemas: `GET /docs` (OpenAPI). Stdlib-only Python client:
 `src/chat_gateway/client.py` (vendor the single file if you prefer).
 
 Set for the examples:
