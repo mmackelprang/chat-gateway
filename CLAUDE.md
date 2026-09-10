@@ -233,11 +233,20 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   design working, and the point is that its only operator-visible evidence is
   one stderr line at boot plus a `/healthz` field deliberately excluded from
   `status` — so **the loud path is the one that is named, and the quiet one is
-  the one that would take longer to find.** ⚠ **Merged is not in effect, again**
+  the one that would take longer to find.** ~~⚠ **Merged is not in effect, again**
   (CG-61's lesson, CG-80's repeat): the default is applied at **load**, so a
   running gateway keeps the posture it booted with and the NAS gets this at its
   next redeploy — **which is also when this outage path would first be able to
-  bite.**
+  bite.**~~
+  ✅ **IN EFFECT ON THE BOX SINCE 2026-09-10** (`docs/deploy/nas.md` §10, that
+  run's entry). The struck sentence was true for ten days. Proven by a field's
+  **presence**, not a version string — this gateway publishes `version: 0.1.0`
+  and always has, so `/healthz` gaining `registry.inbound_defaulted` is the only
+  thing that distinguishes the builds. ⛔ **And the outage path did NOT bite:**
+  `job-hunter` is the only app with a `callback_url` and it writes
+  `allow_inbound: true` explicitly, so the refusal had nothing to fire on —
+  **checked before the build rather than discovered after it**, because the
+  discovery mode here is a crash loop under `restart: unless-stopped`.
 - **The live project is `chat-gateway-gw` (`#860649224827`), and it is the only
   one.** `chat-gateway-prod` — which every "Cloud resources now exist" note in
   this file used to describe — was **deleted 2026-07-30**, along with E1's
@@ -728,8 +737,12 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   candidate (`SubscriberLoop`'s long-run row) and leaves it for CG-59's soak,
   because retiring it needs the user's explicit hard-rule-#3 sign-off and a clock,
   not a smoke test.
-  ⚠ **§10 NOW HOLDS TWO DATED RUNS, and the *"look at §10, do not guess"* test
-  above is how you tell them apart.** The second is **2026-08-11**: a **23-hour
+  ⚠ **§10 HOLDS SEVERAL DATED RUNS, and the *"look at §10, do not guess"* test
+  above is how you tell them apart.** ⚠ **The count is deliberately not a number
+  here** — it read *"TWO"* until a third run landed on 2026-09-10, which is what a
+  moving fact does when it is given a second home. The most recent is
+  **2026-09-10**: a sixth tenant registered, and the upgrade that put CG-86 and
+  CG-88 on the box. Before it, **2026-08-11**: a **23-hour
   outage nobody detected** (`dockerd` SIGKILLed on 2026-08-10, cause unexplained,
   systemd then latching), its recovery, the **first upgrade redeploy** — which
   put CG-80's `/mcp` and CG-59's `?strict=1` on the box — and MCP's enablement
