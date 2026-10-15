@@ -1585,9 +1585,10 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 )
         if admin is not None and admin.store.memory_disk_diverged:
             reasons.append(
-                "admin console: a failed write could not be fully rolled back, so "
-                "registry.yaml / managed.env on disk and the live registry may "
-                "disagree — use Reload from disk at /admin, or restart the gateway"
+                "admin console: a failed write could not roll back managed "
+                "secrets, so managed.env on disk and the gateway's live "
+                "environment may disagree — restart the gateway (Reload from "
+                "disk does not clear this; it is latched until restart)"
             )
         # Names, never values: identity names and app ids are non-secret (they
         # live in the committed registry); the poll error is a type and a status.

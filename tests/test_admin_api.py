@@ -357,6 +357,10 @@ def test_divergence_degrades_healthz(gw):
     wiring.store.memory_disk_diverged = True
     h = client.get("/healthz").json()
     assert h["status"] == "degraded" and any("admin console" in r for r in h["reasons"])
+    # CG-90 Task 9 review: the flag is latched and `reload()` never clears it,
+    # so the reason must send the operator to a RESTART, not to Reload.
+    reason = next(r for r in h["reasons"] if "admin console" in r)
+    assert "restart the gateway" in reason and "use Reload" not in reason
 
 
 # -- C2: the production wiring of the send-time re-check ----------------------

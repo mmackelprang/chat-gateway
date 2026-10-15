@@ -45,6 +45,20 @@ does this — tokens, webhook setup and URLs from one place — and applies it.
 the admin key controls every app that is not `inbound_locked`, including the
 real-money tenant's identities and routes. `inbound_locked` (D4) protects
 aitrader's **inbound** guarantee only — not its outbound identities or routes.
+⚠ **Corrected 2026-10-15 (CG-90 review) — the sentence above is narrower than
+what shipped, and is left standing so the change is visible.** Review found the
+lock as specified was bypassable, because inbound is routed **by space**: grant a
+locked tenant's identity (or any identity in its space) to a new inbound app and
+its traffic reaches a consumer. So the shipped lock **guards SPACES**, and to do
+that it also makes the locked app's **identities list, its deletion, and the
+webhook of any identity it holds** console-immutable — `403`, "a registry file
+edit" (`admin.py:505-513`, `:547-549`, `:626-630`), plus a refusal on any OTHER
+app's write that would route a locked space to it (`:346-363`). What stays
+console-editable on a locked app is its **routes** and its identities' **display
+names**. **The residual is therefore smaller than stated, and not zero:** the
+admin key still controls aitrader's routes, and every unlocked app's outbound
+configuration. ⚠ An identity with no `space:` locks nothing
+(`admin.py:129-130`). Operator detail: `docs/deploy/nas.md`, CG-90 subsection.
 
 ## 3. Components
 
@@ -93,6 +107,8 @@ value lives in the read-only hand-written `.env` writes the new value to
 inert — and becomes live again if `managed.env` is ever lost. The page says
 this at rotation time, and `/healthz` reports `admin.shadowed_env_names`
 (names only) until the operator removes the stale line by hand.
+⚠ *Annotated 2026-10-15 (CG-90 review): …and restarts the gateway — the `.env`'s
+names are read once, at boot (`__main__.py:72-73`).*
 
 **NAS mounts** (`docs/deploy/nas.md` §5): `config/` becomes `rw`; the
 hand-written `.env` and `secrets/` stay `:ro`. `managed.env` and
@@ -195,6 +211,25 @@ degrade — a guard working is not a fault (CG-12). `last_write_error` does not
 degrade (the write was refused or rolled back cleanly). `shadowed_env_names`
 neither degrades nor appears in `reasons` — it is an operator to-do, not a
 fault. **Only `memory_disk_diverged` degrades `status`.**
+
+⚠ **Corrected 2026-10-15 (CG-90 review) — what shipped differs from the two
+paragraphs above in three ways; they are left standing, not rewritten:**
+1. **`last_write_error` is an authored CATEGORY, not a message** — e.g.
+   `refused: conflict`, `failed: write rolled back (OSError)`
+   (`registry_store.category_for`, `RegistryStore.note_refusal`). Not
+   `describe_exception`: a refusal message can quote admin-supplied text, and
+   this field is on the unauthenticated `/healthz` (fix round I2, rule #2). The
+   full message goes only to the authenticated caller.
+2. **The block also carries `admin.audit_write_errors`** (failed
+   `admin_audit.jsonl` writes; does not degrade), and **`delivery` gained
+   `unroutable_live`** — a queued job dropped at send time because the console
+   withdrew its grant; does not degrade (CG-12's reasoning).
+3. **`memory_disk_diverged` is latched until restart** and means `managed.env`
+   and the live process environment may disagree (a failed rollback of managed
+   secrets, `registry_store.py:128-141`) — not `registry.yaml`. The `reasons`
+   line says to restart; *Reload from disk* does not clear it.
+The field table with per-field verdicts has one home:
+`docs/integration-guide.md`, *Durability counters at `/healthz`*.
 
 ## 8. Hard rules
 

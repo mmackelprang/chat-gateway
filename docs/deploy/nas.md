@@ -547,18 +547,35 @@ value lives in the read-only hand-written `.env` writes the new value to
 inert — and becomes live again if `managed.env` is ever lost. The page says
 this at rotation time, and `/healthz` reports `admin.shadowed_env_names`
 (names only) until the operator removes the stale line by hand.
+⚠ **And restarts — corrected 2026-10-15 (CG-90 review).** The paragraph above is
+spec §4's wording verbatim, and it is short of the code: which names the `.env`
+sets is read **once, at boot** (`__main__.py:72-73`), so removing the line does
+not clear the name from `/healthz` or the page until the gateway restarts.
+
+**Two more rows for the homelab `SECRETS.template.md`** (above, *Register the
+secrets in the homelab repo*): `CHAT_GATEWAY_ADMIN_KEY` — a value, rotated by
+re-minting and a restart — and the **`managed.env` FILE** under the state dir,
+which, like the service-account key, is a file to restore rather than a value to
+paste. That is a homelab-repo change (CG-90 Task 10), not this PR.
 
 **`registry.yaml.bak-*` now accumulates — one per console write**, beside the
 registry in `config/`. Nothing prunes them; delete old ones by hand. They hold
 env-var NAMES only, like the registry itself.
 
 **What `inbound_locked` protects is SPACES, and only spaces it can see.** On a
-locked app the console refuses (`403`, *"registry file edit"*): deleting it
-(`admin.py:547-549`), any change to its `identities` list — a reorder included
-(`:505-513`) — replacing the webhook of an identity it holds (`:626-628`), and
-any write that leaves **another** inbound-enabled app holding an identity whose
-`space:` is one the locked app posts in (`:346-363`). Route edits and display
-renames on a locked app remain allowed. ⚠ **A locked app whose identities carry
+locked app the console refuses (`403`, *"… is a registry file edit, not a
+console action"*): widening its inbound (`admin.py:337-340`), deleting it
+(`:547-549`), any change to its `identities` list — a reorder included
+(`:505-513`) — and replacing the webhook of an identity it holds (`:626-630`).
+Route edits on the locked app, and display renames of its identities, remain
+allowed. **A fifth refusal fires on the OTHER app's write, with different
+wording** (`403`, *"… would receive inbound from a space that inbound_locked app
+… posts in"*, `:346-363`): any write whose result leaves another inbound-enabled
+app holding an identity whose `space:` is one the locked app posts in. It
+refuses a violation the write **creates** or one involving an app the write
+**touches**; a violation already put in the file by hand, on an app the write
+does not touch, is tolerated (`:350-357`) — the file edit is where that must be
+fixed. ⚠ **A locked app whose identities carry
 no `space:` locks NOTHING** — an identity without one cannot match a space and
 is ignored (`admin.py:129-130`). **Before enabling the console, confirm every
 identity `aitrader` holds has `space:` written** in the box's registry.

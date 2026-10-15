@@ -511,12 +511,22 @@ time here, because it is the row that made a dead monitor look healthy. If you
 diff the JSON across that date you will see eleven additions, not twelve; the
 distinction is rows-in-this-table versus fields-in-the-response.
 
-Of the forty-three rows, **eighteen carry `**yes**` in the Degrades? column**.
-Counted as *fields* the number is **twenty-one**, and both are right: each of the
+⚠ **Corrected 2026-10-15 (CG-90 review): the table has FIFTY-SIX rows, and
+twenty-three carry `**yes**`.** The counts in this paragraph and the next were
+true when written and went stale as rows landed without them being recounted:
+CG-76 added four (`delivery.delivery_failures` and the three
+`heartbeats.*undeliverable`/`orphaned` rows), CG-88 one
+(`registry.inbound_defaulted`), and CG-90 eight (`delivery.unroutable_live` and
+seven `admin.*`, of which only `admin.memory_disk_diverged` degrades). The
+struck numbers below are kept so the arithmetic of the original is readable.
+
+Of the ~~forty-three~~ **fifty-six** rows, ~~**eighteen**~~ **twenty-three carry
+`**yes**` in the Degrades? column**. Counted as *fields* the number is
+~~**twenty-one**~~ **twenty-six**, and both are right: each of the
 three liveness triples (`delivery.*`, `retention.*`, `heartbeats.*`) is read in
 **combination**, so its `thread_started` row — marked *"no on its own"* — is part
-of the judgement that degrades. Eighteen is what the column says; twenty-one is
-what participates. A consumer that alarms on `status` should know what they mean
+of the judgement that degrades. ~~Eighteen~~ Twenty-three is what the column
+says; ~~twenty-one~~ twenty-six is what participates. A consumer that alarms on `status` should know what they mean
 before one fires at 03:00. `status` is computed **from** `reasons`: anything that
 can degrade this endpoint says so in words, because a number nobody reads is not
 honest health.
@@ -592,15 +602,17 @@ answer, and the last of the three degrades **cumulatively**: see its row.
 | `admin.refused` | console requests refused since start — a bad id, an out-of-band edit, an `inbound_locked` app, a widening without confirmation. A refusal is a guard working | no |
 | `admin.last_write_error` | the last refusal or rolled-back write, as an **authored category only** — e.g. `refused: conflict`, `failed: write rolled back (OSError)` — never the message, which can quote admin-supplied text (`service.py:841-845`). The message goes only to the authenticated caller. `null` after a successful write | no |
 | `admin.audit_write_errors` | `admin_audit.jsonl` writes that failed since start. The console keeps working; those actions have no audit line | no |
-| `admin.shadowed_env_names` | secret **names** the console manages in `managed.env` whose **old value is still in the hand-written `.env`** — inert, but live again if `managed.env` is lost. An operator to-do (remove the line by hand), not a fault, and it never appears in `reasons` | no |
-| `admin.memory_disk_diverged` | a failed console write could **not** be fully rolled back, so `registry.yaml` / `managed.env` on disk and the live registry may disagree. The reason line names the fix: **Reload from disk** at `/admin`, or restart (`service.py:1586-1591`). The only `admin.*` field that degrades | **yes** |
+| `admin.shadowed_env_names` | secret **names** the console manages in `managed.env` whose **old value is still in the hand-written `.env`** — inert, but live again if `managed.env` is lost. An operator to-do (remove the line by hand), not a fault, and it never appears in `reasons`. The `.env` is read **once, at boot** (`__main__.py:72-73`), so a name leaves this list only after the line is removed **and** the gateway restarts | no |
+| `admin.memory_disk_diverged` | a failed console write's **rollback of managed secrets also failed**, so `managed.env` on disk and the gateway's live environment may disagree (`registry.yaml` is not involved — it is only replaced by the write's last step, `registry_store.py:128-141`). **Latched until restart**: nothing clears it in-process, and *Reload from disk* does **not** — the reason line says to restart the gateway (`service.py:1586-1592`). The only `admin.*` field that degrades | **yes** |
 
 Four things the field names do not tell you:
 
 - **Two of the `delivery.*` fields count both queues.**
   `journal_skipped_lines` and `journal_write_errors` are sums across the
   outbound *and* inbox journals — despite the prefix. The other **fourteen**
-  `delivery.*` fields, and **all four** `inbox.*` fields, are per-queue exactly
+  `delivery.*` fields — counted from the eighteen `service.py` publishes, less
+  these two, less `audit_write_errors` (summed in a different sense, next
+  bullet) and less `pending_jobs` (not a row in the table above) — and **all four** `inbox.*` fields, are per-queue exactly
   as their prefixes say — including the six added on 2026-08-02 and the four
   added on 2026-08-03, all ten of which describe the outbound dispatch thread
   and nothing else. (This read *"the other three"* until 2026-08-02, which was

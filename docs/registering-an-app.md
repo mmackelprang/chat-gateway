@@ -26,13 +26,27 @@ environment, which the console refuses to manage.
 
 Three things the console does that a hand edit would not, learned in review:
 
-- ⚠ **It can drop a trailing comment.** A save rewrites the app or identity node
-  it edits, and `ruamel` attaches a comment that *trails the last key* of a node
-  to that node — so it goes with the rewrite. Comments elsewhere survive. **Put
-  rationale comments ABOVE a node, not on its last line.**
-- **An `inbound_locked` app's identities, webhooks and existence are not
-  console-editable** — the console answers `403` *"registry file edit"*. Its
-  routes and display name stay editable. What the lock covers, and the one way
+- ⚠ **An app save can drop or move a comment — including one that looks like it
+  belongs to the NEXT app.** A console save on an app replaces its `identities`,
+  `routes` and `allowed_users` values with new nodes (`admin.py:372-402`).
+  `ruamel` attaches a comment to the node it follows, so a comment on, or
+  directly after, one of those collection keys goes with that node — and **a
+  free-standing comment line directly above app `b` belongs to app `a`'s last
+  key**. When that key is `routes` or `allowed_users`, a save on `a` drops the
+  comment or moves it inside `a`'s `routes` (measured in CG-90 review,
+  2026-10-15, with the store's own `ruamel` settings). Comments attached to a
+  **scalar** key (`allow_inbound:`, `key_env:`, `callback_url:`) survive, as do
+  comments inside nodes the save does not touch; identity saves rewrite scalars
+  only. **Keep rationale on a scalar key's line — e.g. trailing
+  `allow_inbound: false  # why` — or in docs, not as free-standing lines between
+  apps.**
+  ~~*Put rationale comments ABOVE a node, not on its last line.*~~ — the first
+  version of this advice, struck 2026-10-15 (CG-90 review): a comment above app
+  `b` is exactly the one an edit to `a` loses.
+- **An `inbound_locked` app's inbound posture, identities, their webhooks and
+  its existence are not console-editable** — the console answers `403` *"… is a
+  registry file edit"*. Its routes, and its identities' display names, stay
+  editable. What the lock covers, and the one way
   it covers nothing (an identity with no `space:`), is in `nas.md`'s CG-90
   subsection; read it before relying on a lock.
 - **`callback_url` and `unreachable_message` are left alone unless sent.** A
@@ -41,8 +55,10 @@ Three things the console does that a hand edit would not, learned in review:
 
 **To try it locally** without touching a real registry or Google:
 `python scripts/admin_uat_server.py` serves the console on
-`http://127.0.0.1:8099/admin` with fake adapters, a throwaway temp directory and a
-printed throwaway admin key. It is the launcher CG-90's UAT ran against.
+`http://127.0.0.1:8099/admin` against a registry it writes into a fresh temp
+directory, with the **webhook** adapter faked (sends print to the console; no
+tier-2 adapter is wired at all) and the fixed admin key `cgk_uat_admin`. It is
+the launcher CG-90's UAT ran against.
 
 **Not covered here:** the field-by-field registry schema, which has one home —
 [`docs/consumers/pmtrader-registration-handoff.md`](consumers/pmtrader-registration-handoff.md)
