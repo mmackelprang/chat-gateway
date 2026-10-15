@@ -143,6 +143,13 @@ Every mutation, in order, under one process-wide lock:
 and `os.environ` entries; after step 8, restores the backup. If rollback itself
 fails, `admin.memory_disk_diverged` goes true (§7) — the only state that
 degrades `/healthz`.
+⚠ *Corrected 2026-10-15 (CG-90 final review):* **the code never restores the
+backup, and does not need to.** The registry file changes only at step 8's
+final `os.replace`; a failure before or during it leaves the old file in place
+(the temp file is removed), and after it the only remaining step is the
+in-memory swap, which cannot fail. So rollback is the `managed.env` /
+`os.environ` restore alone (`registry_store.py` `_roll_back`), and the backup
+is a recovery copy for the operator, never read by the gateway.
 
 **"Reload from disk"** runs steps 4–5 and 9 against the file as it is, then
 records its hash. This also gives hand edits a hot-swap with no redeploy.

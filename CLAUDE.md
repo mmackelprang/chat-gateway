@@ -103,7 +103,7 @@ opt-in admin console (CG-90): `admin` (the `/admin` router), `admin_audit`,
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 661 passing, 7 skipped (measured 2026-10-15).
+`python` is 3.13.7) — offline, 680 passing, 7 skipped (measured 2026-10-15).
 
 ## Current status (2026-07-31)
 
@@ -774,6 +774,7 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   `docs/superpowers/specs/2026-10-15-admin-console-design.md`. Do not restate
   them here. The operator-facing hazards that review found after the spec — the
   flag must be in the compose, not `.env`; `inbound_locked` guards SPACES and an
-  identity with no `space:` locks nothing — have one home too: `docs/deploy/nas.md`,
+  identity with no `space:` locks nothing; turning the console off KEEPS its
+  keys, because `managed.env` loads whenever it exists — have one home too: `docs/deploy/nas.md`,
   the CG-90 subsection of §6. ⚠ **Merged is not in effect** — the box rollout
   is an operator action (that same subsection). No ledger flag moved.

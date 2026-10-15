@@ -519,13 +519,13 @@ This subsection is only what an operator must do and must not get wrong.
 
 | Name | Where | Why there |
 |---|---|---|
-| `GATEWAY_ENABLE_ADMIN` | §5's compose `environment:` — **not** `.env` | ⚠ It is read **before** the hand-written env file loads (`__main__.py:52`, `:64-68`), because whether `managed.env` loads at all depends on it. **Set in `.env` it is silently ignored and the console stays off** — no error, `/healthz` just says `admin.enabled: false`. Not a credential, so the compose is the right home anyway. |
-| `CHAT_GATEWAY_ADMIN_KEY` | the hand-written `.env`, over stdin exactly as above | A secret. Mint it with `python3 -m chat_gateway mint-key`. With the flag on and this unset, boot raises `RegistryError` and exits 2 (`__main__.py:119-122`) — fail closed, the `GATEWAY_ENABLE_PUBSUB` posture. **Changing it needs a restart**; the console does not manage its own key. |
+| `GATEWAY_ENABLE_ADMIN` | §5's compose `environment:` — **not** `.env` | ⚠ It is read **before** the hand-written env file loads (`__main__.py:52`, `:82-86`). **Set in `.env` it is silently ignored and the console stays off** — no error, `/healthz` just says `admin.enabled: false`. Not a credential, so the compose is the right home anyway. ⚠ *Corrected 2026-10-15 (CG-90 final review I3):* this row said *"because whether `managed.env` loads at all depends on it"*. It no longer does — `managed.env` loads whenever the file **exists** (`__main__.py:71`); see *Turning the console off* below. |
+| `CHAT_GATEWAY_ADMIN_KEY` | the hand-written `.env`, over stdin exactly as above | A secret. Mint it with `python3 -m chat_gateway mint-key`. With the flag on and this unset, boot raises `RegistryError` and exits 2 (`__main__.py:138-141`) — fail closed, the `GATEWAY_ENABLE_PUBSUB` posture. **Changing it needs a restart**; the console does not manage its own key. |
 
 ⚠ **The admin key must not equal any tenant's key.** `load_registry` refuses an
 app whose `key_env` *is* `CHAT_GATEWAY_ADMIN_KEY`; the same **value** under a
 different name is caught only at request time, and every `/admin` call then
-answers **503** naming the app (`admin.py:274-278`). Mint a fresh one; never
+answers **503** naming the app (`admin.py:297-301`). Mint a fresh one; never
 reuse a tenant's.
 
 **Two new files under `CHAT_GATEWAY_STATE_DIR`** (`/data/state` here), both
@@ -539,7 +539,42 @@ hand-written `.env` still holds, or vanishes if the console minted it.
 `load_env_file` lets an already-present value win — so a console-rotated key
 beats the stale line in `.env`. The real process environment (this compose's
 `environment:`) beats both, which is why the console **refuses** to manage any
-name set there (`admin.py:299-302`).
+name set there (`admin.py:322-325`).
+
+⚠ **`CHAT_GATEWAY_STATE_DIR` must be in the compose `environment:` when the
+console is on** — added 2026-10-15 (CG-90 final review I4). `managed.env` is
+located before the hand-written `.env` loads, so its directory comes from the
+**process** environment (`__main__.py:60`); everything else in the state dir is
+located after (`:126`), as it was before CG-90. If the `.env` is what sets or
+moves `CHAT_GATEWAY_STATE_DIR`, the two disagree and an armed console refuses
+to boot — `config error: … CHAT_GATEWAY_STATE_DIR …`, exit 2 (`:147-153`) —
+rather than keep its secrets in one directory and its audit and queues in
+another. §5's compose already sets it in `environment:`; this bites only a
+compose that moved it. With the console off nothing is compared.
+
+⚠ **The registry's directory must be writable** — added 2026-10-15 (CG-90 final
+review). Every console write stages a candidate, a temp file and a backup
+**beside** `registry.yaml`, so with the console on, boot creates and removes a
+probe file there (`registry_store.py:250`) and refuses with exit 2, naming the
+directory, if it cannot. A `config` mount left `:ro` is therefore a boot
+failure, not a console that 500s on its first save.
+
+**Turning the console off KEEPS its keys** — added 2026-10-15 (CG-90 final
+review I3). `managed.env` loads at every boot where the file **exists**,
+whatever `GATEWAY_ENABLE_ADMIN` says (`__main__.py:71`; the boot line reads
+*"admin: loaded N managed secret(s) (console off; managed.env still
+applies)"*). It used to load only with the console on, so switching the
+console off silently revived the hand `.env`'s older value of every key the
+console had rotated — the key the rotation was meant to kill. On a box that
+never ran the console there is no file and the boot is unchanged. **To revoke
+console-managed keys, rotate or delete them before disabling, or remove
+`managed.env`** — and know that removing it also revives any stale `.env`
+value it was shadowing (`admin.shadowed_env_names`).
+
+**Deleting an app with unpolled inbound is refused** — added 2026-10-15 (CG-90
+final review I2b): `409`, *"… has N unpolled inbound repl(ies) — poll or drain
+its inbox first"*. Its key dies with the entry, so nothing could poll them
+afterwards.
 
 ⚠ **Shadowing hazard, stated rather than hidden.** Rotating a name whose old
 value lives in the read-only hand-written `.env` writes the new value to
@@ -549,7 +584,7 @@ this at rotation time, and `/healthz` reports `admin.shadowed_env_names`
 (names only) until the operator removes the stale line by hand.
 ⚠ **And restarts — corrected 2026-10-15 (CG-90 review).** The paragraph above is
 spec §4's wording verbatim, and it is short of the code: which names the `.env`
-sets is read **once, at boot** (`__main__.py:72-73`), so removing the line does
+sets is read **once, at boot** (`__main__.py:90-91`), so removing the line does
 not clear the name from `/healthz` or the page until the gateway restarts.
 
 **Two more rows for the homelab `SECRETS.template.md`** (above, *Register the
@@ -564,20 +599,20 @@ env-var NAMES only, like the registry itself.
 
 **What `inbound_locked` protects is SPACES, and only spaces it can see.** On a
 locked app the console refuses (`403`, *"… is a registry file edit, not a
-console action"*): widening its inbound (`admin.py:337-340`), deleting it
-(`:547-549`), any change to its `identities` list — a reorder included
-(`:505-513`) — and replacing the webhook of an identity it holds (`:626-630`).
+console action"*): widening its inbound (`admin.py:388-391`), deleting it
+(`:611-613`), any change to its `identities` list — a reorder included
+(`:559-569`) — and replacing the webhook of an identity it holds (`:705-708`).
 Route edits on the locked app, and display renames of its identities, remain
 allowed. **A fifth refusal fires on the OTHER app's write, with different
 wording** (`403`, *"… would receive inbound from a space that inbound_locked app
-… posts in"*, `:346-363`): any write whose result leaves another inbound-enabled
+… posts in"*, `:397-414`): any write whose result leaves another inbound-enabled
 app holding an identity whose `space:` is one the locked app posts in. It
 refuses a violation the write **creates** or one involving an app the write
 **touches**; a violation already put in the file by hand, on an app the write
-does not touch, is tolerated (`:350-357`) — the file edit is where that must be
+does not touch, is tolerated (`:401-405`) — the file edit is where that must be
 fixed. ⚠ **A locked app whose identities carry
 no `space:` locks NOTHING** — an identity without one cannot match a space and
-is ignored (`admin.py:129-130`). **Before enabling the console, confirm every
+is ignored (`admin.py:146-147`). **Before enabling the console, confirm every
 identity `aitrader` holds has `space:` written** in the box's registry.
 
 **Rollout, in this order** (spec §10 — the order is the point):

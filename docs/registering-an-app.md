@@ -28,7 +28,7 @@ Three things the console does that a hand edit would not, learned in review:
 
 - ⚠ **An app save can drop or move a comment — including one that looks like it
   belongs to the NEXT app.** A console save on an app replaces its `identities`,
-  `routes` and `allowed_users` values with new nodes (`admin.py:372-402`).
+  `routes` and `allowed_users` values with new nodes (`admin.py:423-453`).
   `ruamel` attaches a comment to the node it follows, so a comment on, or
   directly after, one of those collection keys goes with that node — and **a
   free-standing comment line directly above app `b` belongs to app `a`'s last
@@ -51,7 +51,7 @@ Three things the console does that a hand edit would not, learned in review:
   subsection; read it before relying on a lock.
 - **`callback_url` and `unreachable_message` are left alone unless sent.** A
   `PUT /admin/api/apps/<id>` that omits them keeps the stored values (`""`
-  removes one); every other field in the body is replaced (`admin.py:202-209`).
+  removes one); every other field in the body is replaced (`admin.py:219-226`).
 
 **To try it locally** without touching a real registry or Google:
 `python scripts/admin_uat_server.py` serves the console on
