@@ -72,6 +72,30 @@ def test_api_responses_are_no_store(gw):
     assert client.get("/admin/api/state", headers=AUTH).headers["cache-control"] == "no-store"
 
 
+def test_avatar_gallery_is_a_link_and_nothing_is_loaded_cross_origin():
+    """The webhook guide links the avatar gallery; the page never fetches or
+    embeds anything from GitHub (CSP img-src/connect-src stay 'self')."""
+    js = (STATIC / "admin.js").read_text(encoding="utf-8")
+    gallery = "https://github.com/mmackelprang/chat-gateway/tree/main/assets/avatars"
+    assert f'AVATAR_GALLERY = "{gallery}"' in js
+    assert 'el("a", { href: AVATAR_GALLERY, target: "_blank", rel: "noopener noreferrer"' in js
+    assert not re.search(r"""\bsrc\s*[:=]\s*["'`]?https?:""", js)
+    assert 'el("img"' not in js and "new Image" not in js
+    assert not re.search(r"""fetch\(\s*["'`]https?:""", js)
+
+
+def test_write_never_throws_after_the_mutation_succeeded():
+    """A minted or rotated key is committed server-side before `refresh()` runs;
+    if that follow-up GET threw, the caller would never reach `reveal()` and the
+    key would be lost (for a rotation, the old one is already dead)."""
+    js = (STATIC / "admin.js").read_text(encoding="utf-8")
+    body = js[js.index("async function write("):]
+    body = body[:body.index("\n}\n")]
+    assert "try { await refresh(); }" in body
+    assert body.count("await refresh()") == 1
+    assert body.rstrip().endswith("return out;")
+
+
 def test_no_inline_style_attribute_the_csp_would_block():
     """The page's CSP is `style-src 'self'` with no 'unsafe-inline', which blocks
     `style="…"` attributes — including ones set through setAttribute. A styled

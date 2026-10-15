@@ -10,7 +10,10 @@ const SEVERITIES = ["alert", "warning", "info"];
 const ID_PATTERN = "[a-z0-9][a-z0-9\\-]{0,62}"; // `-` escaped: valid under the v-flag pattern compiler
 const TERMINAL = ["delivered", "failed", "unroutable", "expired"];
 const RULE_6 = "Hard rule #6: inbound crosses to a consumer only by that consumer's explicit registry opt-in.";
-const FILE_EDIT = "Grants of an inbound_locked app are a registry file edit, not a console action.";
+// A LINK only: the page never loads an image from GitHub (CSP img-src 'self').
+const AVATAR_GALLERY = "https://github.com/mmackelprang/chat-gateway/tree/main/assets/avatars";
+const AVATAR_PNG_PATTERN = "https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png/<name>.png";
+const FILE_EDIT ="Grants of an inbound_locked app are a registry file edit, not a console action.";
 
 function el(tag, attrs, ...children) {
   const n = document.createElement(tag);
@@ -88,9 +91,21 @@ async function refresh() {
 // Mutating call: carries the sha the page last saw, so a second tab gets 409.
 // Keys whose value is `undefined` are dropped by JSON.stringify — that is how
 // "not edited" reaches the server as "absent = unchanged".
+//
+// Once the mutation has succeeded, NOTHING after it may throw: create and
+// rotate return a freshly minted key the server has already committed (for a
+// rotation the old key is already dead), so a failed follow-up refresh must not
+// stop the caller from reaching reveal(). The refresh failure is surfaced on
+// the banner instead.
 async function write(method, path, body) {
   const out = await api(method, path, Object.assign({ registry_sha256: state.registry_sha256 }, body || {}));
-  await refresh();
+  try { await refresh(); }
+  catch (e) {
+    const b = $("banner");
+    b.hidden = false;
+    b.textContent = "The change was saved, but reloading the page's view failed (" + e.message
+      + "). The page may be stale — open “Apps & identities” to refresh before the next change.";
+  }
   return out;
 }
 
@@ -308,7 +323,10 @@ function newIdentity() {
     el("ol", { class: "guide" },
       el("li", { text: "Open the Google Chat space this identity should post into." }),
       el("li", { text: "Space name ▸ Apps & integrations ▸ Webhooks ▸ Add webhook." }),
-      el("li", { text: "Set the name and avatar now — they are fixed at creation and cannot be changed later without a new webhook." }),
+      el("li", {}, "Set the name and avatar now — they are fixed at creation and cannot be changed later without a new webhook. "
+        + "For the avatar, you can paste the PNG URL of one of the gateway's icons into the webhook's Avatar URL: ",
+        el("a", { href: AVATAR_GALLERY, target: "_blank", rel: "noopener noreferrer", text: "browse the avatar gallery" }),
+        " (each icon's PNG is at " + AVATAR_PNG_PATTERN + ")."),
       el("li", { text: "Save, copy the whole URL, and paste it below. It is stored in managed.env and never shown again." })),
     el("label", {}, "Identity name", el("input", { name: "name", required: true, pattern: ID_PATTERN, autocomplete: "off", placeholder: "e.g. rotaryphone-alerts" })),
     el("label", {}, "Display name (for /v1/identities)", el("input", { name: "display", required: true, autocomplete: "off" })),
