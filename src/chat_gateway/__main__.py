@@ -45,21 +45,39 @@ def build_runtime():
     # suffix gap that makes this structural rather than stylistic. Before
     # load_registry, which resolves env-indirected names. Unset on the dev box
     # and in tests, where this is a no-op.
-    state_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
+    #
     # CG-90. Snapshot the REAL process environment before any file touches it:
     # a name in here beats every file at every boot, so the console must refuse
     # to manage it rather than write a value that would be ignored.
     admin_enabled = os.environ.get("GATEWAY_ENABLE_ADMIN", "0") == "1"
     process_env_names = frozenset(os.environ)
+    # managed.env has to be found BEFORE the hand-written env file loads, so
+    # its directory is resolved from the PROCESS env here. That is the only
+    # read of CHAT_GATEWAY_STATE_DIR this early; `state_dir` itself is read
+    # after the env file, below, exactly where it was before CG-90 (final
+    # review I4 — reading it here changed where an admin-OFF gateway put its
+    # queue journals whenever the env file was the one setting it).
+    managed_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
+    managed_path = Path(managed_dir) / "managed.env"
     managed = None
-    if admin_enabled:
+    # CG-90 final review I3: whenever the file EXISTS, not only when the
+    # console is on. Turning the console off used to skip this load, and the
+    # hand .env's older value of every console-rotated key — the key the
+    # rotation was meant to kill — came back to life at the next boot. On a
+    # gateway that never ran the console there is no file, so that boot is
+    # unchanged. Disabling the console therefore KEEPS its keys; revoking them
+    # is a rotate/delete before disabling, or removing managed.env
+    # (docs/deploy/nas.md, CG-90 subsection).
+    if admin_enabled or managed_path.exists():
         from .managed_secrets import ManagedSecrets
 
-        managed = ManagedSecrets(Path(state_dir) / "managed.env",
-                                 process_env_names=process_env_names)
+        managed = ManagedSecrets(managed_path, process_env_names=process_env_names)
         # BEFORE the hand-written env file: `load_env_file` lets a present value
         # win, so this order is what makes a console-rotated key survive a boot.
-        print(f"admin: loaded {managed.load_at_boot()} managed secret(s)", flush=True)
+        # A count, never a name or a value.
+        print(f"admin: loaded {managed.load_at_boot()} managed secret(s)"
+              + ("" if admin_enabled else " (console off; managed.env still applies)"),
+              flush=True)
 
     env_file = os.environ.get("CHAT_GATEWAY_ENV_FILE", "")
     if env_file:
@@ -105,6 +123,7 @@ def build_runtime():
             "the posture is the file's rather than the loader's.",
             file=sys.stderr, flush=True,
         )
+    state_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
 
     admin = None
     if admin_enabled:
@@ -120,10 +139,23 @@ def build_runtime():
             raise RegistryError(
                 f"GATEWAY_ENABLE_ADMIN=1 needs {ADMIN_KEY_ENV} (mint one with "
                 "`python -m chat_gateway mint-key`; docs/deploy/nas.md)")
+        # CG-90 final review I4. managed.env was located before the env file
+        # loaded; if that file then set (or moved) the state dir, the console
+        # would write its secrets in one directory and its audit, queues and
+        # quarantine in another — and the next boot would look for managed.env
+        # in the wrong one. Refuse rather than pick. Paths are not secrets.
+        if Path(managed_dir) != Path(state_dir):
+            raise RegistryError(
+                f"GATEWAY_ENABLE_ADMIN=1 but CHAT_GATEWAY_STATE_DIR is {managed_dir!r} in the "
+                f"process environment and {state_dir!r} after CHAT_GATEWAY_ENV_FILE loaded; "
+                "managed.env is read before that file, so set CHAT_GATEWAY_STATE_DIR in the "
+                "process environment (the compose document) instead")
+        store = RegistryStore(Path(os.environ.get("CHAT_GATEWAY_REGISTRY",
+                                                  "config/registry.yaml")),
+                              registry, managed)
+        store.probe_writable()
         admin = AdminWiring(
-            store=RegistryStore(Path(os.environ.get("CHAT_GATEWAY_REGISTRY",
-                                                    "config/registry.yaml")),
-                                registry, managed),
+            store=store,
             secrets=managed,
             audit=AdminAudit(Path(state_dir) / "admin_audit.jsonl"))
     # ONE home for each of these two paths, deliberately: the Inbox WRITES the

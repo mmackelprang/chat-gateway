@@ -956,3 +956,97 @@ def test_i2b_deleting_an_app_with_unpolled_inbound_is_409(tmp_path, monkeypatch)
         assert r.status_code == 200 and "consumer" not in holder.apps
     finally:
         _clean_minted_env()
+
+
+# -- I3 / I4 / boot probe -----------------------------------------------------------
+def _boot_off(tmp_path, monkeypatch):
+    _boot_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("GATEWAY_ENABLE_ADMIN")
+    monkeypatch.delenv("ADM_K1", raising=False)
+
+
+def test_i3_console_off_still_loads_an_existing_managed_env(tmp_path, monkeypatch, capsys):
+    """Turning the console off must not revive the .env value a console rotation
+    replaced: managed.env loads whenever it exists."""
+    from chat_gateway.__main__ import build_runtime
+
+    _boot_off(tmp_path, monkeypatch)
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "managed.env").write_text('ADM_K1="cgk_rotated"\n', encoding="utf-8")
+    hand = tmp_path / "hand.env"
+    hand.write_text("ADM_K1=cgk_stale_hand\n", encoding="utf-8")
+    monkeypatch.setenv("CHAT_GATEWAY_ENV_FILE", str(hand))
+    try:
+        assert build_runtime()[6] is None
+        assert os.environ["ADM_K1"] == "cgk_rotated"
+        out = capsys.readouterr().out
+        assert "1 managed secret(s)" in out and "ADM_K1" not in out and "cgk_rotated" not in out
+    finally:
+        os.environ.pop("ADM_K1", None)
+
+
+def test_i3_console_off_and_no_managed_env_is_a_no_op(tmp_path, monkeypatch, capsys):
+    from chat_gateway.__main__ import build_runtime
+
+    _boot_off(tmp_path, monkeypatch)
+    build_runtime()
+    assert "managed" not in capsys.readouterr().out
+    assert not (tmp_path / "state" / "managed.env").exists()
+
+
+def test_i4_state_dir_set_only_in_the_env_file_is_honoured_with_the_console_off(
+        tmp_path, monkeypatch):
+    from chat_gateway.__main__ import build_runtime
+
+    _boot_off(tmp_path, monkeypatch)
+    monkeypatch.delenv("CHAT_GATEWAY_STATE_DIR")
+    want = tmp_path / "from-env-file"
+    hand = tmp_path / "hand.env"
+    hand.write_text(f"CHAT_GATEWAY_STATE_DIR={want}\n", encoding="utf-8")
+    monkeypatch.setenv("CHAT_GATEWAY_ENV_FILE", str(hand))
+    try:
+        rt = build_runtime()
+        assert rt[4] == str(want)
+        assert rt[1]._journal.path == want / "queue" / "inbox.jsonl"
+    finally:
+        os.environ.pop("CHAT_GATEWAY_STATE_DIR", None)
+
+
+def test_i4_console_on_with_a_state_dir_the_env_file_moves_is_exit_2(
+        tmp_path, monkeypatch, capsys):
+    from chat_gateway.__main__ import main
+
+    _boot_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    # `load_env_file` never overwrites a present value, so for the two reads to
+    # differ the process must NOT carry the variable: managed.env is then
+    # resolved against the default, and the env file sets it afterwards.
+    monkeypatch.delenv("CHAT_GATEWAY_STATE_DIR")
+    hand = tmp_path / "hand.env"
+    hand.write_text(f"CHAT_GATEWAY_STATE_DIR={tmp_path / 'elsewhere'}\n", encoding="utf-8")
+    monkeypatch.setenv("CHAT_GATEWAY_ENV_FILE", str(hand))
+    try:
+        assert main(["check"]) == 2
+        err = capsys.readouterr().err
+        assert "CHAT_GATEWAY_STATE_DIR" in err and "CHAT_GATEWAY_ENV_FILE" in err
+    finally:
+        os.environ.pop("CHAT_GATEWAY_STATE_DIR", None)
+
+
+def test_boot_probe_refuses_an_unwritable_registry_directory(tmp_path, monkeypatch, capsys):
+    from chat_gateway.__main__ import main
+
+    _boot_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    real_open = os.open
+
+    def refusing(path, *a, **k):
+        if ".registry.yaml.writable" in str(path):
+            raise PermissionError(13, "Permission denied")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(os, "open", refusing)
+    assert main(["check"]) == 2
+    err = capsys.readouterr().err
+    assert "not writable" in err and str(tmp_path) in err

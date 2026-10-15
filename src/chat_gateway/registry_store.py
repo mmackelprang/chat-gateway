@@ -247,6 +247,29 @@ class RegistryStore:
             self.last_write_error = None
             return new
 
+    def probe_writable(self) -> None:
+        """Boot check: can this store write where every write lands?
+
+        CG-90 final review (minor). Every write stages a candidate, a temp file
+        and a backup BESIDE registry.yaml and then `os.replace`s it, so the
+        directory — not just the file — must be writable. A read-only mount
+        (the NAS custom app's default for config) used to boot cleanly and then
+        fail every console write with a 500; refusing at boot (exit 2) puts the
+        error where the operator is looking. Create-and-remove a probe file,
+        because a permission bit says nothing about a read-only mount."""
+        probe = self._path.with_name(f".{self._path.name}.writable")
+        try:
+            probe.unlink(missing_ok=True)  # a stale probe from a crashed boot
+            fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(fd)
+            probe.unlink()
+        except OSError as exc:
+            raise RegistryError(
+                f"GATEWAY_ENABLE_ADMIN=1 but the registry directory {self._path.parent} is "
+                f"not writable ({type(exc).__name__}): the console writes registry.yaml, its "
+                "candidate and its backups there. Mount it read-write, or leave the "
+                "console off (docs/deploy/nas.md)") from exc
+
     def reload(self) -> Registry:
         with self._lock:
             raw = self._path.read_bytes()
