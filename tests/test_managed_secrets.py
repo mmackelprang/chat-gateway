@@ -77,6 +77,9 @@ def test_restore_of_a_file_that_did_not_exist_deletes_it(tmp_path):
     # `str.splitlines()` boundaries beyond \n/\r — accepted by the original
     # denylist and silently changed at the next boot (CG-90 review).
     "a\vb", "a\fb", "a\x1cb", "a\x1db", "a\x1eb", "a\x85b", "a b", "a b",
+    # NUL round-trips through the parser but `os.environ` refuses it — AFTER
+    # the file was written. Must be refused up front (CG-90 Task 4 review).
+    "a\x00b",
     5,
 ])
 def test_a_value_that_would_not_round_trip_is_refused(tmp_path, bad):

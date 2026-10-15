@@ -131,6 +131,14 @@ class ManagedSecrets:
                 # non-string value fails here too, as a ValueError. The value is
                 # never echoed, so the message names only the variable.
                 raise ValueError(f"{name}: value would not survive a reload of the file")
+            if value is not None and "\x00" in value:
+                # NUL round-trips through `parse_env_file` above, so that check
+                # admits it — but `os.environ[name] = value` then refuses it with
+                # "embedded null byte" AFTER the file below was written, which
+                # breaks the promise the store relies on: a ValueError from here
+                # means nothing changed (CG-90 Task 4 review). Ordered after the
+                # round-trip check so a non-string value has already been refused.
+                raise ValueError(f"{name}: value contains a NUL byte")
         entries = self._entries()
         for name, value in changes.items():
             if value is None:
