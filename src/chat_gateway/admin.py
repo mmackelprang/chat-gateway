@@ -509,6 +509,9 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             },
             "shadowed_env_names": secrets.shadowed(),
             "inbound_defaulted": list(reg.inbound_defaulted),
+            # The reveal panel offers an MCP client config only when /mcp is
+            # mounted — otherwise it hands the operator a config for a 404.
+            "mcp_enabled": bool(mcp_enabled),
         }
 
     # -- apps ------------------------------------------------------------------
@@ -579,7 +582,16 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         app = get_app(app_id)
         managed_name(app.key_env)
         key = mint_key()
-        run(None, {app.key_env: key}, sha=body.registry_sha256 if body else None)
+
+        def mutate(tree):
+            # CG-90 final review (minor). `get_app` read the HOLDER; a delete
+            # can land before the store lock is taken. With no mutate the store
+            # wrote the key anyway — an orphan secret in managed.env for an app
+            # that no longer exists, which C1 then reports as "already set" for
+            # whoever recreates the id. Checked against the FILE, as C4 does.
+            _node(tree, "apps", app_id, "app")
+
+        run(mutate, {app.key_env: key}, sha=body.registry_sha256 if body else None)
         audit.record("key_rotated", app_id, [app.key_env])
         return {"app_id": app_id, "key_env": app.key_env, "key": key,
                 "shadows_env_file": app.key_env in secrets.hand_env_names}

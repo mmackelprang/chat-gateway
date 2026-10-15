@@ -430,7 +430,9 @@ function reveal(r) {
     el("p", {}, "Gateway URL: ", el("code", { text: base }), " · env var in the consumer: ", el("code", { text: "CHAT_GATEWAY_API_KEY" })),
     el("h4", { text: "curl (key stays out of argv)" }), el("pre", { text: curl }),
     el("h4", { text: "Python" }), el("pre", { text: py }),
-    el("h4", { text: "MCP client config" }), el("pre", { text: mcp }),
+    // Only when the gateway serves /mcp (GATEWAY_ENABLE_MCP=1); otherwise this
+    // would be a working-looking config for a 404 (CG-90 final review).
+    state.mcp_enabled ? [el("h4", { text: "MCP client config" }), el("pre", { text: mcp })] : null,
     el("h3", { text: "Send test notification" }),
     el("p", { class: "muted", text: "202 enqueued is not delivery — this waits for the delivery log to say delivered or failed." }),
     el("button", { type: "button", class: "primary", text: "Send test", on: { click: () => testSend(key, result) } }),

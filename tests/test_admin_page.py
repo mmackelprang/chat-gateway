@@ -120,6 +120,17 @@ def test_rule_6_is_stated_once_in_the_typed_confirm():
     assert '/hard rule #6/i.test(e.message) ? e.message : e.message + "\\n\\n" + RULE_6' in fn
 
 
+def test_mcp_snippet_is_gated_on_the_state_flag():
+    """CG-90 final review (minor): the reveal panel offers an MCP config only
+    when the gateway serves /mcp — otherwise it hands the operator a config for
+    a 404."""
+    js = (STATIC / "admin.js").read_text(encoding="utf-8")
+    fn = js[js.index("function reveal("):]
+    fn = fn[:fn.index("\n}\n")]
+    assert "state.mcp_enabled ?" in fn
+    assert fn.count('"MCP client config"') == 1
+
+
 def test_replace_webhook_handles_the_inbound_428():
     """CG-90 final review I1: moving an inbound app's identity to a new space is
     a 428; the page answers it with one typed confirmation of the identity name."""

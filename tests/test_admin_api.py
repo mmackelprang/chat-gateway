@@ -958,6 +958,28 @@ def test_i2b_deleting_an_app_with_unpolled_inbound_is_409(tmp_path, monkeypatch)
         _clean_minted_env()
 
 
+# -- minor: rotate against an app gone from the file ------------------------------
+def test_rotate_of_an_app_gone_from_the_file_is_404_and_mints_nothing(gw):
+    client, holder, wiring, tmp = gw
+    import dataclasses
+    holder.current.apps["ghost"] = dataclasses.replace(holder.apps["a1"], app_id="ghost",
+                                                       key_env="ADM_KGHOST")
+    tc = TestClient(client.app, raise_server_exceptions=False)
+    r = tc.post("/admin/api/apps/ghost/rotate-key", headers=AUTH, json={})
+    assert r.status_code == 404 and "unknown" in r.json()["detail"]
+    assert wiring.secrets.source_of("ADM_KGHOST") == "unset"
+    assert "ADM_KGHOST" not in os.environ
+
+
+# -- minor: the MCP snippet follows the MCP flag ----------------------------------
+def test_state_carries_the_mcp_flag(tmp_path, monkeypatch):
+    for enabled in (False, True):
+        sub = tmp_path / str(enabled)
+        sub.mkdir()
+        client, *_ = _build_final(sub, monkeypatch, mcp_enabled=enabled)
+        assert client.get("/admin/api/state", headers=AUTH).json()["mcp_enabled"] is enabled
+
+
 # -- I3 / I4 / boot probe -----------------------------------------------------------
 def _boot_off(tmp_path, monkeypatch):
     _boot_env(tmp_path, monkeypatch)
