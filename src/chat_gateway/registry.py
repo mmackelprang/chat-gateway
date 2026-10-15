@@ -35,6 +35,10 @@ MODES = ["webhook", "app"]
 # adapter imports it from here, which is the direction that already exists.
 UNROUTED = "_unrouted"
 RESERVED_APP_ID_PREFIX = "_"
+# CG-90, hard rule #4. The admin console's credential. Reserved so no tenant can
+# be registered against it: `authenticate` would otherwise resolve the admin key
+# to that tenant, and the console's "a tenant key is 401 here" would invert.
+ADMIN_KEY_ENV = "CHAT_GATEWAY_ADMIN_KEY"
 
 
 class RegistryError(ValueError):
@@ -190,6 +194,10 @@ class App:
     callback_url: str = ""            # inbound push (tenant opt-in; requires allow_inbound)
     allowed_users: list[str] = field(default_factory=list)  # emails; empty = no restriction
     unreachable_message: str = ""     # in-thread text when the callback is down (R7)
+    # CG-90 (spec §6.4). When true the admin console refuses every change that
+    # WIDENS inbound for this app; only a hand edit of the file can. Default
+    # false, never coerced (hard rule #7), and the console never writes it.
+    inbound_locked: bool = False
 
     def key_configured(self) -> bool:
         return bool(os.environ.get(self.key_env))
@@ -373,6 +381,17 @@ def load_registry(path: str | Path) -> Registry:
         spec = spec or {}
         if not spec.get("key_env"):
             raise RegistryError(f"app {app_id!r}: key_env is required")
+        if spec["key_env"] == ADMIN_KEY_ENV:
+            raise RegistryError(
+                f"app {app_id!r}: key_env {ADMIN_KEY_ENV} is reserved for the admin "
+                "console — a tenant authenticating with the admin key would make the "
+                "two credentials one (hard rule #4)"
+            )
+        raw_locked = spec.get("inbound_locked")
+        inbound_locked = False
+        if raw_locked is not None:
+            _require_bool(app_id, "inbound_locked", raw_locked)
+            inbound_locked = raw_locked
         # CG-88. Absence is DENY and is recorded as reliance; a written value
         # must be a real boolean. `None` covers both "key absent" and an
         # explicit `allow_inbound:` with nothing after it — a key that states
@@ -393,6 +412,7 @@ def load_registry(path: str | Path) -> Registry:
         app = App(app_id=app_id, key_env=spec["key_env"],
                   identities=list(spec.get("identities") or []),
                   allow_inbound=allow_inbound,
+                  inbound_locked=inbound_locked,
                   routes=dict(spec.get("routes") or {}),
                   callback_url=str(spec.get("callback_url") or ""),
                   allowed_users=[str(u).lower() for u in (spec.get("allowed_users") or [])],
