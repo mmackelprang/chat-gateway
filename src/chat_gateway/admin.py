@@ -26,6 +26,7 @@ from ruamel.yaml.comments import CommentedMap
 from .admin_audit import AdminAudit
 from .auth import mint_key
 from .delivery import DeliveryLog
+from .inbox import Inbox
 from .managed_secrets import ManagedSecrets
 from .registry import ADMIN_KEY_ENV, SEVERITIES, App
 from .registry_holder import RegistryHolder
@@ -262,6 +263,8 @@ class ConfirmIdentity(_Guarded):
 
 def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
                        delivery_log: DeliveryLog,
+                       inbox: Inbox | None = None,
+                       mcp_enabled: bool = False,
                        now_fn: Callable[[], float] | None = None) -> APIRouter:
     limiter = _Limiter(now_fn or time.monotonic)
     store, secrets, audit = wiring.store, wiring.secrets, wiring.audit
@@ -596,6 +599,18 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             if live is not None and live.inbound_locked:
                 raise StoreError(403, f"app {app_id!r} is inbound_locked: deleting it is a "
                                       "registry file edit, not a console action. " + RULE_6)
+            # CG-90 final review I2b. Replies already queued for this app can
+            # only leave by its own poll, and its key dies with the entry — so
+            # a delete would strand them in the inbox (and its journal) under
+            # an id nobody can authenticate as. Refuse until drained. Under the
+            # lock, so the window to a put that lands after the check is the
+            # swap itself; past it, `dispatch` routes on the new snapshot and
+            # the deleted app is no longer a candidate (I2a).
+            pending = inbox.pending_counts().get(app_id, 0) if inbox is not None else 0
+            if pending:
+                raise StoreError(409, f"app {app_id!r} has {pending} unpolled inbound "
+                                      "repl(ies) — poll or drain its inbox first, then delete",
+                                 "refused: unpolled inbound")
             tree["apps"].pop(app_id)
 
         remove = {app.key_env: None} if secrets.source_of(app.key_env) == "managed" else None

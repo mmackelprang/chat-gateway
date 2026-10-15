@@ -492,7 +492,11 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     # it deliberately. Its own credential, never `authenticate()` (hard rule #4).
     app.state.admin = admin
     if admin is not None:
-        app.include_router(build_admin_router(registry, admin, delivery_log=log))
+        # `inbox` so a delete can refuse while replies are unpolled; the MCP
+        # flag so the reveal panel offers an MCP config only when /mcp exists
+        # (CG-90 final review I2b and minor).
+        app.include_router(build_admin_router(registry, admin, delivery_log=log,
+                                              inbox=inbox, mcp_enabled=mcp_enabled))
         app.add_exception_handler(RequestValidationError, _admin_safe_validation_handler)
 
     # -- raw envelope send (synchronous; aiteam notify.py path) ---------------

@@ -930,3 +930,29 @@ def test_i1_webhook_replace_in_the_same_space_needs_no_confirmation(fin):
     same = "https://chat.googleapis.com/v1/spaces/MINE/messages?key=KEYVAL&token=TOKVAL"
     r = client.post("/admin/api/identities/mine/webhook", headers=AUTH, json={"webhook_url": same})
     assert r.status_code == 200
+
+
+# -- I2b: an app with unpolled inbound cannot be deleted --------------------------
+def test_i2b_deleting_an_app_with_unpolled_inbound_is_409(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from chat_gateway.adapters.pubsub import dispatch
+
+    inbox = Inbox()
+    client, holder, wiring = _build_final(tmp_path, monkeypatch, inbox=inbox)
+    try:
+        fx = Path(__file__).parent / "fixtures" / "classic-cardclicked-button-event.json"
+        ev = json.loads(fx.read_text(encoding="utf-8"))
+        ev["space"]["name"] = "spaces/MINE"
+        assert dispatch(ev, holder, inbox) == ["consumer"]
+        r = client.post("/admin/api/apps/consumer/delete", headers=AUTH,
+                        json={"confirm_app_id": "consumer"})
+        assert r.status_code == 409 and "1 unpolled" in r.json()["detail"]
+        assert "consumer" in holder.apps
+        polled = client.get("/v1/inbox", headers={"Authorization": "Bearer cgk_consumer_key"})
+        assert polled.status_code == 200
+        r = client.post("/admin/api/apps/consumer/delete", headers=AUTH,
+                        json={"confirm_app_id": "consumer"})
+        assert r.status_code == 200 and "consumer" not in holder.apps
+    finally:
+        _clean_minted_env()

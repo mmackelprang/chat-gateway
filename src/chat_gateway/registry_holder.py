@@ -17,6 +17,15 @@ an app deleted in between was a KeyError → 500 rather than the 401 a later
 request gets. Each now re-reads with `.get` and answers 401 (`service.live_app`,
 `mcp.send_message_schema` / `call_tool`); pinned in tests/test_registry_holder.py.
 A new handler that subscripts by the authenticated id re-opens it.
+
+⚠ Corrected 2026-10-15 (CG-90 final review I2a): "the worst case is the
+request failing" was FALSE for inbound dispatch. `adapters/pubsub.dispatch`
+chose candidates from one snapshot and called `apps.get` on the next; a delete
+in between made `app` None, which skipped the opt-out check and PUT the event in
+the deleted, opted-out app's inbox — a hard rule #6 breach, not a failure. It
+now takes ONE snapshot (`registry.current`) per event. Where a wrong second
+read can WIDEN rather than refuse, take one snapshot; do not rely on this
+docstring's general claim.
 """
 
 from __future__ import annotations

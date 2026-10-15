@@ -145,6 +145,83 @@ def test_mcp_app_deleted_between_auth_and_handler_is_401_not_500(tmp_path, monke
         assert r.json()["error"]["message"] == "unknown API key"
 
 
+TORN_A = """identities:
+  i:
+    display: d
+    webhook_url_env: TORN_W
+    space: spaces/TORN
+apps:
+  optedout:
+    key_env: TORN_K
+    identities: [i]
+    allow_inbound: false
+"""
+TORN_B = """identities:
+  i:
+    display: d
+    webhook_url_env: TORN_W
+    space: spaces/TORN
+  j:
+    display: e
+    webhook_url_env: TORN_W2
+apps:
+  other:
+    key_env: TORN_K2
+    identities: [j]
+    allow_inbound: false
+"""
+
+
+def _torn_event():
+    import json
+    from pathlib import Path
+
+    fx = Path(__file__).parent / "fixtures" / "classic-cardclicked-button-event.json"
+    ev = json.loads(fx.read_text(encoding="utf-8"))
+    ev["space"]["name"] = "spaces/TORN"
+    return ev
+
+
+def test_dispatch_reads_one_snapshot_so_a_mid_event_delete_cannot_leak_inbound(tmp_path):
+    """CG-90 final review I2a. `dispatch` chose candidates from one snapshot and
+    looked each app up in the NEXT: a console delete in between left `app` None,
+    skipped the opt-out check, and put the event in the deleted (opted-out)
+    app's inbox. Swap the holder between those two reads."""
+    from chat_gateway.adapters.pubsub import REASON_OPT_OUT, dispatch
+
+    ra, rb = _reg(tmp_path, TORN_A, "a.yaml"), _reg(tmp_path, TORN_B, "b.yaml")
+    h = RegistryHolder(ra)
+    real = ra.apps_for_space
+
+    def swapping(space):
+        out = real(space)
+        h.swap(rb)
+        return out
+
+    ra.apps_for_space = swapping
+    inbox = Inbox()
+    suppressed = []
+    got = dispatch(_torn_event(), h, inbox, on_suppressed=lambda a, r: suppressed.append((a, r)))
+    assert got == []
+    assert inbox.pending_counts() == {}
+    assert suppressed == [("optedout", REASON_OPT_OUT)]
+
+
+def test_dispatch_never_puts_for_a_candidate_with_no_app(tmp_path):
+    """Belt and braces for I2a: whatever the snapshot says, a candidate id that
+    is not a registered app (and is not `_unrouted`) is skipped, never put."""
+    from chat_gateway.adapters.pubsub import dispatch
+
+    ra = _reg(tmp_path, TORN_A, "a.yaml")
+    ra.apps_for_space = lambda space: ["ghost"]
+    inbox = Inbox()
+    suppressed = []
+    got = dispatch(_torn_event(), RegistryHolder(ra), inbox,
+                   on_suppressed=lambda a, r: suppressed.append((a, r)))
+    assert got == [] and inbox.pending_counts() == {}
+    assert [a for a, _ in suppressed] == ["ghost"]
+
+
 def test_build_runtime_hands_out_a_holder(tmp_path, monkeypatch):
     from chat_gateway.__main__ import build_runtime
 
