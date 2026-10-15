@@ -301,6 +301,34 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             raise refuse(409, f"{name} is set in the gateway's process environment, which "
                               "overrides managed.env at boot — change it there, not here")
 
+    def claim_env_name(name: str) -> None:
+        """Refuse a DERIVED env-var name somebody already uses (CG-90 final
+        review C1). Raises StoreError — call it inside `mutate`, under the store
+        lock, where `registry.current` agrees with the file being edited.
+
+        `env_name()` maps `pmtrader` and a hand-written
+        `GOOGLE_CHAT_WEBHOOK_URL__PMTRADER` onto the same variable, and nothing
+        checked. Measured: creating identity `pmtrader` answered 201 and
+        silently re-pointed `pmtrader-alerts` — an inbound_locked tenant's
+        identity whose webhook the console otherwise refuses to touch — and
+        deleting it later would have popped the shared variable from under the
+        tenant. A name is taken if any registry entry reads it, or if it is set
+        in any file the gateway loads (managed.env, the hand .env, the process).
+        Names and ids only in the message; never a value (hard rule #2)."""
+        reg = registry.current
+        owners = sorted([f"app {a.app_id!r}" for a in reg.apps.values() if a.key_env == name]
+                        + [f"identity {i.name!r}" for i in reg.identities.values()
+                           if i.webhook_url_env == name])
+        if owners:
+            raise StoreError(409, f"{name} is already used by {', '.join(owners)} — pick "
+                                  "another id (the console derives the variable name from it)",
+                             "refused: env name in use")
+        source = secrets.source_of(name)
+        if source != "unset":
+            raise StoreError(409, f"{name} is already set (in {source}) though no registry "
+                                  "entry uses it — remove it there first, or pick another id",
+                             "refused: env name in use")
+
     def check_refs(body: AppFields) -> None:
         """Every identity and route value names a registered identity; every
         route key is a known severity (fix round I2a; closes M5, which silently
@@ -478,6 +506,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             # C4's other half: the holder said "absent", the file may disagree.
             if body.app_id in apps:
                 raise StoreError(409, f"app {body.app_id!r} already exists")
+            claim_env_name(key_env)
             widened.extend(guard_inbound(None, body, body.app_id))
             guard_locked_spaces(after_app(body.app_id, body), {body.app_id})
             m = CommentedMap()
@@ -573,6 +602,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             identities = _section(tree, "identities")
             if body.name in identities:
                 raise StoreError(409, f"identity {body.name!r} already exists")
+            claim_env_name(url_env)
             m = CommentedMap()
             m["display"] = body.display
             m["channel"] = "google_chat"

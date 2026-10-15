@@ -769,3 +769,119 @@ def test_r2_touching_the_violating_app_must_narrow_it(gw):
     assert r.status_code == 403 and "locked" in r.json()["detail"]
     r = client.put("/admin/api/apps/hand", headers=AUTH, json={**keep, "allow_inbound": False})
     assert r.status_code == 200 and holder.apps["hand"].allow_inbound is False
+
+
+# ============================================================================
+# Final-review fix wave (CG-90 final review: C1, I1, I2b, I3, I4, minors)
+# ============================================================================
+FINAL = """identities:
+  pmtrader-alerts:
+    display: pm
+    webhook_url_env: GOOGLE_CHAT_WEBHOOK_URL__PMTRADER
+    space: spaces/PMSPACE
+  other:
+    display: o
+    webhook_url_env: FIN_W_OTHER
+    space: spaces/OTHERTENANT
+  mine:
+    display: m
+    webhook_url_env: FIN_W_MINE
+    space: spaces/MINE
+apps:
+  pmtrader:
+    key_env: FIN_K_PMTRADER
+    identities: [pmtrader-alerts]
+    allow_inbound: false
+    inbound_locked: true
+  legacy:
+    key_env: CHAT_GATEWAY_API_KEY__NEWAPP
+    identities: [other]
+    allow_inbound: false
+  consumer:
+    key_env: FIN_K_CONSUMER
+    identities: [mine]
+    allow_inbound: true
+"""
+PM_ORIG = "https://chat.googleapis.com/v1/spaces/PMSPACE/messages?key=ORIG&token=ORIG"
+HOOK_ELSEWHERE = "https://chat.googleapis.com/v1/spaces/ELSEWHERE/messages?key=KEYVAL&token=TOKVAL"
+
+
+def _build_final(tmp_path, monkeypatch, *, inbox=None, mcp_enabled=False):
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    monkeypatch.setenv("GOOGLE_CHAT_WEBHOOK_URL__PMTRADER", PM_ORIG)
+    monkeypatch.setenv("CHAT_GATEWAY_API_KEY__NEWAPP", "cgk_legacy_key")
+    monkeypatch.setenv("FIN_K_CONSUMER", "cgk_consumer_key")
+    monkeypatch.setenv("FIN_W_MINE", "https://x.example/mine")
+    p = tmp_path / "registry.yaml"
+    p.write_text(FINAL, encoding="utf-8")
+    holder = RegistryHolder(load_registry(p))
+    secrets = ManagedSecrets(tmp_path / "state" / "managed.env",
+                             process_env_names=frozenset({"CHAT_GATEWAY_ADMIN_KEY"}),
+                             environ=os.environ)
+    wiring = AdminWiring(store=RegistryStore(p, holder, secrets), secrets=secrets,
+                         audit=AdminAudit(tmp_path / "state" / "admin_audit.jsonl"))
+    client = TestClient(create_app(holder, inbox if inbox is not None else Inbox(),
+                                   {"webhook": object()}, admin=wiring,
+                                   mcp_enabled=mcp_enabled))
+    return client, holder, wiring
+
+
+@pytest.fixture()
+def fin(tmp_path, monkeypatch):
+    client, holder, wiring = _build_final(tmp_path, monkeypatch)
+    yield client, holder, wiring, tmp_path
+    _clean_minted_env()
+
+
+def _audit_actions(tmp):
+    path = tmp / "state" / "admin_audit.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+# -- C1: a derived env-var name already in use is refused ------------------------
+def test_c1_identity_whose_derived_name_is_another_identitys_variable_is_409(fin):
+    """The measured shape: `pmtrader` derives GOOGLE_CHAT_WEBHOOK_URL__PMTRADER,
+    which locked identity `pmtrader-alerts` already reads. Creating it used to
+    re-point the locked identity's webhook, bypassing its immutability."""
+    client, holder, *_ = fin
+    r = client.post("/admin/api/identities", headers=AUTH,
+                    json={"name": "pmtrader", "display": "x", "webhook_url": HOOK_ELSEWHERE})
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert "GOOGLE_CHAT_WEBHOOK_URL__PMTRADER" in detail and "pmtrader-alerts" in detail
+    assert _clean(r.text)
+    assert os.environ["GOOGLE_CHAT_WEBHOOK_URL__PMTRADER"] == PM_ORIG
+    assert "pmtrader" not in holder.identities
+    assert holder.identities["pmtrader-alerts"].space == "spaces/PMSPACE"
+
+
+def test_c1_app_whose_derived_key_env_is_another_apps_variable_is_409(fin):
+    client, holder, *_ = fin
+    r = client.post("/admin/api/apps", headers=AUTH,
+                    json={"app_id": "newapp", "identities": ["mine"], "routes": {},
+                          "allow_inbound": False})
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert "CHAT_GATEWAY_API_KEY__NEWAPP" in detail and "legacy" in detail
+    assert os.environ["CHAT_GATEWAY_API_KEY__NEWAPP"] == "cgk_legacy_key"
+    assert "newapp" not in holder.apps
+    assert client.get("/v1/identities",
+                      headers={"Authorization": "Bearer cgk_legacy_key"}).status_code == 200
+
+
+def test_c1_a_derived_name_already_set_outside_the_registry_is_409(gw):
+    """No registry entry claims it, but managed.env or the hand .env does: an
+    orphan the console would silently adopt (and later pop)."""
+    client, holder, wiring, tmp = gw
+    wiring.secrets.apply({"CHAT_GATEWAY_API_KEY__NEWAPP": "cgk_orphan"})
+    r = _new_app(client)
+    assert r.status_code == 409 and "CHAT_GATEWAY_API_KEY__NEWAPP" in r.json()["detail"]
+    assert "cgk_orphan" not in r.text
+    assert os.environ["CHAT_GATEWAY_API_KEY__NEWAPP"] == "cgk_orphan"
+    wiring.secrets.hand_env_names = frozenset({"GOOGLE_CHAT_WEBHOOK_URL__NEWID"})
+    r = client.post("/admin/api/identities", headers=AUTH,
+                    json={"name": "newid", "display": "N", "webhook_url": HOOK})
+    assert r.status_code == 409 and "GOOGLE_CHAT_WEBHOOK_URL__NEWID" in r.json()["detail"]
+    assert _clean(r.text) and "newid" not in holder.identities
