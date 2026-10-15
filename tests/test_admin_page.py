@@ -1,0 +1,84 @@
+"""CG-90 Task 7 — the shell is static, CSP-locked, and stores nothing."""
+import os
+import re
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from chat_gateway.admin import AdminWiring
+from chat_gateway.admin_audit import AdminAudit
+from chat_gateway.inbox import Inbox
+from chat_gateway.managed_secrets import ManagedSecrets
+from chat_gateway.registry import load_registry
+from chat_gateway.registry_holder import RegistryHolder
+from chat_gateway.registry_store import RegistryStore
+from chat_gateway.service import create_app
+
+STATIC = Path(__file__).resolve().parents[1] / "src" / "chat_gateway" / "static" / "admin"
+ADMIN = "cgk_admin_page_tests"
+AUTH = {"Authorization": f"Bearer {ADMIN}"}
+
+
+@pytest.fixture()
+def gw(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    p = tmp_path / "registry.yaml"
+    p.write_text("identities:\n  i1:\n    display: d\n    webhook_url_env: PG_W\n"
+                 "apps:\n  a1:\n    key_env: PG_K\n    identities: [i1]\n"
+                 "    allow_inbound: false\n", encoding="utf-8")
+    holder = RegistryHolder(load_registry(p))
+    secrets = ManagedSecrets(tmp_path / "state" / "managed.env",
+                             process_env_names=frozenset(), environ=os.environ)
+    wiring = AdminWiring(store=RegistryStore(p, holder, secrets), secrets=secrets,
+                         audit=AdminAudit(tmp_path / "state" / "admin_audit.jsonl"))
+    return (TestClient(create_app(holder, Inbox(), {"webhook": object()}, admin=wiring)),)
+
+
+def test_page_is_served_with_strict_headers(gw):
+    client, *_ = gw
+    r = client.get("/admin")
+    assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    csp = r.headers["content-security-policy"]
+    assert "script-src 'self'" in csp and "unsafe-inline" not in csp
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_only_known_static_files_are_served(gw):
+    client, *_ = gw
+    assert client.get("/admin/static/admin.js").status_code == 200
+    assert client.get("/admin/static/admin.css").status_code == 200
+    assert client.get("/admin/static/..%2Fadmin.py").status_code == 404
+    assert client.get("/admin/static/index.html").status_code == 404
+
+
+def test_no_inline_script_and_no_third_party_origin():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert "<script>" not in html and "onclick=" not in html
+    for f in STATIC.iterdir():
+        text = f.read_text(encoding="utf-8")
+        assert "http://" not in text and "cdn" not in text.lower()
+
+
+def test_the_admin_key_is_never_persisted_by_the_page():
+    js = (STATIC / "admin.js").read_text(encoding="utf-8")
+    for api in ("localStorage", "sessionStorage", "document.cookie", "indexedDB"):
+        assert api not in js
+    assert "innerHTML" not in js  # all data rendered via textContent
+
+
+def test_api_responses_are_no_store(gw):
+    client, *_ = gw
+    assert client.get("/admin/api/state", headers=AUTH).headers["cache-control"] == "no-store"
+
+
+def test_no_inline_style_attribute_the_csp_would_block():
+    """The page's CSP is `style-src 'self'` with no 'unsafe-inline', which blocks
+    `style="…"` attributes — including ones set through setAttribute. A styled
+    element that silently renders unstyled is the failure; classes in admin.css
+    are the fix."""
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "admin.js").read_text(encoding="utf-8")
+    assert "style=" not in html and "<style" not in html
+    assert not re.search(r"""\bstyle\s*:\s*["']""", js)
+    assert "setAttribute(\"style\"" not in js and "setAttribute('style'" not in js
