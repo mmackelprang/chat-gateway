@@ -24,6 +24,7 @@ from .inbox import Inbox
 from .journal import Journal
 from .log_redaction import install_url_redaction
 from .registry import RegistryError, load_registry
+from .registry_holder import RegistryHolder
 from .retention import (RetentionConfigError, RetentionSweeper,
                         retention_days_from_env)
 
@@ -50,7 +51,11 @@ def build_runtime():
 
         print(f"env: loaded {load_env_file(env_file)} key(s) from {env_file}", flush=True)
 
-    registry = load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml"))
+    # CG-90. A holder, not the bare Registry: every consumer built below keeps
+    # this one reference for the life of the process, and the holder is what
+    # lets the admin console swap the registry underneath all of them at once.
+    registry = RegistryHolder(
+        load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml")))
     # CG-88. `allow_inbound` now defaults to DENY, and an app that inherits it
     # is named here rather than refused. The refusal was the alternative and it
     # was declined: of the three registry copies, the NAS one cannot be read
