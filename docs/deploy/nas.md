@@ -262,7 +262,8 @@ construction rather than by trusting someone else's redactor.
     "CHAT_GATEWAY_STATE_DIR": "/data/state",
     "CHAT_GATEWAY_INBOX_DIR": "/data/inbox",
     "GATEWAY_ENABLE_PUBSUB": "1",
-    "GATEWAY_ENABLE_MCP": "1"
+    "GATEWAY_ENABLE_MCP": "1",
+    "GATEWAY_ENABLE_ADMIN": "1"
   },
   "image": "chat-gateway:local",
   "mem_limit": "512m",
@@ -271,7 +272,7 @@ construction rather than by trusting someone else's redactor.
   "restart": "unless-stopped",
   "volumes": [
     "/mnt/datapool/apps/chat-gateway/.env:/env/gateway.env:ro",
-    "/mnt/datapool/apps/chat-gateway/config:/config:ro",
+    "/mnt/datapool/apps/chat-gateway/config:/config",
     "/mnt/datapool/apps/chat-gateway/secrets:/secrets:ro",
     "/mnt/datapool/apps/chat-gateway/state:/data/state",
     "/mnt/datapool/apps/chat-gateway/inbox-data:/data/inbox"
@@ -317,6 +318,14 @@ give it a caller.** `POST /mcp` authenticates with an ordinary per-app key, and
 the `agent-mcp` tenant exists only in `registry.example.yaml` — the live
 `config/registry.yaml` is gitignored, so minting the key and writing that entry
 is an operator action this or any PR cannot perform.
+
+**`GATEWAY_ENABLE_ADMIN: "1"` and the `config` mount losing `:ro` are CG-90's
+(2026-10-15)**, and they ship together: the console writes `registry.yaml` (and a
+`.bak-*` beside it) into that directory. `.env` and `secrets/` stay `:ro`.
+⚠ **This block is the TARGET, not the box** — merging it changes nothing on the
+NAS, and the flag fails closed at boot without `CHAT_GATEWAY_ADMIN_KEY`, so it
+must not reach the box before the key does. Order, and why the flag must be here
+rather than in `.env`: the CG-90 subsection at the end of §6.
 
 **House style, matched:** `restart: unless-stopped`, `pull_policy: missing`, `TZ`
 set, bind mounts under `/mnt/datapool/apps/<app>/`, **no** `container_name`
@@ -497,6 +506,74 @@ enough.** A restorer who treats all three rows the same recovers two credentials
 and a dangling pointer, and gets the silent half-healthy state above.
 
 Writing those rows is a homelab-repo change — see §9.
+
+### The admin console (CG-90)
+
+Added 2026-10-15. **Nothing below has run on the box** — §10 gains an entry when
+it does, and not before. The design, its decisions and the residual risk of the
+admin key have one home:
+[`docs/superpowers/specs/2026-10-15-admin-console-design.md`](../superpowers/specs/2026-10-15-admin-console-design.md).
+This subsection is only what an operator must do and must not get wrong.
+
+**Two env-var NAMES, and they go in DIFFERENT places:**
+
+| Name | Where | Why there |
+|---|---|---|
+| `GATEWAY_ENABLE_ADMIN` | §5's compose `environment:` — **not** `.env` | ⚠ It is read **before** the hand-written env file loads (`__main__.py:52`, `:64-68`), because whether `managed.env` loads at all depends on it. **Set in `.env` it is silently ignored and the console stays off** — no error, `/healthz` just says `admin.enabled: false`. Not a credential, so the compose is the right home anyway. |
+| `CHAT_GATEWAY_ADMIN_KEY` | the hand-written `.env`, over stdin exactly as above | A secret. Mint it with `python3 -m chat_gateway mint-key`. With the flag on and this unset, boot raises `RegistryError` and exits 2 (`__main__.py:119-122`) — fail closed, the `GATEWAY_ENABLE_PUBSUB` posture. **Changing it needs a restart**; the console does not manage its own key. |
+
+⚠ **The admin key must not equal any tenant's key.** `load_registry` refuses an
+app whose `key_env` *is* `CHAT_GATEWAY_ADMIN_KEY`; the same **value** under a
+different name is caught only at request time, and every `/admin` call then
+answers **503** naming the app (`admin.py:274-278`). Mint a fresh one; never
+reuse a tenant's.
+
+**Two new files under `CHAT_GATEWAY_STATE_DIR`** (`/data/state` here), both
+created `0600` by the gateway: `managed.env` (secrets the console minted or
+rotated) and `admin_audit.jsonl` (one line per console action — names, never
+values). **Back both up with the state dir.** `managed.env` is the one that
+matters: lose it and every console-rotated key reverts to whatever the
+hand-written `.env` still holds, or vanishes if the console minted it.
+
+**Boot order:** `managed.env` loads **before** the hand-written `.env`, and
+`load_env_file` lets an already-present value win — so a console-rotated key
+beats the stale line in `.env`. The real process environment (this compose's
+`environment:`) beats both, which is why the console **refuses** to manage any
+name set there (`admin.py:299-302`).
+
+⚠ **Shadowing hazard, stated rather than hidden.** Rotating a name whose old
+value lives in the read-only hand-written `.env` writes the new value to
+`managed.env`, which shadows it. The **old value stays on disk** in `.env`,
+inert — and becomes live again if `managed.env` is ever lost. The page says
+this at rotation time, and `/healthz` reports `admin.shadowed_env_names`
+(names only) until the operator removes the stale line by hand.
+
+**`registry.yaml.bak-*` now accumulates — one per console write**, beside the
+registry in `config/`. Nothing prunes them; delete old ones by hand. They hold
+env-var NAMES only, like the registry itself.
+
+**What `inbound_locked` protects is SPACES, and only spaces it can see.** On a
+locked app the console refuses (`403`, *"registry file edit"*): deleting it
+(`admin.py:547-549`), any change to its `identities` list — a reorder included
+(`:505-513`) — replacing the webhook of an identity it holds (`:626-628`), and
+any write that leaves **another** inbound-enabled app holding an identity whose
+`space:` is one the locked app posts in (`:346-363`). Route edits and display
+renames on a locked app remain allowed. ⚠ **A locked app whose identities carry
+no `space:` locks NOTHING** — an identity without one cannot match a space and
+is ignored (`admin.py:129-130`). **Before enabling the console, confirm every
+identity `aitrader` holds has `space:` written** in the box's registry.
+
+**Rollout, in this order** (spec §10 — the order is the point):
+
+1. Set `inbound_locked: true` on **`aitrader` FIRST**, in the box's registry, by
+   hand, **before** the console is enabled — and check its identities' `space:`
+   per the paragraph above.
+2. Mint the admin key; install it over stdin into the hand-written `.env`.
+3. Change the `config` mount to `rw` (§5).
+4. Rebuild (§4 — `app.redeploy` alone does not rebuild), add
+   `GATEWAY_ENABLE_ADMIN: "1"` to the compose, redeploy.
+5. Verify `/healthz` shows `admin.enabled: true`, then open `/admin`.
+6. Record the run in §10.
 
 ---
 

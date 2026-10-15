@@ -586,19 +586,29 @@ answer, and the last of the three degrades **cumulatively**: see its row.
 | `heartbeats.checks_undeliverable` | how many **distinct checks** were in that state on the **last** scan — the number to size the fault by, where the row above sizes the retry cadence. Returns to `0` when the registry is fixed, so this is the live signal beside the cumulative row above | **yes** |
 | `heartbeats.checks_orphaned` | registered checks whose `source` is **not a registered app** — renamed, removed, or a registry block that failed to load. ⚠ **`checks` and `missed` above EXCLUDE these**, so without this row those two under-report the deployment's dead-man coverage while the checks are still scanned and their alerts still fail. A bare count, never the ids | **yes** |
 | `registry.inbound_defaulted` | app ids whose registry entry says **nothing** about `allow_inbound` and therefore inherit the loader's default, which is **deny** (CG-88, 2026-08-31; before that date the default was `true`, so omitting the key GRANTED inbound). Empty is the correct state. It exists because an operator diffing the three copies of the registry — two of them off-repo — has nothing else that says which posture came from a file and which came from the loader. **Not a fault at any length**: the gateway is denying, which is the safe answer, and degrading on a guarantee working would teach you to ignore `degraded` — the same verdict `retention.files_deleted` and `subscriber.suppressed_opt_out` already have | no — the safe default working |
+| `delivery.unroutable_live` | queued jobs dropped **at send time** because the admin console withdrew the identity grant after they were accepted (CG-90). The send-time sibling of `unroutable_at_boot` — but where that one degrades, this does not: a withdrawn grant being honoured is the guard working (CG-12) | no — the guard working |
+| `admin.enabled` | whether the admin console (`/admin`, CG-90) is mounted. The `admin` block is **always present**; when the console is off it is `{"enabled": false}` and carries none of the fields below | no |
+| `admin.writes` | console writes that landed since start | no |
+| `admin.refused` | console requests refused since start — a bad id, an out-of-band edit, an `inbound_locked` app, a widening without confirmation. A refusal is a guard working | no |
+| `admin.last_write_error` | the last refusal or rolled-back write, as an **authored category only** — e.g. `refused: conflict`, `failed: write rolled back (OSError)` — never the message, which can quote admin-supplied text (`service.py:841-845`). The message goes only to the authenticated caller. `null` after a successful write | no |
+| `admin.audit_write_errors` | `admin_audit.jsonl` writes that failed since start. The console keeps working; those actions have no audit line | no |
+| `admin.shadowed_env_names` | secret **names** the console manages in `managed.env` whose **old value is still in the hand-written `.env`** — inert, but live again if `managed.env` is lost. An operator to-do (remove the line by hand), not a fault, and it never appears in `reasons` | no |
+| `admin.memory_disk_diverged` | a failed console write could **not** be fully rolled back, so `registry.yaml` / `managed.env` on disk and the live registry may disagree. The reason line names the fix: **Reload from disk** at `/admin`, or restart (`service.py:1586-1591`). The only `admin.*` field that degrades | **yes** |
 
 Four things the field names do not tell you:
 
 - **Two of the `delivery.*` fields count both queues.**
   `journal_skipped_lines` and `journal_write_errors` are sums across the
-  outbound *and* inbox journals — despite the prefix. The other **thirteen**
+  outbound *and* inbox journals — despite the prefix. The other **fourteen**
   `delivery.*` fields, and **all four** `inbox.*` fields, are per-queue exactly
   as their prefixes say — including the six added on 2026-08-02 and the four
   added on 2026-08-03, all ten of which describe the outbound dispatch thread
   and nothing else. (This read *"the other three"* until 2026-08-02, which was
   true of the five-row block it was written for, *"the other nine"* until
-  2026-08-03, and *"the other twelve"* until CG-76 added `delivery_failures`
-  the same day.) Do not read the prefix as a guarantee on those two.
+  2026-08-03, *"the other twelve"* until CG-76 added `delivery_failures`
+  the same day, and *"the other thirteen"* until CG-90 added
+  `unroutable_live` on 2026-10-15.) Do not read the prefix as a guarantee on
+  those two.
 - **`delivery.audit_write_errors` is summed too, but in a different sense, and
   the two must not be folded together.** It is not a sum across two *queues* —
   the inbox has no delivery log. It is a sum across two `DeliveryLog`
@@ -608,8 +618,9 @@ Four things the field names do not tell you:
   dedupes by identity, so the ordinary one-object deployment is not
   double-counted. Everything the prefix says about *which queue* still holds:
   it is outbound-only.
-- **Twenty-five degrading fields — the field count from above, not the
-  twenty-two rows the column marks — and the map to `reasons` lines is
+- **Twenty-six degrading fields — the field count from above, not the
+  twenty-three rows the column marks; both were one fewer until CG-90's
+  `admin.memory_disk_diverged` (2026-10-15) — and the map to `reasons` lines is
   one-to-one in neither direction.** `expired_at_boot` and `unroutable_at_boot` share one
   entry: both mean "queued, then not delivered", and one investigation reads
   them together. In the other direction the `retention.*` liveness fields —
