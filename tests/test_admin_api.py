@@ -17,11 +17,20 @@ from chat_gateway.service import create_app
 ADMIN = "cgk_admin_secret_for_tests"
 AUTH = {"Authorization": f"Bearer {ADMIN}"}
 HOOK = "https://chat.googleapis.com/v1/spaces/AAAA1234/messages?key=KEYVAL&token=TOKVAL"
+HOOK_LOCKED = "https://chat.googleapis.com/v1/spaces/LOCKED/messages?key=KEYVAL&token=TOKVAL"
+# `locked` posts through its OWN identity in its own space. Fix round 1 (I3)
+# made locked SPACES the guarantee, so sharing `i1` with `a1` would make every
+# a1 widening a locked-space violation — that is the rule working, not a fixture
+# the inbound-guard tests below can use.
 TEXT = """identities:
   i1:
     display: d1
     webhook_url_env: ADM_W1
     space: spaces/OLD1
+  il:
+    display: dl
+    webhook_url_env: ADM_WL
+    space: spaces/LOCKED
 apps:
   a1:
     key_env: ADM_K1
@@ -29,7 +38,7 @@ apps:
     allow_inbound: false
   locked:
     key_env: ADM_KL
-    identities: [i1]
+    identities: [il]
     allow_inbound: false
     inbound_locked: true
 """
@@ -472,3 +481,217 @@ def test_no_secret_value_reaches_any_non_mint_surface(gw, capsys):
     for s in surfaces:
         for secret in (key, "KEYVAL", "TOKVAL", ADMIN):
             assert secret not in s
+
+
+# ============================================================================
+# Fix round 1
+# ============================================================================
+CB = "https://cb.example/secret-token-XYZ"
+
+
+def _clean(text: str) -> bool:
+    return not any(s in text for s in ("KEYVAL", "TOKVAL", "secret-token-XYZ",
+                                        "chat.googleapis.com"))
+
+
+# -- I1: no 422 under /admin echoes request input ------------------------------
+def test_i1_list_typed_webhook_url_is_not_echoed(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/identities", headers=AUTH,
+                    json={"name": "n", "display": "d", "webhook_url": [HOOK]})
+    assert r.status_code == 422 and _clean(r.text)
+
+
+def test_i1_non_json_content_type_is_not_echoed(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/identities",
+                    headers={**AUTH, "Content-Type": "text/plain"},
+                    content=f'{{"name":"n","display":"d","webhook_url":"{HOOK}"}}')
+    assert r.status_code == 422 and _clean(r.text)
+
+
+def test_i1_bare_json_string_body_is_not_echoed(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/identities/i1/webhook", headers=AUTH, json=HOOK)
+    assert r.status_code == 422 and _clean(r.text)
+
+
+def test_i1_app_create_missing_app_id_does_not_echo_the_body(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/apps", headers=AUTH,
+                    json={"callback_url": CB, "allow_inbound": True})
+    assert r.status_code == 422 and _clean(r.text)
+    assert r.json()["detail"][0]["loc"] == ["body", "app_id"]
+
+
+def test_i1_a_secret_in_a_dict_KEY_is_not_echoed_through_loc(gw):
+    client, *_ = gw
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["i1"], "routes": {HOOK: 5}, "allow_inbound": False})
+    assert r.status_code == 422 and _clean(r.text)
+
+
+def test_i1_non_admin_422_contract_is_unchanged(gw):
+    client, *_ = gw
+    r = client.post("/v1/notify", headers={"Authorization": "Bearer cgk_tenant_one"},
+                    json={"severity": "info"})
+    assert r.status_code == 422 and "input" in r.json()["detail"][0]
+
+
+# -- I2: /healthz publishes a category, never registry free text ---------------
+def test_i2_a_url_in_identities_is_refused_before_apply_and_healthz_is_clean(gw):
+    client, *_ = gw
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["i1", HOOK], "routes": {}, "allow_inbound": False})
+    assert r.status_code == 422 and _clean(r.text)
+    assert _clean(client.get("/healthz").text)
+
+
+def test_i2_unknown_identity_and_route_key_are_refused(gw):
+    client, *_ = gw
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["nosuch"], "routes": {}, "allow_inbound": False})
+    assert r.status_code == 422 and "nosuch" in r.json()["detail"]
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["i1"], "routes": {"critical": "i1"},
+                         "allow_inbound": False})
+    assert r.status_code == 422
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["i1"], "routes": {"default": HOOK},
+                         "allow_inbound": False})
+    assert r.status_code == 422 and _clean(r.text)
+
+
+def test_i2_a_registry_validation_refusal_shows_only_its_category(gw):
+    client, *_ = gw
+    # callback_url with inbound OFF: confirmed widening, then the REAL loader
+    # refuses it — a RegistryError, whose text the authenticated 422 keeps.
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["i1"], "routes": {}, "allow_inbound": False,
+                         "callback_url": CB, "confirm_app_id": "a1"})
+    assert r.status_code == 422 and "callback_url" in r.json()["detail"]
+    admin = client.get("/healthz").json()["admin"]
+    assert admin["last_write_error"] == "refused: registry validation"
+    assert _clean(client.get("/healthz").text)
+
+
+# -- I3: inbound_locked is a guarantee about SPACES -----------------------------
+def test_i3_deleting_a_locked_app_is_403(gw):
+    client, holder, *_ = gw
+    r = client.post("/admin/api/apps/locked/delete", headers=AUTH,
+                    json={"confirm_app_id": "locked"})
+    assert r.status_code == 403 and "inbound_locked" in r.json()["detail"]
+    assert "locked" in holder.apps
+
+
+def test_i3_granting_a_locked_identity_to_an_inbound_app_is_403(gw):
+    client, holder, *_ = gw
+    r = _new_app(client, identities=["il"], routes={}, allow_inbound=True,
+                 confirm_app_id="newapp")
+    assert r.status_code == 403
+    assert "locked" in r.json()["detail"] and "hard rule #6" in r.json()["detail"]
+    assert "newapp" not in holder.apps
+
+
+def test_i3_a_new_identity_in_a_locked_space_cannot_carry_inbound(gw):
+    client, holder, *_ = gw
+    assert client.post("/admin/api/identities", headers=AUTH,
+                       json={"name": "inlock", "display": "x",
+                             "webhook_url": HOOK_LOCKED}).status_code == 201
+    r = _new_app(client, identities=["inlock"], routes={}, allow_inbound=True,
+                 confirm_app_id="newapp")
+    assert r.status_code == 403 and "newapp" not in holder.apps
+    # Outbound only is fine — the guarantee is about inbound.
+    r = _new_app(client, identities=["inlock"], routes={}, allow_inbound=False)
+    assert r.status_code == 201
+
+
+def test_i3_widening_an_app_already_in_a_locked_space_is_403(gw):
+    client, holder, *_ = gw
+    _new_app(client, identities=["il"], routes={}, allow_inbound=False)
+    r = client.put("/admin/api/apps/newapp", headers=AUTH,
+                   json={"identities": ["il"], "routes": {}, "allow_inbound": True,
+                         "confirm_app_id": "newapp"})
+    assert r.status_code == 403 and holder.apps["newapp"].allow_inbound is False
+
+
+def test_i3_webhook_replace_into_a_locked_space_is_403(gw):
+    client, holder, *_ = gw
+    assert client.put("/admin/api/apps/a1", headers=AUTH,
+                      json={"identities": ["i1"], "routes": {}, "allow_inbound": True,
+                            "confirm_app_id": "a1"}).status_code == 200
+    r = client.post("/admin/api/identities/i1/webhook", headers=AUTH,
+                    json={"webhook_url": HOOK_LOCKED})
+    assert r.status_code == 403 and holder.identities["i1"].space == "spaces/OLD1"
+
+
+# -- I4: absent = unchanged for the fields the state view hides -----------------
+def _with_callback(client):
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["i1"], "routes": {}, "allow_inbound": True,
+                         "callback_url": CB, "unreachable_message": "down",
+                         "confirm_app_id": "a1"})
+    assert r.status_code == 200
+
+
+def test_i4_put_without_callback_keeps_it(gw):
+    client, holder, wiring, tmp = gw
+    _with_callback(client)
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["i1"], "routes": {}, "allow_inbound": True})
+    assert r.status_code == 200
+    assert holder.apps["a1"].callback_url == CB
+    assert holder.apps["a1"].unreachable_message == "down"
+    assert CB in (tmp / "registry.yaml").read_text(encoding="utf-8")
+
+
+def test_i4_put_with_empty_string_removes_it(gw):
+    client, holder, *_ = gw
+    _with_callback(client)
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["i1"], "routes": {}, "allow_inbound": True,
+                         "callback_url": "", "unreachable_message": ""})
+    assert r.status_code == 200
+    assert holder.apps["a1"].callback_url == "" and holder.apps["a1"].unreachable_message == ""
+
+
+def test_i4_changing_the_callback_is_still_a_widening(gw):
+    client, holder, *_ = gw
+    _with_callback(client)
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["i1"], "routes": {}, "allow_inbound": True,
+                         "callback_url": "https://other.example/cb"})
+    assert r.status_code == 428 and holder.apps["a1"].callback_url == CB
+
+
+# -- M2 / M3 / M6 -----------------------------------------------------------------
+def test_m2_a_non_ascii_bearer_is_a_counted_401_not_a_500(gw):
+    client, *_ = gw
+    tc = TestClient(client.app, raise_server_exceptions=False)
+    r = tc.get("/admin/api/state", headers={"Authorization": b"Bearer caf\xe9"})
+    assert r.status_code == 401
+
+
+def test_m3_an_audit_failure_does_not_lose_the_minted_key(tmp_path, monkeypatch, capsys):
+    client, holder, wiring = _build(tmp_path, monkeypatch, object())
+    try:
+        # A directory where the audit FILE should be: every append fails.
+        (tmp_path / "state" / "admin_audit.jsonl").mkdir(parents=True)
+        r = _new_app(client)
+        assert r.status_code == 201 and r.json()["key"].startswith("cgk_")
+        assert "newapp" in holder.apps
+        h = client.get("/healthz").json()
+        assert h["admin"]["audit_write_errors"] >= 1
+        assert not any("admin" in reason for reason in h["reasons"])
+        err = capsys.readouterr().err
+        assert "admin audit" in err and r.json()["key"] not in err
+    finally:
+        _clean_minted_env()
+
+
+def test_m6_mint_and_rotate_responses_are_no_store(gw):
+    client, *_ = gw
+    r = _new_app(client)
+    assert r.status_code == 201 and r.headers["Cache-Control"] == "no-store"
+    r = client.post("/admin/api/apps/newapp/rotate-key", headers=AUTH, json={})
+    assert r.status_code == 200 and r.headers["Cache-Control"] == "no-store"

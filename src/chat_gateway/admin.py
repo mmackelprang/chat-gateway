@@ -29,7 +29,7 @@ from .delivery import DeliveryLog
 from .managed_secrets import ManagedSecrets
 from .registry import ADMIN_KEY_ENV, SEVERITIES, App
 from .registry_holder import RegistryHolder
-from .registry_store import RegistryStore, StoreError, flow_seq
+from .registry_store import RegistryStore, StoreError, category_for, flow_seq
 
 KEY_PREFIX = "CHAT_GATEWAY_API_KEY__"
 WEBHOOK_PREFIX = "GOOGLE_CHAT_WEBHOOK_URL__"
@@ -64,13 +64,17 @@ def parse_webhook_space(url: str) -> str:
 
 
 def widening(old: App | None, new) -> list[str]:
-    """Which parts of `new` widen inbound relative to `old` (spec §6.4)."""
+    """Which parts of `new` widen inbound relative to `old` (spec §6.4).
+
+    `new.callback_url is None` means "not sent, unchanged" (fix round I4), so
+    it is compared as the old value — it cannot widen anything."""
     reasons: list[str] = []
     old_in = bool(old and old.allow_inbound)
     if new.allow_inbound and not old_in:
         reasons.append("allow_inbound")
     old_cb = old.callback_url if old else ""
-    if new.callback_url and new.callback_url != old_cb:
+    new_cb = old_cb if new.callback_url is None else new.callback_url
+    if new_cb and new_cb != old_cb:
         reasons.append("callback_url")
     if new.allow_inbound:
         old_users = set(old.allowed_users) if old else set()
@@ -100,6 +104,48 @@ def _node(tree: CommentedMap, section: str, key: str, kind: str) -> CommentedMap
     return node
 
 
+#: One app's inbound-relevant shape: (allow_inbound, inbound_locked, identities).
+_AppShape = tuple[bool, bool, tuple[str, ...]]
+
+
+def _shape(reg) -> tuple[dict[str, _AppShape], dict[str, str]]:
+    """The parts of a registry the locked-space rule reads, as plain data, so a
+    write's RESULT can be modelled by editing a copy before anything is applied."""
+    apps = {a.app_id: (a.allow_inbound, a.inbound_locked, tuple(a.identities))
+            for a in reg.apps.values()}
+    spaces = {i.name: i.space for i in reg.identities.values()}
+    return apps, spaces
+
+
+def locked_space_violations(apps: dict[str, _AppShape],
+                            spaces: dict[str, str]) -> set[tuple[str, str]]:
+    """Every `(app, locked_app)` where `app` is inbound and posts in a space an
+    `inbound_locked` app posts in (fix round I3).
+
+    Inbound is routed BY SPACE (`Registry.apps_for_space`), so a lock that only
+    guarded its own registry entry was bypassable: grant the locked tenant's
+    identity — or any identity whose webhook sits in the same space — to a new
+    inbound app, and that tenant's space traffic reaches a consumer. The lock
+    is therefore a guarantee about SPACES. An identity with no `space` cannot
+    match anything and is ignored.
+    """
+    locked: dict[str, str] = {}
+    for app_id, (_, is_locked, idents) in sorted(apps.items()):
+        if is_locked:
+            for n in idents:
+                if spaces.get(n):
+                    locked.setdefault(spaces[n], app_id)
+    out: set[tuple[str, str]] = set()
+    for app_id, (inbound, is_locked, idents) in apps.items():
+        if is_locked or not inbound:
+            continue
+        for n in idents:
+            sp = spaces.get(n)
+            if sp and sp in locked:
+                out.add((app_id, locked[sp]))
+    return out
+
+
 def _section(tree: CommentedMap, section: str) -> CommentedMap:
     """`tree[section]`, created if the file left it empty (`apps:` with no body
     loads as None — `load_registry` accepts that, so the console must too)."""
@@ -117,7 +163,10 @@ class AdminWiring:
     def health(self) -> dict:
         return {"enabled": True, "writes": self.store.writes,
                 "refused": self.store.refused,
+                # An authored CATEGORY, never a message: this lands on the
+                # unauthenticated /healthz (fix round I2, hard rule #2).
                 "last_write_error": self.store.last_write_error,
+                "audit_write_errors": self.audit.write_errors,
                 "shadowed_env_names": self.secrets.shadowed(),
                 "memory_disk_diverged": self.store.memory_disk_diverged}
 
@@ -150,9 +199,14 @@ class AppFields(_Guarded):
     identities: list[str] = Field(default_factory=list)
     routes: dict[str, str] = Field(default_factory=dict)
     allow_inbound: bool = False
-    callback_url: str = ""
+    # ⚠ Fix round I4. `None` (absent) = UNCHANGED, `""` = remove, else set.
+    # `state()` deliberately shows only `callback_url_set` — the URL may carry
+    # a token — so a page cannot echo back what it was never shown. Under the
+    # old full-replace `""` default, ANY console edit of job-hunter silently
+    # deleted its callback_url. The page sends these only when edited.
+    callback_url: str | None = None
     allowed_users: list[str] = Field(default_factory=list)
-    unreachable_message: str = ""
+    unreachable_message: str | None = None
     confirm_app_id: str = ""
 
 
@@ -203,10 +257,14 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         # Read per request, not at mount: rotating the admin key is an env
         # change plus restart today, and an unset key must refuse EVERYTHING
         # rather than compare against "" (hmac of two empties is equal).
-        expected = os.environ.get(ADMIN_KEY_ENV, "")
-        presented = ""
+        expected = os.environ.get(ADMIN_KEY_ENV, "").encode("utf-8")
+        presented = b""
         if authorization and authorization.startswith("Bearer "):
-            presented = authorization.removeprefix("Bearer ").strip()
+            presented = authorization.removeprefix("Bearer ").strip().encode("utf-8")
+        # BYTES, not str (fix round M2): `hmac.compare_digest` raises TypeError
+        # on a non-ASCII str, and Starlette decodes headers as latin-1 — so one
+        # non-ASCII byte in the header was a 500 the limiter never counted, an
+        # unthrottled probe. As bytes it is an ordinary, counted 401.
         if not expected or not presented or not hmac.compare_digest(presented, expected):
             limiter.fail(host)
             raise HTTPException(401, "admin key required", headers={"WWW-Authenticate": "Bearer"})
@@ -214,13 +272,15 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         # refuses an app whose key_env IS the admin variable; this catches the
         # same VALUE under a different name, which no file check can see.
         for app in registry.apps.values():
-            v = os.environ.get(app.key_env, "")
+            v = os.environ.get(app.key_env, "").encode("utf-8")
             if v and hmac.compare_digest(v, expected):
                 raise HTTPException(503, f"the admin key equals app {app.app_id!r}'s API key — "
                                          "mint a separate admin key (hard rule #4)")
 
-    def refuse(status: int, message: str) -> HTTPException:
-        store.note_refusal(message)
+    def refuse(status: int, message: str, category: str | None = None) -> HTTPException:
+        # The store counts it and keeps the CATEGORY only (I2); the message goes
+        # to the authenticated caller and nowhere else.
+        store.note_refusal(category or category_for(status))
         return HTTPException(status, message)
 
     def run(mutate, secret_changes=None, *, sha=None):
@@ -229,7 +289,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         except StoreError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
         except ValueError as exc:  # ManagedSecrets value refusal — names only
-            raise refuse(422, str(exc)) from exc
+            raise refuse(422, str(exc), "refused: secret value") from exc
 
     def check_id(value: str, kind: str) -> None:
         if not ID_RE.match(value):
@@ -241,22 +301,79 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             raise refuse(409, f"{name} is set in the gateway's process environment, which "
                               "overrides managed.env at boot — change it there, not here")
 
+    def check_refs(body: AppFields) -> None:
+        """Every identity and route value names a registered identity; every
+        route key is a known severity (fix round I2a; closes M5, which silently
+        DROPPED an unknown key). Before apply, so admin-supplied junk never
+        reaches `load_registry`'s messages. A value is quoted back only if it
+        has the shape of an id — anything else may be a URL pasted into the
+        wrong field, and is described rather than echoed (hard rule #2)."""
+        known = registry.identities
+
+        def ref(value: str, where: str) -> None:
+            if not ID_RE.match(value):
+                raise refuse(422, f"{where} contains a value that is not a registered "
+                                  "identity id")
+            if value not in known:
+                raise refuse(422, f"{where}: unknown identity {value!r}")
+
+        for n in body.identities:
+            ref(n, "identities")
+        allowed_keys = ["default", *SEVERITIES]
+        for key, value in body.routes.items():
+            if key not in allowed_keys:
+                shown = f" {key!r}" if ID_RE.match(key) else ""
+                raise refuse(422, f"routes key{shown} is not one of {', '.join(allowed_keys)}")
+            ref(value, f"routes.{key}")
+
     def guard_inbound(old: App | None, body: AppFields, app_id: str) -> list[str]:
+        """Raises StoreError — it runs INSIDE `mutate`, under the store lock,
+        where `registry.current` agrees with the file being edited (fix round
+        I3.3; closes M1, the guard evaluated against a snapshot that could be
+        swapped before the write landed)."""
         reasons = widening(old, body)
         if not reasons:
             return []
         if old is not None and old.inbound_locked:
-            raise refuse(403, f"app {app_id!r} is inbound_locked: widening ({', '.join(reasons)}) "
-                              "is a registry file edit, not a console action. " + RULE_6)
+            raise StoreError(403, f"app {app_id!r} is inbound_locked: widening "
+                                  f"({', '.join(reasons)}) is a registry file edit, not a "
+                                  "console action. " + RULE_6)
         if body.confirm_app_id != app_id:
-            raise refuse(428, f"widening inbound ({', '.join(reasons)}) requires typing the app id "
-                              f"to confirm. {RULE_6}")
+            raise StoreError(428, f"widening inbound ({', '.join(reasons)}) requires typing "
+                                  f"the app id to confirm. {RULE_6}")
         return reasons
+
+    def guard_locked_spaces(after: tuple[dict, dict], touched: set[str]) -> None:
+        """Refuse a write whose RESULT routes a locked tenant's space to another
+        inbound app (fix round I3.2). Inside `mutate`, like `guard_inbound`.
+
+        A violation is refused if this write CREATES it, or if it involves an
+        app this write touches. One that a hand edit already put in the file
+        and this write does not touch is left alone: blocking every unrelated
+        console write on it would make the console unusable without making the
+        file any safer — the file edit is where it must be fixed."""
+        before = locked_space_violations(*_shape(registry.current))
+        bad = sorted(v for v in locked_space_violations(*after)
+                     if v not in before or v[0] in touched)
+        if bad:
+            app_id, locked_app = bad[0]
+            raise StoreError(403, f"app {app_id!r} would receive inbound from a space that "
+                                  f"inbound_locked app {locked_app!r} posts in — a locked "
+                                  "tenant's space is never routed to another consumer "
+                                  "from the console. " + RULE_6)
+
+    def after_app(app_id: str, body: AppFields) -> tuple[dict, dict]:
+        apps, spaces = _shape(registry.current)
+        old = apps.get(app_id)
+        apps[app_id] = (bool(body.allow_inbound), bool(old and old[1]),
+                        tuple(body.identities))
+        return apps, spaces
 
     def app_map(target: CommentedMap, body: AppFields, key_env: str | None) -> list[str]:
         """Write `body` into `target` in place; returns the field names written.
         In place, so comments on untouched keys and the hand-only
         `inbound_locked` key survive."""
+        written = ["identities", "allow_inbound", "routes", "allowed_users"]
         if key_env is not None:
             target["key_env"] = key_env
         target["identities"] = flow_seq(list(body.identities))
@@ -271,6 +388,9 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             target.pop("routes", None)
         for key, value in (("callback_url", body.callback_url),
                            ("unreachable_message", body.unreachable_message)):
+            if value is None:  # I4: not sent = unchanged
+                continue
+            written.append(key)
             if value:
                 target[key] = value
             else:
@@ -279,8 +399,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             target["allowed_users"] = flow_seq([u.lower() for u in body.allowed_users])
         else:
             target.pop("allowed_users", None)
-        return ["identities", "allow_inbound", "routes", "callback_url",
-                "unreachable_message", "allowed_users"]
+        return written
 
     def get_app(app_id: str) -> App:
         app = registry.apps.get(app_id)
@@ -347,17 +466,20 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         check_id(body.app_id, "app")
         if body.app_id in registry.apps:
             raise refuse(409, f"app {body.app_id!r} already exists")
-        widened = guard_inbound(None, body, body.app_id)
+        check_refs(body)
         key_env = env_name(KEY_PREFIX, body.app_id)
         managed_name(key_env)
         key = mint_key()
         fields: list[str] = []
+        widened: list[str] = []
 
         def mutate(tree):
             apps = _section(tree, "apps")
             # C4's other half: the holder said "absent", the file may disagree.
             if body.app_id in apps:
                 raise StoreError(409, f"app {body.app_id!r} already exists")
+            widened.extend(guard_inbound(None, body, body.app_id))
+            guard_locked_spaces(after_app(body.app_id, body), {body.app_id})
             m = CommentedMap()
             fields.extend(app_map(m, body, key_env))
             apps[body.app_id] = m
@@ -371,11 +493,19 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
 
     @router.put("/api/apps/{app_id}", dependencies=[Depends(require_admin)])
     def update_app_entry(app_id: str, body: AppFields):
-        old = get_app(app_id)
-        widened = guard_inbound(old, body, app_id)
+        get_app(app_id)
+        check_refs(body)
         fields: list[str] = []
-        run(lambda tree: fields.extend(app_map(_node(tree, "apps", app_id, "app"), body, None)),
-            sha=body.registry_sha256)
+        widened: list[str] = []
+
+        def mutate(tree):
+            target = _node(tree, "apps", app_id, "app")
+            # Re-read under the lock: the guard judges the app the file holds now.
+            widened.extend(guard_inbound(registry.current.apps.get(app_id), body, app_id))
+            guard_locked_spaces(after_app(app_id, body), {app_id})
+            fields.extend(app_map(target, body, None))
+
+        run(mutate, sha=body.registry_sha256)
         audit.record("app_updated", app_id, fields)
         if widened:
             audit.record("inbound_widened", app_id, widened)
@@ -399,6 +529,13 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
 
         def mutate(tree):
             _node(tree, "apps", app_id, "app")
+            # Fix round I3.1: delete-then-recreate was a two-step bypass of the
+            # widening refusal. A locked app leaves the registry the way it
+            # entered it — by a file edit.
+            live = registry.current.apps.get(app_id)
+            if live is not None and live.inbound_locked:
+                raise StoreError(403, f"app {app_id!r} is inbound_locked: deleting it is a "
+                                      "registry file edit, not a console action. " + RULE_6)
             tree["apps"].pop(app_id)
 
         remove = {app.key_env: None} if secrets.source_of(app.key_env) == "managed" else None
@@ -469,7 +606,14 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         managed_name(ident.webhook_url_env)
 
         def mutate(tree):
-            _node(tree, "identities", name, "identity")["space"] = space
+            node = _node(tree, "identities", name, "identity")
+            # Fix round I3.2: moving an identity's space moves every inbound app
+            # that holds it — and, if a locked app holds it, moves the lock.
+            apps, spaces = _shape(registry.current)
+            spaces[name] = space
+            guard_locked_spaces((apps, spaces),
+                                {a for a, (_, _, ids) in apps.items() if name in ids})
+            node["space"] = space
 
         run(mutate, {ident.webhook_url_env: body.webhook_url.strip()}, sha=body.registry_sha256)
         audit.record("webhook_replaced", name, [ident.webhook_url_env, "space"])

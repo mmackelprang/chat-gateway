@@ -32,13 +32,33 @@ from .registry import Registry, RegistryError, load_registry
 from .registry_holder import RegistryHolder
 
 
+#: What `/healthz` may say about a refusal, by status, when the raiser names no
+#: category. `/healthz` is UNAUTHENTICATED, and a refusal's full message can
+#: carry admin-supplied text — `RegistryError` quotes the value it rejected —
+#: so it publishes only one of these authored phrases. The authenticated
+#: response keeps the full message (CG-90 Task 6 fix round, I2; hard rule #2).
+_DEFAULT_CATEGORY = {
+    403: "refused: inbound guard",
+    404: "refused: unknown target",
+    409: "refused: conflict",
+    422: "refused: validation",
+    428: "refused: confirmation required",
+}
+
+
+def category_for(status: int) -> str:
+    return _DEFAULT_CATEGORY.get(status, "failed" if status >= 500 else "refused")
+
+
 class StoreError(Exception):
     """A refused or failed console write. Messages are authored here and name
-    ids and env-var NAMES only — never a value (hard rule #2)."""
+    ids and env-var NAMES only — never a value (hard rule #2). `category` is
+    the short authored phrase `/healthz` publishes instead of the message."""
 
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, category: str | None = None):
         super().__init__(message)
         self.status = status
+        self.category = category or category_for(status)
 
 
 def flow_seq(items: list[str]) -> CommentedSeq:
@@ -91,13 +111,19 @@ class RegistryStore:
     def sha256(self) -> str:
         return self._sha
 
-    def note_refusal(self, message: str) -> None:
+    def note_refusal(self, category: str) -> None:
+        """Count a refusal. `last_write_error` — published on the
+        unauthenticated `/healthz` — gets the authored CATEGORY only; the
+        message, which may quote admin-supplied text, never reaches this object
+        (CG-90 fix round I2). It used to take the message and keep `[:300]` of
+        it — truncate-and-hope, which put a webhook URL on `/healthz`."""
         self.refused += 1
-        self.last_write_error = message[:300]
+        self.last_write_error = category
 
-    def _refuse(self, status: int, message: str) -> StoreError:
-        self.note_refusal(message)
-        return StoreError(status, message)
+    def _refuse(self, status: int, message: str, category: str | None = None) -> StoreError:
+        exc = StoreError(status, message, category)
+        self.note_refusal(exc.category)
+        return exc
 
     def _roll_back(self, snap: SecretsSnapshot, exc: BaseException) -> NoReturn:
         """Restore the secrets snapshot, then raise the 500. The registry file
@@ -111,11 +137,13 @@ class RegistryStore:
             self.memory_disk_diverged = True
             raise self._refuse(
                 500, f"write failed ({type(exc).__name__}) and the rollback of "
-                     "managed secrets ALSO failed — restart the gateway") from exc
+                     "managed secrets ALSO failed — restart the gateway",
+                f"failed: rollback failed ({type(exc).__name__})") from exc
         # Exception TYPE only: an OSError's str() carries a path at best, and
         # this message reaches the browser (CG-29's rule, applied to CG-90).
         raise self._refuse(
-            500, f"write failed and was rolled back ({type(exc).__name__})") from exc
+            500, f"write failed and was rolled back ({type(exc).__name__})",
+            f"failed: write rolled back ({type(exc).__name__})") from exc
 
     def apply(self, mutate: Callable[[CommentedMap], None] | None, *,
               secrets: dict[str, str | None] | None = None,
@@ -127,10 +155,12 @@ class RegistryStore:
             #    older tree.
             if _sha(raw) != self._sha:
                 raise self._refuse(409, "registry.yaml was edited outside the console — "
-                                        "reload from disk first")
+                                        "reload from disk first",
+                                   "refused: edited outside the console")
             if expect_sha256 is not None and expect_sha256 != self._sha:
                 raise self._refuse(409, "the registry changed since this page loaded it — "
-                                        "refresh and try again")
+                                        "refresh and try again",
+                                   "refused: conflict")
             crlf = b"\r\n" in raw
             text = raw.decode("utf-8").replace("\r\n", "\n")
             y = _yaml()
@@ -143,13 +173,14 @@ class RegistryStore:
                 # error message quotes the offending line.
                 raise self._refuse(
                     422, f"the console cannot parse registry.yaml for editing "
-                         f"({type(exc).__name__}); edit it by hand") from exc
+                         f"({type(exc).__name__}); edit it by hand",
+                    "refused: registry unparseable") from exc
             # 2. edit
             if mutate is not None:
                 try:
                     mutate(tree)
                 except StoreError as exc:
-                    self.note_refusal(str(exc))
+                    self.note_refusal(exc.category)
                     raise
             # 3. serialize, keeping the file's own line endings
             buf = io.StringIO()
@@ -167,10 +198,11 @@ class RegistryStore:
                 probe.write_bytes(candidate)
                 new = load_registry(probe)
             except RegistryError as exc:
-                raise self._refuse(422, str(exc)) from exc
+                raise self._refuse(422, str(exc), "refused: registry validation") from exc
             except OSError as exc:
                 raise self._refuse(
-                    500, f"could not stage the candidate ({type(exc).__name__})") from exc
+                    500, f"could not stage the candidate ({type(exc).__name__})",
+                    f"failed: could not stage ({type(exc).__name__})") from exc
             finally:
                 probe.unlink(missing_ok=True)
             # 5. parser agreement — ruamel wrote it, PyYAML reads it at boot; a
@@ -178,7 +210,8 @@ class RegistryStore:
             #    something else in production.
             if yaml.safe_load(candidate.decode("utf-8")) != _plain(tree):
                 raise self._refuse(422, "the YAML writer and loader disagree on this edit; "
-                                        "nothing was written")
+                                        "nothing was written",
+                                   "refused: parser disagreement")
             # 6. secrets
             snap = self._secrets.snapshot((secrets or {}).keys())
             if secrets:
@@ -190,7 +223,7 @@ class RegistryStore:
                     # Caught around `apply` ALONE: a ValueError from the registry
                     # write below must still roll the secrets back. A 422, not a
                     # 500; the message names the variable only.
-                    raise self._refuse(422, str(exc)) from exc
+                    raise self._refuse(422, str(exc), "refused: secret value") from exc
                 except Exception as exc:  # noqa: BLE001 — partial write possible
                     self._roll_back(snap, exc)
             if changed:
@@ -220,7 +253,7 @@ class RegistryStore:
             try:
                 new = load_registry(self._path)
             except RegistryError as exc:
-                raise self._refuse(422, str(exc)) from exc
+                raise self._refuse(422, str(exc), "refused: registry validation") from exc
             self._holder.swap(new)
             # The hash of the bytes read BEFORE the load: if the file changes in
             # between, the next apply sees a mismatch and 409s, which is the safe
