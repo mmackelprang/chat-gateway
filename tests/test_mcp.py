@@ -1340,7 +1340,7 @@ def _drive_serve(monkeypatch, tmp_path, env_value):
     registry = load_registry(p)
     monkeypatch.setattr(cg_main, "build_runtime",
                         lambda: (registry, Inbox(), {"webhook": FakeAdapter()},
-                                 None, str(tmp_path / "state"), _FakeSweeper()))
+                                 None, str(tmp_path / "state"), _FakeSweeper(), None))
     captured = {}
 
     def fake_create_app(*a, **kw):

@@ -25,6 +25,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
+# No cycle: `admin` imports delivery / registry / auth / the store, never this.
+from .admin import AdminWiring, build_admin_router
 from .auth import AuthError, authenticate
 from .delivery import DeliveryLog, Dispatcher
 from .envelope import CG_ACTION_KEY, DeliveryResult, OutboundMessage
@@ -285,6 +287,8 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                # for when a deployed container answered 200 to a query parameter
                # it did not have.
                mcp_enabled: bool = False,
+               # CG-90. None = console off (the default, and every existing test).
+               admin: AdminWiring | None = None,
                monitor_interval: float = 60.0) -> FastAPI:
     """`adapters` maps identity mode -> adapter with .send(identity, message)."""
 
@@ -451,6 +455,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # only by being handed the same log this app already writes and serves
         # at `GET /v1/deliveries`.
         app.include_router(build_mcp_router(registry, adapters, delivery_log=log))
+
+    # CG-90. Mounted only when wired, the posture `/mcp` set: an operator arms
+    # it deliberately. Its own credential, never `authenticate()` (hard rule #4).
+    app.state.admin = admin
+    if admin is not None:
+        app.include_router(build_admin_router(registry, admin, delivery_log=log))
 
     # -- raw envelope send (synchronous; aiteam notify.py path) ---------------
     @app.post("/v1/messages", response_model=DeliveryResult)
@@ -792,6 +802,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             "mcp": {"enabled": bool(app.state.mcp_enabled),
                     "tools": list(MCP_TOOL_NAMES) if app.state.mcp_enabled
                              else []},
+            # CG-90 spec §7. Counters never degrade (a refusal is a guard
+            # working, CG-12); `shadowed_env_names` is an operator to-do, not a
+            # fault. Only `memory_disk_diverged` degrades — below, in `reasons`.
+            # Names only: `last_write_error` is authored by the store and the
+            # router and carries ids and env-var NAMES, never a value (rule #2).
+            "admin": admin.health() if admin is not None else {"enabled": False},
             "registry": registry.health(),
             "inbox": {"pending": inbox.pending_counts(), "dropped": inbox.dropped,
                       "replayed_at_boot": getattr(inbox, "replayed", 0),
@@ -1531,6 +1547,12 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                     "(projects/<PROJECT_ID>/topics/<TOPIC>) — the topic, NOT the "
                     "subscription"
                 )
+        if admin is not None and admin.store.memory_disk_diverged:
+            reasons.append(
+                "admin console: a failed write could not be fully rolled back, so "
+                "registry.yaml / managed.env on disk and the live registry may "
+                "disagree — use Reload from disk at /admin, or restart the gateway"
+            )
         # Names, never values: identity names and app ids are non-secret (they
         # live in the committed registry); the poll error is a type and a status.
         # Load-bearing, because this endpoint is UNAUTHENTICATED.
