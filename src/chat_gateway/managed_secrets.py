@@ -114,16 +114,23 @@ class ManagedSecrets:
 
     def apply(self, changes: dict[str, str | None]) -> None:
         """`None` removes. Validates EVERY change before writing ANYTHING — the
-        store relies on a `ValueError` leaving file and environ untouched."""
+        store relies on a `ValueError` leaving file and environ untouched.
+
+        Not thread-safe: callers must serialize `apply()`/`restore()` — the
+        store holds a lock; this module does not."""
         for name, value in changes.items():
             if not isinstance(name, str) or not _NAME.fullmatch(name):
                 raise ValueError("invalid variable name")
-            if value is not None and ('"' in value or "\n" in value or "\r" in value):
-                # Refused, not escaped: `parse_env_file` has no escape syntax, so
-                # the first `"` would silently truncate the value at next boot.
-                # The value is never echoed, so the message names only the
-                # variable.
-                raise ValueError(f"{name}: value contains a quote or newline")
+            if value is not None and parse_env_file(f'{name}="{value}"\n') != {name: value}:
+                # Refused by ROUND-TRIP, not a denylist: `parse_env_file` has no
+                # escape syntax and splits on `str.splitlines()`, which breaks on
+                # \v, \f, \x1c-\x1e, \x85,   and   as well as \n/\r. A
+                # denylist of `"`/\n/\r accepted those, and the credential
+                # silently changed at the next boot (CG-90 review). The one parser
+                # the boot path uses is the only authority on what survives. A
+                # non-string value fails here too, as a ValueError. The value is
+                # never echoed, so the message names only the variable.
+                raise ValueError(f"{name}: value would not survive a reload of the file")
         entries = self._entries()
         for name, value in changes.items():
             if value is None:

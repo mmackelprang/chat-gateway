@@ -72,11 +72,23 @@ def test_restore_of_a_file_that_did_not_exist_deletes_it(tmp_path):
     assert not (tmp_path / "state" / "managed.env").exists() and "A" not in env
 
 
-def test_a_value_with_a_quote_or_newline_is_refused(tmp_path):
-    ms = _ms(tmp_path, {})
-    for bad in ('a"b', "a\nb"):
-        with pytest.raises(ValueError):
-            ms.apply({"A": bad})
+@pytest.mark.parametrize("bad", [
+    'a"b', "a\nb", "a\rb",
+    # `str.splitlines()` boundaries beyond \n/\r — accepted by the original
+    # denylist and silently changed at the next boot (CG-90 review).
+    "a\vb", "a\fb", "a\x1cb", "a\x1db", "a\x1eb", "a\x85b", "a b", "a b",
+    5,
+])
+def test_a_value_that_would_not_round_trip_is_refused(tmp_path, bad):
+    env = {}
+    ms = _ms(tmp_path, env)
+    ms.apply({"KEEP": "k"})
+    path = tmp_path / "state" / "managed.env"
+    before = path.read_bytes()
+    with pytest.raises(ValueError):
+        ms.apply({"A": bad})
+    assert path.read_bytes() == before
+    assert env == {"KEEP": "k"}
 
 
 def test_a_refused_value_is_never_echoed_and_nothing_is_written(tmp_path):
