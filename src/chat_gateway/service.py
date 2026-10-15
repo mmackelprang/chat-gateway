@@ -18,9 +18,12 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -263,6 +266,35 @@ def _interaction_config(registry: Registry, app_id: str) -> dict | None:
     }
 
 
+_SAFE_LOC = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _redacted_loc(loc) -> list:
+    """`loc` with any element that is not plainly OUR field name replaced. A
+    dict KEY is the caller's data and lands in `loc` verbatim — `routes: {<a
+    webhook URL>: 5}` put the URL there (CG-90 fix round, I1)."""
+    return [p if isinstance(p, int) or (isinstance(p, str) and _SAFE_LOC.match(p)) else "?"
+            for p in loc]
+
+
+async def _admin_safe_validation_handler(request: Request, exc: RequestValidationError):
+    """FastAPI's 422 body echoes `input` — for a missing field, a wrong type or
+    an unparseable body, that is the WHOLE request, webhook URL or callback
+    token included (CG-90 fix round, I1; hard rule #2). Under `/admin` each
+    error is cut to `loc` (redacted), `msg` and `type`: `msg` is pydantic's
+    rendering of the error kind, never the value.
+
+    Every other path is delegated UNCHANGED to FastAPI's own handler: the
+    tenant routes' 422 body, `input` and all, is a published contract, and
+    this handler exists only because the console is mounted."""
+    if request.url.path == "/admin" or request.url.path.startswith("/admin/"):
+        return JSONResponse(status_code=422, content={"detail": [
+            {"loc": _redacted_loc(e.get("loc", ())), "msg": e.get("msg", ""),
+             "type": e.get("type", "")}
+            for e in exc.errors()]})
+    return await request_validation_exception_handler(request, exc)
+
+
 class HeartbeatIn(BaseModel):
     check_id: str = Field(min_length=1, max_length=100)
     schedule: str = Field(description="weekdays | daily | every:<N><s|m|h|d>")
@@ -461,6 +493,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     app.state.admin = admin
     if admin is not None:
         app.include_router(build_admin_router(registry, admin, delivery_log=log))
+        app.add_exception_handler(RequestValidationError, _admin_safe_validation_handler)
 
     # -- raw envelope send (synchronous; aiteam notify.py path) ---------------
     @app.post("/v1/messages", response_model=DeliveryResult)
