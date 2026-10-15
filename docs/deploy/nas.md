@@ -509,8 +509,9 @@ Writing those rows is a homelab-repo change — see §9.
 
 ### The admin console (CG-90)
 
-Added 2026-10-15. **Nothing below has run on the box** — §10 gains an entry when
-it does, and not before. The design, its decisions and the residual risk of the
+Added 2026-10-15. ~~**Nothing below has run on the box** — §10 gains an entry when
+it does, and not before.~~ ✅ **ENABLED ON THE BOX 2026-10-15** — §10, *Run
+2026-10-15*. The struck sentence was true for a few hours. The design, its decisions and the residual risk of the
 admin key have one home:
 [`docs/superpowers/specs/2026-10-15-admin-console-design.md`](../superpowers/specs/2026-10-15-admin-console-design.md).
 This subsection is only what an operator must do and must not get wrong.
@@ -1510,6 +1511,72 @@ repeating, not as a property of the runbook.
   delivered a real message to a real Chat space**. That is `webhook.send`, cleared
   2026-07-29, carrying different bytes for a different app; a new tenant is not new
   evidence about an adapter.
+
+### Run 2026-10-15 — the CG-90 admin console, enabled
+
+Executed in the CG-90 subsection's rollout order (§6), which is the point of that
+order: the lock was on the box before the console could exist.
+
+| Step | Result |
+|---|---|
+| fail-closed preflight | `app.query` → `RUNNING`, source `bc376b7`, `/healthz` `ok`, `reasons: []`, 6 apps, **no `admin` field** |
+| registry: on-box backup, then read down (base64), never the dev copy | `registry.yaml.bak-20261015-210956`; local sha256 = box sha256 `91bbcb1c…` |
+| `inbound_locked: true` added to `aitrader` — the ONLY change (`diff` = one line) | both identities carry `space:` (`spaces/AAQAmzgydeI`, `spaces/AAQAA6XTrt4`), so the lock covers both rooms |
+| exact bytes validated through the merged loader BEFORE install | 6 apps, `aitrader` locked + `allow_inbound: false`, `inbound_defaulted: []` |
+| pushed back over stdin | sha256 `c7fa2f25…` both ends; mode `640 root:root` kept |
+| admin key minted (`mint_key()`) straight into a private file on the dev box, never printed | one `CHAT_GATEWAY_ADMIN_KEY=` line appended to the box `.env` over stdin, value passed only through a shell builtin; verified by count (1), line sha256 both ends, mode `600 root:root` |
+| source `bc376b7` → **`b56b29e`** | `git fetch` + `git checkout <pinned>` |
+| rollback point | running image `41c3c3b264369bb6…` tagged **`chat-gateway:rollback-20261015`** (the 2026-09-10 habit, repeated) |
+| `docker build -t chat-gateway:local .` | **`sha256:48f7d36ac2cdbeb9de9d958eaad00d0f0fc7dbd200b043b5475fc70ed17b5707`** |
+| image probed in a throwaway `--network none` container | `ruamel.yaml` 0.19.1 imports; `static/admin/` holds all three files; the box's registry loads through the NEW image's loader |
+| compose via `sudo midclt call -j app.update` | exactly two deltas, computed from the live `app.config`: `GATEWAY_ENABLE_ADMIN: "1"` added, `config` mount `:ro` dropped. Everything else byte-equal (port stays `192.168.86.47:8085:8085`). → **Update completed** |
+| container after | `running`, `RestartCount: 0`, `StartedAt 2026-10-15T21:13:26.648968373Z`, image `48f7d36a…` |
+
+**Boot lines:** `admin: loaded 0 managed secret(s)` (no file yet — correct), `env:
+loaded 18 key(s)`, queue replay `0` outbound and `2` inbound reply(ies) restored,
+retention enabled. No `config error`, no traceback.
+
+**Verified on the box, not assumed:**
+
+- `/healthz` → `ok`, `reasons: []`; `admin: {enabled: true, writes: 0, refused: 0,
+  last_write_error: null, audit_write_errors: 0, shadowed_env_names: [],
+  memory_disk_diverged: false}`; `delivery.unroutable_live: 0`; all 6 apps;
+  `inbound_defaulted: []`. **The `admin` field's presence is what proves the new
+  image** — the 2026-09-10 technique, again.
+- `GET /admin` → **200**, `content-security-policy: default-src 'self'; script-src
+  'self'; …`, `cache-control: no-store`, `x-content-type-options: nosniff`.
+- `GET /admin/api/state` with no key → **401**; with the admin key (sent to
+  `curl --config -` on stdin, never argv) → **200**, `registry_sha256` =
+  `c7fa2f25…` (the bytes installed above), `aitrader` `inbound_locked: true`,
+  every app `key_configured: true` from `.env`, `mcp_enabled: true`.
+
+**Where the admin key is:** on the dev box only, `~/.chat-gateway/admin-key`
+(outside every repo). The box holds it in `.env`. Its homelab `SECRETS.template.md`
+row landed with homelab #44.
+
+⚠ **Two operator facts this run surfaced:**
+
+- **`job-hunter` cannot be deleted from the console today** — the boot replayed `2`
+  unpolled inbound replies, and a callback tenant's inbox is never drained by the
+  push path (the parked CG-90 I2b follow-up). Expected, fails closed.
+- **The live registry carries the comment shape the CG-90 docs warn about:** the
+  free-standing `# CG-80: the MCP server surface's …` block above `agent-mcp` is
+  attached by ruamel to `aitrader`'s last key, a block `routes:`. A console save
+  that rewrites `aitrader`'s routes would drop that comment. `aitrader`'s
+  identities are console-immutable but its routes are not. Moving that block onto
+  `agent-mcp`'s own lines is a hand edit worth making.
+
+**What this run did NOT do:** no console write yet (`writes: 0`); no ⚠
+verification-ledger flag moved (no Google-facing code); `capture.sh` not re-run,
+so the homelab capture still shows the old compose; no Homepage tile for the
+console; the homelab docs' *"not yet enabled"* wording is now stale. The restart
+spent whatever uptime had accrued since 2026-09-10 (§11, CG-85 unchanged).
+
+**Rollback, if needed:** `sudo docker tag chat-gateway:rollback-20261015
+chat-gateway:local`, then `app.update` with the saved pre-run compose (config
+`:ro`, no `GATEWAY_ENABLE_ADMIN`). The registry change is inert on the old image
+(its loader ignores `inbound_locked`), and the `.env` line is ignored with the flag
+off.
 
 ---
 

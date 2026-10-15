@@ -776,5 +776,7 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   flag must be in the compose, not `.env`; `inbound_locked` guards SPACES and an
   identity with no `space:` locks nothing; turning the console off KEEPS its
   keys, because `managed.env` loads whenever it exists — have one home too: `docs/deploy/nas.md`,
-  the CG-90 subsection of §6. ⚠ **Merged is not in effect** — the box rollout
-  is an operator action (that same subsection). No ledger flag moved.
+  the CG-90 subsection of §6. ~~⚠ **Merged is not in effect** — the box rollout
+  is an operator action (that same subsection).~~ ✅ **ENABLED ON THE BOX
+  2026-10-15** — the record has one home, `docs/deploy/nas.md` §10, *Run
+  2026-10-15*. No ledger flag moved.
