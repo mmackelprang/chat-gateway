@@ -88,6 +88,63 @@ def test_healthz_observes_a_swap(tmp_path, monkeypatch):
     assert "a2" in client.get("/healthz").json()["registry"]["apps"]
 
 
+def _swap_after_auth(monkeypatch, module, h, to):
+    """Authenticate against the CURRENT registry, then swap before the handler
+    runs — the console deleting an app between a request's auth and its body."""
+    real = module.authenticate
+
+    def racing(registry, authorization):
+        app_id = real(registry, authorization)
+        h.swap(to)
+        return app_id
+
+    monkeypatch.setattr(module, "authenticate", racing)
+
+
+def test_rest_app_deleted_between_auth_and_handler_is_401_not_500(tmp_path, monkeypatch):
+    """CG-90 C1. Answer as a request arriving after the swap would: 401."""
+    import chat_gateway.service as service
+
+    _env(monkeypatch)
+    one = _reg(tmp_path, ONE, "one.yaml")
+    two = _reg(tmp_path, TWO, "two.yaml")
+    auth = {"Authorization": "Bearer cgk_hold_two"}
+    for path in ("/v1/inbox", "/v1/identities"):
+        h = RegistryHolder(two)
+        client = TestClient(create_app(h, Inbox(), {"webhook": _Adapter()}),
+                            raise_server_exceptions=False)
+        _swap_after_auth(monkeypatch, service, h, one)
+        r = client.get(path, headers=auth)
+        assert r.status_code == 401, (path, r.status_code)
+
+
+def test_mcp_app_deleted_between_auth_and_handler_is_401_not_500(tmp_path, monkeypatch):
+    """CG-90 C1. Same answer `mcp_post` gives an unknown key: a 401 with a
+    JSON-RPC error body, never a 500."""
+    import chat_gateway.mcp as mcp
+
+    _env(monkeypatch)
+    monkeypatch.delenv("CHAT_GATEWAY_MCP_ALLOWED_ORIGINS", raising=False)
+    one = _reg(tmp_path, ONE, "one.yaml")
+    two = _reg(tmp_path, TWO, "two.yaml")
+    auth = {"Authorization": "Bearer cgk_hold_two"}
+    bodies = [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},           # send_message_schema
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call",            # call_tool's refusal
+         "params": {"name": "send_message",
+                    "arguments": {"identity": "nope", "text": "hi"}}},
+    ]
+    for body in bodies:
+        h = RegistryHolder(two)
+        client = TestClient(create_app(h, Inbox(), {"webhook": _Adapter()}, mcp_enabled=True),
+                            raise_server_exceptions=False)
+        _swap_after_auth(monkeypatch, mcp, h, one)
+        r = client.post("/mcp", headers=auth, json=body)
+        assert r.status_code == 401, (body["method"], r.status_code)
+        assert r.headers.get("WWW-Authenticate") == "Bearer"
+        assert r.json()["error"]["message"] == "unknown API key"
+
+
 def test_build_runtime_hands_out_a_holder(tmp_path, monkeypatch):
     from chat_gateway.__main__ import build_runtime
 

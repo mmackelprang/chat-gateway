@@ -273,7 +273,13 @@ def send_message_schema(registry: Registry, app_id: str) -> dict:
     and a flattening pass is precisely where hand-editing would start.
     """
     schema = send_message_schema_base()
-    app = registry.apps[app_id]
+    # CG-90 C1: one snapshot, and an app the console deleted after this
+    # request authenticated is answered as an unknown key — `_serve` turns the
+    # AuthError into the same 401 a later request would get — never a KeyError.
+    registry = getattr(registry, "current", registry)
+    app = registry.apps.get(app_id)
+    if app is None:
+        raise AuthError("unknown API key")
     granted = [n for n in app.identities if n in registry.identities]
     rows = []
     for name in granted:
@@ -435,7 +441,12 @@ def call_tool(registry: Registry, adapters: dict[str, Any], app_id: str,
         # rebuilt here from the registry's own allowlist rather than printed —
         # the app's granted identities are what it is already being told in the
         # tool schema, so this discloses nothing new.
-        allowed = ", ".join(registry.apps[app_id].identities) or "(none)"
+        # CG-90 C1: `identity_for` also refuses an app the console deleted
+        # after auth; that is an unknown key (401 via `_serve`), not a KeyError.
+        app = registry.apps.get(app_id)
+        if app is None:
+            raise AuthError("unknown API key") from exc
+        allowed = ", ".join(app.identities) or "(none)"
         return _text_result(
             f"app {app_id!r} may not send as {message.identity!r} "
             f"(allowed: {allowed})", True), None
@@ -563,6 +574,15 @@ def build_router(registry: Registry, adapters: dict[str, Any],
                 return _notification_response(payload)
             return _handle(registry, adapters, app_id, payload, request,
                            delivery_log)
+        except AuthError as exc:
+            # CG-90 C1. Raised from INSIDE the handler when the console deleted
+            # the authenticated app mid-request. Byte-for-byte the answer an
+            # unknown key gets above — including `id: null`, because that is
+            # what a request arriving after the swap would have been told.
+            return JSONResponse(
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+                content=jsonrpc_error(None, INVALID_REQUEST, str(exc)))
         except _McpRequestError as exc:
             return JSONResponse(
                 status_code=exc.http_status,

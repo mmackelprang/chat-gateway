@@ -309,6 +309,20 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         except AuthError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
 
+    def live_app(app_id: str, reg: Registry | None = None):
+        """The authenticated app, re-read — or the 401 an unknown key gets.
+
+        CG-90 C1. Authentication and the handler body read the registry
+        separately, and the admin console can delete an app in between. A bare
+        `registry.apps[app_id]` then raised KeyError → 500, where a request
+        arriving a moment later would have been told 401. This answers as that
+        later request would, with `authenticate`'s own wording.
+        """
+        found = (reg if reg is not None else registry).apps.get(app_id)
+        if found is None:
+            raise HTTPException(status_code=401, detail="unknown API key")
+        return found
+
     # -- notify pipeline (shared by the endpoint and the heartbeat monitor) ---
     def emit_notification(app_id: str, n: Notification, *,
                           route_severity: str | None = None) -> dict:
@@ -637,7 +651,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     # -- inbound --------------------------------------------------------------
     @app.get("/v1/inbox")
     def poll_inbox(app_id: str = Depends(current_app_id)):
-        if not registry.apps[app_id].allow_inbound:
+        if not live_app(app_id).allow_inbound:
             raise HTTPException(
                 status_code=403,
                 detail="inbound is disabled for this app (no-inbound-control contract "
@@ -671,16 +685,20 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         discard; saying so plainly is better than a value that silently means
         nothing. `aitrader` gets `null` and the reason (hard rule #6).
         """
-        allowed = registry.apps[app_id].identities
+        # ONE snapshot for the whole answer (CG-90 C1): this handler reads the
+        # registry six times, and through a holder each read could land on a
+        # different registry if the console swapped one in between.
+        reg = getattr(registry, "current", registry)
+        allowed = live_app(app_id, reg).identities
         return {
             "app": app_id,
             "identities": [
-                {"name": n, "display": registry.identities[n].display,
-                 "mode": registry.identities[n].mode,
-                 "ready": registry.identities[n].env_resolved()}
-                for n in allowed if n in registry.identities
+                {"name": n, "display": reg.identities[n].display,
+                 "mode": reg.identities[n].mode,
+                 "ready": reg.identities[n].env_resolved()}
+                for n in allowed if n in reg.identities
             ],
-            "interaction": _interaction_config(registry, app_id),
+            "interaction": _interaction_config(reg, app_id),
         }
 
     @app.get("/healthz")

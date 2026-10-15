@@ -10,6 +10,13 @@ The cost, stated (plan deviation 1): a request that makes two registry calls
 may see two snapshots if a swap lands between them. Each `Registry` method is
 internally consistent and every lookup re-validates, so the worst case is the
 request failing as if it had arrived after the swap.
+
+That sentence was NOT true until CG-90 C1: four handlers authenticated against
+one snapshot and then subscripted `registry.apps[app_id]` against the next, so
+an app deleted in between was a KeyError → 500 rather than the 401 a later
+request gets. Each now re-reads with `.get` and answers 401 (`service.live_app`,
+`mcp.send_message_schema` / `call_tool`); pinned in tests/test_registry_holder.py.
+A new handler that subscripts by the authenticated id re-opens it.
 """
 
 from __future__ import annotations
