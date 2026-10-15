@@ -197,7 +197,8 @@ def main(argv: list[str] | None = None) -> int:
         # for, so it must be legible in both places.
         queue_dir = Path(state_dir) / "queue"
         dispatcher = Dispatcher(adapters, log,
-                                journal=Journal(queue_dir / "delivery.jsonl"))
+                                journal=Journal(queue_dir / "delivery.jsonl"),
+                                registry=registry)
         restored, not_restored = dispatcher.restore(registry)
         inbound_restored = inbox.restore()
         print(f"queue: restored {restored} outbound job(s), {not_restored} expired or unroutable; "

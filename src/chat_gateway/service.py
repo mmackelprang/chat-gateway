@@ -289,7 +289,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     """`adapters` maps identity mode -> adapter with .send(identity, message)."""
 
     log = delivery_log or DeliveryLog()
-    dispatch = dispatcher or Dispatcher(adapters, log)
+    dispatch = dispatcher or Dispatcher(adapters, log, registry=registry)
     dedupe = deduper or Deduper()
     checks = heartbeats or HeartbeatStore()
 
@@ -794,6 +794,11 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                          "replayed_at_boot": getattr(dispatch, "replayed", 0),
                          "expired_at_boot": getattr(dispatch, "expired", 0),
                          "unroutable_at_boot": getattr(dispatch, "unroutable", 0),
+                         # CG-90. Send-time sibling of `unroutable_at_boot`: a
+                         # queued job whose grant the admin console withdrew.
+                         # NOT an input to `status` — a withdrawn grant being
+                         # honoured is the guard working, not a fault (CG-12).
+                         "unroutable_live": getattr(dispatch, "unroutable_live", 0),
                          # CG-76 door 3. The in-process sibling of the two
                          # `*_at_boot` counters above: a job accepted with a
                          # 202 whose retry ladder then ran out. Same family,

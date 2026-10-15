@@ -34,7 +34,7 @@ from typing import Callable
 from .envelope import OutboundMessage
 from .errors import describe_exception
 from .journal import chmod_owner_only
-from .registry import Identity
+from .registry import Identity, RegistryError
 
 BACKOFF_S = (0, 30, 120, 600, 3600)  # attempt spacing; after the last -> failed
 
@@ -208,7 +208,8 @@ class Dispatcher:
                  now_fn: Callable[[], dt.datetime] | None = None,
                  backoff: tuple = BACKOFF_S,
                  journal=None,
-                 replay_max_age_s: float = REPLAY_MAX_AGE_S):
+                 replay_max_age_s: float = REPLAY_MAX_AGE_S,
+                 registry=None):
         self._adapters = adapters
         self._log = log
         self._now = now_fn or _utcnow
@@ -217,6 +218,16 @@ class Dispatcher:
         # which is what every existing test constructs. Opt-in, not opt-out.
         self._journal = journal
         self._replay_max_age_s = replay_max_age_s
+        # CG-90. When set, every send re-resolves the job's identity through
+        # the LIVE registry, so a grant the admin console withdrew while the job
+        # was queued closes it as `unroutable` — the rule `restore` applies at
+        # boot (hard rule #4), applied at every send. None keeps the pre-CG-90
+        # behaviour for every test that builds a bare Dispatcher.
+        self._registry = registry
+        #: Jobs closed `unroutable` at SEND time because the live registry no
+        #: longer grants their identity. Never degrades /healthz: a withdrawn
+        #: grant being honoured is the guard working (CG-12's test).
+        self.unroutable_live = 0
         self._jobs: list[Job] = []
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -362,6 +373,13 @@ class Dispatcher:
             due = [j for j in self._jobs if j.next_attempt_at <= now]
         attempted = 0
         for job in due:
+            if self._registry is not None:
+                try:
+                    job.identity = self._registry.identity_for(job.source, job.identity.name)
+                except RegistryError as exc:
+                    self.unroutable_live += 1
+                    self._finish(job, "unroutable", f"grant withdrawn while queued: {exc}")
+                    continue
             attempted += 1
             adapter = self._adapters.get(job.identity.mode)
             try:
