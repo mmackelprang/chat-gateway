@@ -18,13 +18,18 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
+# No cycle: `admin` imports delivery / registry / auth / the store, never this.
+from .admin import AdminWiring, build_admin_router
 from .auth import AuthError, authenticate
 from .delivery import DeliveryLog, Dispatcher
 from .envelope import CG_ACTION_KEY, DeliveryResult, OutboundMessage
@@ -261,6 +266,35 @@ def _interaction_config(registry: Registry, app_id: str) -> dict | None:
     }
 
 
+_SAFE_LOC = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _redacted_loc(loc) -> list:
+    """`loc` with any element that is not plainly OUR field name replaced. A
+    dict KEY is the caller's data and lands in `loc` verbatim — `routes: {<a
+    webhook URL>: 5}` put the URL there (CG-90 fix round, I1)."""
+    return [p if isinstance(p, int) or (isinstance(p, str) and _SAFE_LOC.match(p)) else "?"
+            for p in loc]
+
+
+async def _admin_safe_validation_handler(request: Request, exc: RequestValidationError):
+    """FastAPI's 422 body echoes `input` — for a missing field, a wrong type or
+    an unparseable body, that is the WHOLE request, webhook URL or callback
+    token included (CG-90 fix round, I1; hard rule #2). Under `/admin` each
+    error is cut to `loc` (redacted), `msg` and `type`: `msg` is pydantic's
+    rendering of the error kind, never the value.
+
+    Every other path is delegated UNCHANGED to FastAPI's own handler: the
+    tenant routes' 422 body, `input` and all, is a published contract, and
+    this handler exists only because the console is mounted."""
+    if request.url.path == "/admin" or request.url.path.startswith("/admin/"):
+        return JSONResponse(status_code=422, content={"detail": [
+            {"loc": _redacted_loc(e.get("loc", ())), "msg": e.get("msg", ""),
+             "type": e.get("type", "")}
+            for e in exc.errors()]})
+    return await request_validation_exception_handler(request, exc)
+
+
 class HeartbeatIn(BaseModel):
     check_id: str = Field(min_length=1, max_length=100)
     schedule: str = Field(description="weekdays | daily | every:<N><s|m|h|d>")
@@ -285,11 +319,13 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                # for when a deployed container answered 200 to a query parameter
                # it did not have.
                mcp_enabled: bool = False,
+               # CG-90. None = console off (the default, and every existing test).
+               admin: AdminWiring | None = None,
                monitor_interval: float = 60.0) -> FastAPI:
     """`adapters` maps identity mode -> adapter with .send(identity, message)."""
 
     log = delivery_log or DeliveryLog()
-    dispatch = dispatcher or Dispatcher(adapters, log)
+    dispatch = dispatcher or Dispatcher(adapters, log, registry=registry)
     dedupe = deduper or Deduper()
     checks = heartbeats or HeartbeatStore()
 
@@ -308,6 +344,20 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             return authenticate(registry, authorization)
         except AuthError as exc:
             raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    def live_app(app_id: str, reg: Registry | None = None):
+        """The authenticated app, re-read — or the 401 an unknown key gets.
+
+        CG-90 C1. Authentication and the handler body read the registry
+        separately, and the admin console can delete an app in between. A bare
+        `registry.apps[app_id]` then raised KeyError → 500, where a request
+        arriving a moment later would have been told 401. This answers as that
+        later request would, with `authenticate`'s own wording.
+        """
+        found = (reg if reg is not None else registry).apps.get(app_id)
+        if found is None:
+            raise HTTPException(status_code=401, detail="unknown API key")
+        return found
 
     # -- notify pipeline (shared by the endpoint and the heartbeat monitor) ---
     def emit_notification(app_id: str, n: Notification, *,
@@ -437,6 +487,17 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # only by being handed the same log this app already writes and serves
         # at `GET /v1/deliveries`.
         app.include_router(build_mcp_router(registry, adapters, delivery_log=log))
+
+    # CG-90. Mounted only when wired, the posture `/mcp` set: an operator arms
+    # it deliberately. Its own credential, never `authenticate()` (hard rule #4).
+    app.state.admin = admin
+    if admin is not None:
+        # `inbox` so a delete can refuse while replies are unpolled; the MCP
+        # flag so the reveal panel offers an MCP config only when /mcp exists
+        # (CG-90 final review I2b and minor).
+        app.include_router(build_admin_router(registry, admin, delivery_log=log,
+                                              inbox=inbox, mcp_enabled=mcp_enabled))
+        app.add_exception_handler(RequestValidationError, _admin_safe_validation_handler)
 
     # -- raw envelope send (synchronous; aiteam notify.py path) ---------------
     @app.post("/v1/messages", response_model=DeliveryResult)
@@ -637,7 +698,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
     # -- inbound --------------------------------------------------------------
     @app.get("/v1/inbox")
     def poll_inbox(app_id: str = Depends(current_app_id)):
-        if not registry.apps[app_id].allow_inbound:
+        if not live_app(app_id).allow_inbound:
             raise HTTPException(
                 status_code=403,
                 detail="inbound is disabled for this app (no-inbound-control contract "
@@ -671,16 +732,20 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         discard; saying so plainly is better than a value that silently means
         nothing. `aitrader` gets `null` and the reason (hard rule #6).
         """
-        allowed = registry.apps[app_id].identities
+        # ONE snapshot for the whole answer (CG-90 C1): this handler reads the
+        # registry six times, and through a holder each read could land on a
+        # different registry if the console swapped one in between.
+        reg = getattr(registry, "current", registry)
+        allowed = live_app(app_id, reg).identities
         return {
             "app": app_id,
             "identities": [
-                {"name": n, "display": registry.identities[n].display,
-                 "mode": registry.identities[n].mode,
-                 "ready": registry.identities[n].env_resolved()}
-                for n in allowed if n in registry.identities
+                {"name": n, "display": reg.identities[n].display,
+                 "mode": reg.identities[n].mode,
+                 "ready": reg.identities[n].env_resolved()}
+                for n in allowed if n in reg.identities
             ],
-            "interaction": _interaction_config(registry, app_id),
+            "interaction": _interaction_config(reg, app_id),
         }
 
     @app.get("/healthz")
@@ -774,6 +839,15 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             "mcp": {"enabled": bool(app.state.mcp_enabled),
                     "tools": list(MCP_TOOL_NAMES) if app.state.mcp_enabled
                              else []},
+            # CG-90 spec §7. Counters never degrade (a refusal is a guard
+            # working, CG-12); `shadowed_env_names` is an operator to-do, not a
+            # fault. Only `memory_disk_diverged` degrades — below, in `reasons`.
+            # `last_write_error` is an authored CATEGORY only ("refused:
+            # conflict", "failed: write rolled back (OSError)") — never a
+            # refusal message, which can quote admin-supplied text. The full
+            # message goes only to the authenticated caller (fix round I2,
+            # rule #2; `registry_store.category_for`).
+            "admin": admin.health() if admin is not None else {"enabled": False},
             "registry": registry.health(),
             "inbox": {"pending": inbox.pending_counts(), "dropped": inbox.dropped,
                       "replayed_at_boot": getattr(inbox, "replayed", 0),
@@ -794,6 +868,11 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                          "replayed_at_boot": getattr(dispatch, "replayed", 0),
                          "expired_at_boot": getattr(dispatch, "expired", 0),
                          "unroutable_at_boot": getattr(dispatch, "unroutable", 0),
+                         # CG-90. Send-time sibling of `unroutable_at_boot`: a
+                         # queued job whose grant the admin console withdrew.
+                         # NOT an input to `status` — a withdrawn grant being
+                         # honoured is the guard working, not a fault (CG-12).
+                         "unroutable_live": getattr(dispatch, "unroutable_live", 0),
                          # CG-76 door 3. The in-process sibling of the two
                          # `*_at_boot` counters above: a job accepted with a
                          # 202 whose retry ladder then ran out. Same family,
@@ -1508,6 +1587,13 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                     "(projects/<PROJECT_ID>/topics/<TOPIC>) — the topic, NOT the "
                     "subscription"
                 )
+        if admin is not None and admin.store.memory_disk_diverged:
+            reasons.append(
+                "admin console: a failed write could not roll back managed "
+                "secrets, so managed.env on disk and the gateway's live "
+                "environment may disagree — restart the gateway (Reload from "
+                "disk does not clear this; it is latched until restart)"
+            )
         # Names, never values: identity names and app ids are non-secret (they
         # live in the committed registry); the poll error is a type and a status.
         # Load-bearing, because this endpoint is UNAUTHENTICATED.

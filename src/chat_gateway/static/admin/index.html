@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gateway Admin</title>
+<link rel="stylesheet" href="/admin/static/admin.css">
+<script src="/admin/static/admin.js" defer></script>
+</head>
+<body>
+<header><h1>chat-gateway admin</h1><span id="sha" class="muted"></span></header>
+<main>
+  <section id="login">
+    <h2>Sign in</h2>
+    <p class="muted">The admin key is held in this tab's memory only. Reloading asks again.</p>
+    <form id="login-form">
+      <label>Admin key <input id="admin-key" type="password" autocomplete="off" required></label>
+      <button type="submit">Sign in</button>
+    </form>
+    <p id="login-error" class="error" role="alert"></p>
+  </section>
+
+  <section id="console" hidden>
+    <nav>
+      <button id="nav-board" type="button">Apps &amp; identities</button>
+      <button id="nav-new-app" type="button">New app</button>
+      <button id="nav-new-identity" type="button">New identity</button>
+      <button id="nav-reload" type="button">Reload from disk</button>
+    </nav>
+    <p id="banner" class="warn" hidden></p>
+    <p id="toast" role="status"></p>
+    <div id="view"></div>
+  </section>
+</main>
+</body>
+</html>

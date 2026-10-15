@@ -94,12 +94,16 @@ agentic applications; aiteam's harness is the first consumer, not the owner.
 `src/chat_gateway/` — envelope / registry / auth / inbox / service / client,
 one concern each, plus `errors.py`, which owns which exception messages may be
 printed in full (see below), and `mcp.py`, the opt-in MCP server surface (CG-80)
-— a second ingress to `service.py`'s send path, not a second send path;
+— a second ingress to `service.py`'s send path, not a second send path; and the
+opt-in admin console (CG-90): `admin` (the `/admin` router), `admin_audit`,
+`registry_holder` (the in-process swap every consumer reads through),
+`registry_store` (the guarded `ruamel` write path) and `managed_secrets`
+(`<state_dir>/managed.env`);
 `adapters/` — webhook (tier 1), chat_api + pubsub (tier 2);
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 533 passing.
+`python` is 3.13.7) — offline, 680 passing, 7 skipped (measured 2026-10-15).
 
 ## Current status (2026-07-31)
 
@@ -763,3 +767,14 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   `webhook.send` cleared 2026-07-29 — and a new ingress neither re-proves nor
   extends it. The `SubscriberLoop` candidate moved the **wrong** way: the run
   that was to be its evidence is dead (**CG-85**).
+- **An admin console at `/admin`, since CG-90 (2026-10-15) — default OFF behind
+  `GATEWAY_ENABLE_ADMIN`.** It edits the live registry and a gateway-owned
+  `managed.env`, and swaps the registry in-process through `RegistryHolder`.
+  Design, decisions and the residual risk of its admin key have ONE home:
+  `docs/superpowers/specs/2026-10-15-admin-console-design.md`. Do not restate
+  them here. The operator-facing hazards that review found after the spec — the
+  flag must be in the compose, not `.env`; `inbound_locked` guards SPACES and an
+  identity with no `space:` locks nothing; turning the console off KEEPS its
+  keys, because `managed.env` loads whenever it exists — have one home too: `docs/deploy/nas.md`,
+  the CG-90 subsection of §6. ⚠ **Merged is not in effect** — the box rollout
+  is an operator action (that same subsection). No ledger flag moved.

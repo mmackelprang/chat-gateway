@@ -646,6 +646,16 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
     it silently costs a co-owner its copy.
     """
     now = now or dt.datetime.now(dt.timezone.utc)
+    # ONE snapshot per event (spec §3; CG-90 final review I2a). `registry` is a
+    # RegistryHolder in production, and every attribute read through it sees
+    # whatever the admin console swapped in last. Candidates came from one
+    # snapshot and `apps.get` from the next, so a console delete landing in
+    # between made `app` None — which skipped the opt-out check below and PUT
+    # the event in the deleted, opted-out app's inbox. Measured: delivered to
+    # `optedout`, suppressed nothing. "Opt-out is absolute" (hard rule #6)
+    # cannot rest on two reads agreeing. `getattr` because a bare Registry,
+    # as every offline test passes, has no `current`.
+    registry = getattr(registry, "current", registry)
     # Non-dict events (a bare list, a string) redact to themselves, and
     # InboundReply(raw=<non-dict>) would then raise INSIDE the except handler —
     # escaping dispatch and poll_once, which is the exact poison-pill wedge
@@ -693,6 +703,15 @@ def dispatch(event: dict, registry: Registry, inbox: Inbox,
     for app_id in candidates:
         reply = InboundReply(app=app_id, received_at=now, raw=raw, **core)
         app = registry.apps.get(app_id)
+        if app is None and app_id != UNROUTED:
+            # Unreachable on one snapshot — `apps_for_space` only names
+            # registered apps — and kept so that it STAYS harmless if a second
+            # read ever creeps back in (I2a). A candidate with no app has no
+            # opt-in, so it is counted as declining, never put: the only
+            # legitimate app-less put is the `_unrouted` audit bucket.
+            if on_suppressed is not None:
+                on_suppressed(app_id, REASON_OPT_OUT)
+            continue
         if app is not None:
             if not app.allow_inbound:
                 # COUNTED, never recorded (CG-12). This fires for THIS app

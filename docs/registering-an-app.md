@@ -10,6 +10,56 @@ the key is a new secret, so nothing here can be discharged by merging a branch.
 an entry per real tenant — neither `pmtrader` (2026-09-01) nor `rotaryphone`
 (2026-09-10) is in it.
 
+## The console, if it is enabled
+
+Since CG-90 the gateway can do steps 2–5 itself at **`/admin`** (LAN port, admin
+key — `docs/deploy/nas.md`, the CG-90 subsection of §6). The four decisions in §1
+are still yours; the console asks them as a form, mints the key and shows it
+**once**, writes the registry and `managed.env`, and applies the change without a
+redeploy. Step 6's live send is its *Send test* button. Step 7 — handing the key
+to the consumer — is still yours. Design: one home,
+[`docs/superpowers/specs/2026-10-15-admin-console-design.md`](superpowers/specs/2026-10-15-admin-console-design.md).
+
+**This runbook stays the fallback** for a gateway without the console, for any
+`inbound_locked` app being widened, and for any secret set in the process
+environment, which the console refuses to manage.
+
+Three things the console does that a hand edit would not, learned in review:
+
+- ⚠ **An app save can drop or move a comment — including one that looks like it
+  belongs to the NEXT app.** A console save on an app replaces its `identities`,
+  `routes` and `allowed_users` values with new nodes (`admin.py:423-453`).
+  `ruamel` attaches a comment to the node it follows, so a comment on, or
+  directly after, one of those collection keys goes with that node — and **a
+  free-standing comment line directly above app `b` belongs to app `a`'s last
+  key**. When that key is `routes` or `allowed_users`, a save on `a` drops the
+  comment or moves it inside `a`'s `routes` (measured in CG-90 review,
+  2026-10-15, with the store's own `ruamel` settings). Comments attached to a
+  **scalar** key (`allow_inbound:`, `key_env:`, `callback_url:`) survive, as do
+  comments inside nodes the save does not touch; identity saves rewrite scalars
+  only. **Keep rationale on a scalar key's line — e.g. trailing
+  `allow_inbound: false  # why` — or in docs, not as free-standing lines between
+  apps.**
+  ~~*Put rationale comments ABOVE a node, not on its last line.*~~ — the first
+  version of this advice, struck 2026-10-15 (CG-90 review): a comment above app
+  `b` is exactly the one an edit to `a` loses.
+- **An `inbound_locked` app's inbound posture, identities, their webhooks and
+  its existence are not console-editable** — the console answers `403` *"… is a
+  registry file edit"*. Its routes, and its identities' display names, stay
+  editable. What the lock covers, and the one way
+  it covers nothing (an identity with no `space:`), is in `nas.md`'s CG-90
+  subsection; read it before relying on a lock.
+- **`callback_url` and `unreachable_message` are left alone unless sent.** A
+  `PUT /admin/api/apps/<id>` that omits them keeps the stored values (`""`
+  removes one); every other field in the body is replaced (`admin.py:219-226`).
+
+**To try it locally** without touching a real registry or Google:
+`python scripts/admin_uat_server.py` serves the console on
+`http://127.0.0.1:8099/admin` against a registry it writes into a fresh temp
+directory, with the **webhook** adapter faked (sends print to the console; no
+tier-2 adapter is wired at all) and the fixed admin key `cgk_uat_admin`. It is
+the launcher CG-90's UAT ran against.
+
 **Not covered here:** the field-by-field registry schema, which has one home —
 [`docs/consumers/pmtrader-registration-handoff.md`](consumers/pmtrader-registration-handoff.md)
 §3, written against `registry.py`'s dataclasses rather than an example. That
@@ -42,7 +92,7 @@ config file.
 
 | Decision | What it costs to get wrong |
 |---|---|
-| **Identity / space** | A new space needs a Google Chat webhook, and **a webhook is created in the Chat UI by a person** — nothing in this repo can mint one. The identity's `display` name and avatar are fixed **at webhook creation**, not by the registry (`adapters/webhook.py:3-7`), so a rename means a new webhook. Reusing an existing identity is legal (two apps may list one) and fixes attribution, but leaves both tenants' traffic in one room. |
+| **Identity / space** | A new space needs a Google Chat webhook, and **a webhook is created in the Chat UI by a person** — nothing in this repo can mint one. The identity's `display` name and avatar are fixed **at webhook creation**, not by the registry (`adapters/webhook.py:3-7`), so a rename means a new webhook. The avatar can be any PNG URL from the repo's gallery, [`assets/avatars/`](https://github.com/mmackelprang/chat-gateway/tree/main/assets/avatars) (PR #80), as its raw URL — `https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png/<name>.png`; the console's webhook guide links the gallery too (`static/admin/admin.js:14-15`). Reusing an existing identity is legal (two apps may list one) and fixes attribution, but leaves both tenants' traffic in one room. |
 | **`routes:` per severity** | Omitting a route is a **loud** failure at two different times: `/v1/notify` returns **503** (`registry.py:241-245` → `service.py:332-334`) and registering a *new* heartbeat `check_id` with no `alert` route returns **422** (`service.py:519-529`). `routes: {default: <identity>}` covers every severity. ⚠️ Severity picks the **space**, not just the loudness (CG-86) — split routes put an all-clear in a different room from the alert it closes. |
 | **`allow_inbound`** | Hard rule #6. **Write it explicitly**, unquoted. Since CG-88 the default is `false`, but a written value is what a reader can diff between the three registry copies, and the loader reports every app that left the decision to it (`inbound_defaulted`, on `/healthz` and in `check`). ⚠️ `allow_inbound: "false"` — quoted — was truthy before CG-88 and granted exactly what it spelled a refusal of; the loader now refuses a non-boolean rather than coercing. |
 | **Env-var name** | Convention: the app id, uppercased, hyphens → underscores. `job-hunter` → `CHAT_GATEWAY_API_KEY__JOB_HUNTER`; `rotaryphone` → `CHAT_GATEWAY_API_KEY__ROTARYPHONE`. |

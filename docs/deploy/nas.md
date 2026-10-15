@@ -262,7 +262,8 @@ construction rather than by trusting someone else's redactor.
     "CHAT_GATEWAY_STATE_DIR": "/data/state",
     "CHAT_GATEWAY_INBOX_DIR": "/data/inbox",
     "GATEWAY_ENABLE_PUBSUB": "1",
-    "GATEWAY_ENABLE_MCP": "1"
+    "GATEWAY_ENABLE_MCP": "1",
+    "GATEWAY_ENABLE_ADMIN": "1"
   },
   "image": "chat-gateway:local",
   "mem_limit": "512m",
@@ -271,7 +272,7 @@ construction rather than by trusting someone else's redactor.
   "restart": "unless-stopped",
   "volumes": [
     "/mnt/datapool/apps/chat-gateway/.env:/env/gateway.env:ro",
-    "/mnt/datapool/apps/chat-gateway/config:/config:ro",
+    "/mnt/datapool/apps/chat-gateway/config:/config",
     "/mnt/datapool/apps/chat-gateway/secrets:/secrets:ro",
     "/mnt/datapool/apps/chat-gateway/state:/data/state",
     "/mnt/datapool/apps/chat-gateway/inbox-data:/data/inbox"
@@ -317,6 +318,14 @@ give it a caller.** `POST /mcp` authenticates with an ordinary per-app key, and
 the `agent-mcp` tenant exists only in `registry.example.yaml` — the live
 `config/registry.yaml` is gitignored, so minting the key and writing that entry
 is an operator action this or any PR cannot perform.
+
+**`GATEWAY_ENABLE_ADMIN: "1"` and the `config` mount losing `:ro` are CG-90's
+(2026-10-15)**, and they ship together: the console writes `registry.yaml` (and a
+`.bak-*` beside it) into that directory. `.env` and `secrets/` stay `:ro`.
+⚠ **This block is the TARGET, not the box** — merging it changes nothing on the
+NAS, and the flag fails closed at boot without `CHAT_GATEWAY_ADMIN_KEY`, so it
+must not reach the box before the key does. Order, and why the flag must be here
+rather than in `.env`: the CG-90 subsection at the end of §6.
 
 **House style, matched:** `restart: unless-stopped`, `pull_policy: missing`, `TZ`
 set, bind mounts under `/mnt/datapool/apps/<app>/`, **no** `container_name`
@@ -497,6 +506,126 @@ enough.** A restorer who treats all three rows the same recovers two credentials
 and a dangling pointer, and gets the silent half-healthy state above.
 
 Writing those rows is a homelab-repo change — see §9.
+
+### The admin console (CG-90)
+
+Added 2026-10-15. **Nothing below has run on the box** — §10 gains an entry when
+it does, and not before. The design, its decisions and the residual risk of the
+admin key have one home:
+[`docs/superpowers/specs/2026-10-15-admin-console-design.md`](../superpowers/specs/2026-10-15-admin-console-design.md).
+This subsection is only what an operator must do and must not get wrong.
+
+**Two env-var NAMES, and they go in DIFFERENT places:**
+
+| Name | Where | Why there |
+|---|---|---|
+| `GATEWAY_ENABLE_ADMIN` | §5's compose `environment:` — **not** `.env` | ⚠ It is read **before** the hand-written env file loads (`__main__.py:52`, `:82-86`). **Set in `.env` it is silently ignored and the console stays off** — no error, `/healthz` just says `admin.enabled: false`. Not a credential, so the compose is the right home anyway. ⚠ *Corrected 2026-10-15 (CG-90 final review I3):* this row said *"because whether `managed.env` loads at all depends on it"*. It no longer does — `managed.env` loads whenever the file **exists** (`__main__.py:71`); see *Turning the console off* below. |
+| `CHAT_GATEWAY_ADMIN_KEY` | the hand-written `.env`, over stdin exactly as above | A secret. Mint it with `python3 -m chat_gateway mint-key`. With the flag on and this unset, boot raises `RegistryError` and exits 2 (`__main__.py:138-141`) — fail closed, the `GATEWAY_ENABLE_PUBSUB` posture. **Changing it needs a restart**; the console does not manage its own key. |
+
+⚠ **The admin key must not equal any tenant's key.** `load_registry` refuses an
+app whose `key_env` *is* `CHAT_GATEWAY_ADMIN_KEY`; the same **value** under a
+different name is caught only at request time, and every `/admin` call then
+answers **503** naming the app (`admin.py:297-301`). Mint a fresh one; never
+reuse a tenant's.
+
+**Two new files under `CHAT_GATEWAY_STATE_DIR`** (`/data/state` here), both
+created `0600` by the gateway: `managed.env` (secrets the console minted or
+rotated) and `admin_audit.jsonl` (one line per console action — names, never
+values). **Back both up with the state dir.** `managed.env` is the one that
+matters: lose it and every console-rotated key reverts to whatever the
+hand-written `.env` still holds, or vanishes if the console minted it.
+
+**Boot order:** `managed.env` loads **before** the hand-written `.env`, and
+`load_env_file` lets an already-present value win — so a console-rotated key
+beats the stale line in `.env`. The real process environment (this compose's
+`environment:`) beats both, which is why the console **refuses** to manage any
+name set there (`admin.py:322-325`).
+
+⚠ **`CHAT_GATEWAY_STATE_DIR` must be in the compose `environment:` when the
+console is on** — added 2026-10-15 (CG-90 final review I4). `managed.env` is
+located before the hand-written `.env` loads, so its directory comes from the
+**process** environment (`__main__.py:60`); everything else in the state dir is
+located after (`:126`), as it was before CG-90. If the `.env` is what sets or
+moves `CHAT_GATEWAY_STATE_DIR`, the two disagree and an armed console refuses
+to boot — `config error: … CHAT_GATEWAY_STATE_DIR …`, exit 2 (`:147-153`) —
+rather than keep its secrets in one directory and its audit and queues in
+another. §5's compose already sets it in `environment:`; this bites only a
+compose that moved it. With the console off nothing is compared.
+
+⚠ **The registry's directory must be writable** — added 2026-10-15 (CG-90 final
+review). Every console write stages a candidate, a temp file and a backup
+**beside** `registry.yaml`, so with the console on, boot creates and removes a
+probe file there (`registry_store.py:250`) and refuses with exit 2, naming the
+directory, if it cannot. A `config` mount left `:ro` is therefore a boot
+failure, not a console that 500s on its first save.
+
+**Turning the console off KEEPS its keys** — added 2026-10-15 (CG-90 final
+review I3). `managed.env` loads at every boot where the file **exists**,
+whatever `GATEWAY_ENABLE_ADMIN` says (`__main__.py:71`; the boot line reads
+*"admin: loaded N managed secret(s) (console off; managed.env still
+applies)"*). It used to load only with the console on, so switching the
+console off silently revived the hand `.env`'s older value of every key the
+console had rotated — the key the rotation was meant to kill. On a box that
+never ran the console there is no file and the boot is unchanged. **To revoke
+console-managed keys, rotate or delete them before disabling, or remove
+`managed.env`** — and know that removing it also revives any stale `.env`
+value it was shadowing (`admin.shadowed_env_names`).
+
+**Deleting an app with unpolled inbound is refused** — added 2026-10-15 (CG-90
+final review I2b): `409`, *"… has N unpolled inbound repl(ies) — poll or drain
+its inbox first"*. Its key dies with the entry, so nothing could poll them
+afterwards.
+
+⚠ **Shadowing hazard, stated rather than hidden.** Rotating a name whose old
+value lives in the read-only hand-written `.env` writes the new value to
+`managed.env`, which shadows it. The **old value stays on disk** in `.env`,
+inert — and becomes live again if `managed.env` is ever lost. The page says
+this at rotation time, and `/healthz` reports `admin.shadowed_env_names`
+(names only) until the operator removes the stale line by hand.
+⚠ **And restarts — corrected 2026-10-15 (CG-90 review).** The paragraph above is
+spec §4's wording verbatim, and it is short of the code: which names the `.env`
+sets is read **once, at boot** (`__main__.py:90-91`), so removing the line does
+not clear the name from `/healthz` or the page until the gateway restarts.
+
+**Two more rows for the homelab `SECRETS.template.md`** (above, *Register the
+secrets in the homelab repo*): `CHAT_GATEWAY_ADMIN_KEY` — a value, rotated by
+re-minting and a restart — and the **`managed.env` FILE** under the state dir,
+which, like the service-account key, is a file to restore rather than a value to
+paste. That is a homelab-repo change (CG-90 Task 10), not this PR.
+
+**`registry.yaml.bak-*` now accumulates — one per console write**, beside the
+registry in `config/`. Nothing prunes them; delete old ones by hand. They hold
+env-var NAMES only, like the registry itself.
+
+**What `inbound_locked` protects is SPACES, and only spaces it can see.** On a
+locked app the console refuses (`403`, *"… is a registry file edit, not a
+console action"*): widening its inbound (`admin.py:388-391`), deleting it
+(`:611-613`), any change to its `identities` list — a reorder included
+(`:559-569`) — and replacing the webhook of an identity it holds (`:705-708`).
+Route edits on the locked app, and display renames of its identities, remain
+allowed. **A fifth refusal fires on the OTHER app's write, with different
+wording** (`403`, *"… would receive inbound from a space that inbound_locked app
+… posts in"*, `:397-414`): any write whose result leaves another inbound-enabled
+app holding an identity whose `space:` is one the locked app posts in. It
+refuses a violation the write **creates** or one involving an app the write
+**touches**; a violation already put in the file by hand, on an app the write
+does not touch, is tolerated (`:401-405`) — the file edit is where that must be
+fixed. ⚠ **A locked app whose identities carry
+no `space:` locks NOTHING** — an identity without one cannot match a space and
+is ignored (`admin.py:146-147`). **Before enabling the console, confirm every
+identity `aitrader` holds has `space:` written** in the box's registry.
+
+**Rollout, in this order** (spec §10 — the order is the point):
+
+1. Set `inbound_locked: true` on **`aitrader` FIRST**, in the box's registry, by
+   hand, **before** the console is enabled — and check its identities' `space:`
+   per the paragraph above.
+2. Mint the admin key; install it over stdin into the hand-written `.env`.
+3. Change the `config` mount to `rw` (§5).
+4. Rebuild (§4 — `app.redeploy` alone does not rebuild), add
+   `GATEWAY_ENABLE_ADMIN: "1"` to the compose, redeploy.
+5. Verify `/healthz` shows `admin.enabled: true`, then open `/admin`.
+6. Record the run in §10.
 
 ---
 

@@ -7,7 +7,7 @@
 Env (see .env.example): CHAT_GATEWAY_ENV_FILE, CHAT_GATEWAY_REGISTRY,
 CHAT_GATEWAY_PORT, CHAT_GATEWAY_INBOX_DIR, CHAT_GATEWAY_INBOX_RETENTION_DAYS,
 CHAT_GATEWAY_STATE_DIR, GATEWAY_ENABLE_PUBSUB, GATEWAY_ENABLE_MCP,
-CHAT_GATEWAY_MCP_ALLOWED_ORIGINS,
+CHAT_GATEWAY_MCP_ALLOWED_ORIGINS, GATEWAY_ENABLE_ADMIN, CHAT_GATEWAY_ADMIN_KEY,
 CHAT_GATEWAY_PUBSUB_SUBSCRIPTION, GOOGLE_APPLICATION_CREDENTIALS.
 """
 
@@ -24,6 +24,7 @@ from .inbox import Inbox
 from .journal import Journal
 from .log_redaction import install_url_redaction
 from .registry import RegistryError, load_registry
+from .registry_holder import RegistryHolder
 from .retention import (RetentionConfigError, RetentionSweeper,
                         retention_days_from_env)
 
@@ -44,13 +45,56 @@ def build_runtime():
     # suffix gap that makes this structural rather than stylistic. Before
     # load_registry, which resolves env-indirected names. Unset on the dev box
     # and in tests, where this is a no-op.
+    #
+    # CG-90. Snapshot the REAL process environment before any file touches it:
+    # a name in here beats every file at every boot, so the console must refuse
+    # to manage it rather than write a value that would be ignored.
+    admin_enabled = os.environ.get("GATEWAY_ENABLE_ADMIN", "0") == "1"
+    process_env_names = frozenset(os.environ)
+    # managed.env has to be found BEFORE the hand-written env file loads, so
+    # its directory is resolved from the PROCESS env here. That is the only
+    # read of CHAT_GATEWAY_STATE_DIR this early; `state_dir` itself is read
+    # after the env file, below, exactly where it was before CG-90 (final
+    # review I4 — reading it here changed where an admin-OFF gateway put its
+    # queue journals whenever the env file was the one setting it).
+    managed_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
+    managed_path = Path(managed_dir) / "managed.env"
+    managed = None
+    # CG-90 final review I3: whenever the file EXISTS, not only when the
+    # console is on. Turning the console off used to skip this load, and the
+    # hand .env's older value of every console-rotated key — the key the
+    # rotation was meant to kill — came back to life at the next boot. On a
+    # gateway that never ran the console there is no file, so that boot is
+    # unchanged. Disabling the console therefore KEEPS its keys; revoking them
+    # is a rotate/delete before disabling, or removing managed.env
+    # (docs/deploy/nas.md, CG-90 subsection).
+    if admin_enabled or managed_path.exists():
+        from .managed_secrets import ManagedSecrets
+
+        managed = ManagedSecrets(managed_path, process_env_names=process_env_names)
+        # BEFORE the hand-written env file: `load_env_file` lets a present value
+        # win, so this order is what makes a console-rotated key survive a boot.
+        # A count, never a name or a value.
+        print(f"admin: loaded {managed.load_at_boot()} managed secret(s)"
+              + ("" if admin_enabled else " (console off; managed.env still applies)"),
+              flush=True)
+
     env_file = os.environ.get("CHAT_GATEWAY_ENV_FILE", "")
     if env_file:
-        from .env_file import load_env_file
+        from .env_file import load_env_file, parse_env_file
 
         print(f"env: loaded {load_env_file(env_file)} key(s) from {env_file}", flush=True)
+        if managed is not None:
+            # Names only — which of the console's secrets this file also sets,
+            # so /healthz and the page can say "managed.env shadows .env".
+            managed.hand_env_names = frozenset(
+                parse_env_file(Path(env_file).read_text(encoding="utf-8-sig")))
 
-    registry = load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml"))
+    # CG-90. A holder, not the bare Registry: every consumer built below keeps
+    # this one reference for the life of the process, and the holder is what
+    # lets the admin console swap the registry underneath all of them at once.
+    registry = RegistryHolder(
+        load_registry(os.environ.get("CHAT_GATEWAY_REGISTRY", "config/registry.yaml")))
     # CG-88. `allow_inbound` now defaults to DENY, and an app that inherits it
     # is named here rather than refused. The refusal was the alternative and it
     # was declined: of the three registry copies, the NAS one cannot be read
@@ -80,6 +124,40 @@ def build_runtime():
             file=sys.stderr, flush=True,
         )
     state_dir = os.environ.get("CHAT_GATEWAY_STATE_DIR", "state")
+
+    admin = None
+    if admin_enabled:
+        from .admin import AdminWiring
+        from .admin_audit import AdminAudit
+        from .registry import ADMIN_KEY_ENV
+        from .registry_store import RegistryStore
+
+        # Fail closed at boot, the GATEWAY_ENABLE_PUBSUB posture: an armed
+        # console with no key would 401 every request, which reads as "wrong
+        # key" to the operator rather than "never configured".
+        if not os.environ.get(ADMIN_KEY_ENV):
+            raise RegistryError(
+                f"GATEWAY_ENABLE_ADMIN=1 needs {ADMIN_KEY_ENV} (mint one with "
+                "`python -m chat_gateway mint-key`; docs/deploy/nas.md)")
+        # CG-90 final review I4. managed.env was located before the env file
+        # loaded; if that file then set (or moved) the state dir, the console
+        # would write its secrets in one directory and its audit, queues and
+        # quarantine in another — and the next boot would look for managed.env
+        # in the wrong one. Refuse rather than pick. Paths are not secrets.
+        if Path(managed_dir) != Path(state_dir):
+            raise RegistryError(
+                f"GATEWAY_ENABLE_ADMIN=1 but CHAT_GATEWAY_STATE_DIR is {managed_dir!r} in the "
+                f"process environment and {state_dir!r} after CHAT_GATEWAY_ENV_FILE loaded; "
+                "managed.env is read before that file, so set CHAT_GATEWAY_STATE_DIR in the "
+                "process environment (the compose document) instead")
+        store = RegistryStore(Path(os.environ.get("CHAT_GATEWAY_REGISTRY",
+                                                  "config/registry.yaml")),
+                              registry, managed)
+        store.probe_writable()
+        admin = AdminWiring(
+            store=store,
+            secrets=managed,
+            audit=AdminAudit(Path(state_dir) / "admin_audit.jsonl"))
     # ONE home for each of these two paths, deliberately: the Inbox WRITES the
     # audit dir and the quarantine dir, and the RetentionSweeper below is
     # constructed against both — one to sweep, one to refuse to sweep. Written
@@ -154,7 +232,7 @@ def build_runtime():
         puller = PubSubPuller(sub, GoogleServiceAccountTokens(creds, scope=PUBSUB_SCOPE))
         subscriber = SubscriberLoop(puller, registry, inbox)
 
-    return registry, inbox, adapters, subscriber, state_dir, sweeper
+    return registry, inbox, adapters, subscriber, state_dir, sweeper, admin
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -166,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        registry, inbox, adapters, subscriber, state_dir, sweeper = build_runtime()
+        registry, inbox, adapters, subscriber, state_dir, sweeper, admin = build_runtime()
     except (RegistryError, EnvFileError) as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
@@ -192,7 +270,8 @@ def main(argv: list[str] | None = None) -> int:
         # for, so it must be legible in both places.
         queue_dir = Path(state_dir) / "queue"
         dispatcher = Dispatcher(adapters, log,
-                                journal=Journal(queue_dir / "delivery.jsonl"))
+                                journal=Journal(queue_dir / "delivery.jsonl"),
+                                registry=registry)
         restored, not_restored = dispatcher.restore(registry)
         inbound_restored = inbox.restore()
         print(f"queue: restored {restored} outbound job(s), {not_restored} expired or unroutable; "
@@ -230,6 +309,9 @@ def main(argv: list[str] | None = None) -> int:
             # requirement — it needs no credential, so there is nothing to fail
             # closed on and no startup check to add.
             mcp_enabled=os.environ.get("GATEWAY_ENABLE_MCP", "0") == "1",
+            # CG-90. Built (or not) by build_runtime, which already refused to
+            # boot an armed console with no admin key.
+            admin=admin,
         )
         app.state.dispatcher.start()
         app.state.monitor.start()
