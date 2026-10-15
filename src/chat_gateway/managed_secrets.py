@@ -139,6 +139,19 @@ class ManagedSecrets:
                 # means nothing changed (CG-90 Task 4 review). Ordered after the
                 # round-trip check so a non-string value has already been refused.
                 raise ValueError(f"{name}: value contains a NUL byte")
+            if value is not None:
+                try:
+                    value.encode("utf-8")
+                except UnicodeEncodeError:
+                    # A lone surrogate is a valid `str` and round-trips above,
+                    # then fails `_write_bytes`'s encode — as a UnicodeEncodeError,
+                    # a ValueError SUBCLASS whose message quotes the offending
+                    # character and whose `.object` is the WHOLE file body, every
+                    # other managed secret included. The store copies str() into
+                    # its 422 and `/healthz`'s `last_write_error`. Refused here,
+                    # names only, `from None` so the codec error is not chained
+                    # into a traceback either (CG-90 Task 5 review, C3; rule #2).
+                    raise ValueError(f"{name}: value is not valid UTF-8 text") from None
         entries = self._entries()
         for name, value in changes.items():
             if value is None:

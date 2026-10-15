@@ -80,6 +80,12 @@ def test_restore_of_a_file_that_did_not_exist_deletes_it(tmp_path):
     # NUL round-trips through the parser but `os.environ` refuses it — AFTER
     # the file was written. Must be refused up front (CG-90 Task 4 review).
     "a\x00b",
+    # A lone surrogate round-trips through the parser (it is a valid `str`) but
+    # fails `.encode("utf-8")` with a UnicodeEncodeError whose message QUOTES
+    # the offending character — a fragment of the secret, which the store then
+    # copied into its 422 and `/healthz`'s `last_write_error` (CG-90 Task 5
+    # review, C3; hard rule #2).
+    "abc\ud800def",
     5,
 ])
 def test_a_value_that_would_not_round_trip_is_refused(tmp_path, bad):
@@ -88,8 +94,11 @@ def test_a_value_that_would_not_round_trip_is_refused(tmp_path, bad):
     ms.apply({"KEEP": "k"})
     path = tmp_path / "state" / "managed.env"
     before = path.read_bytes()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as e:
         ms.apply({"A": bad})
+    # Exactly ValueError — a codec subclass carries the value in its message.
+    assert type(e.value) is ValueError
+    assert "\ud800" not in str(e.value) and "A" in str(e.value)
     assert path.read_bytes() == before
     assert env == {"KEEP": "k"}
 
