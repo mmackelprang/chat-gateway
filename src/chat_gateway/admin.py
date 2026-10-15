@@ -501,7 +501,18 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         def mutate(tree):
             target = _node(tree, "apps", app_id, "app")
             # Re-read under the lock: the guard judges the app the file holds now.
-            widened.extend(guard_inbound(registry.current.apps.get(app_id), body, app_id))
+            live = registry.current.apps.get(app_id)
+            if live is not None and live.inbound_locked and \
+                    list(body.identities) != list(live.identities):
+                # Fix round 2 (I3). The locked SPACES are derived from this
+                # app's grants, so changing them moves the lock: drop `il`
+                # here and the next request could hand `il` — and its space —
+                # to a new inbound app. Additions are refused too, to keep the
+                # rule symmetric. Routes and display stay editable.
+                raise StoreError(403, f"app {app_id!r} is inbound_locked: changing its "
+                                      "identities is a registry file edit, not a console "
+                                      "action. " + RULE_6)
+            widened.extend(guard_inbound(live, body, app_id))
             guard_locked_spaces(after_app(app_id, body), {app_id})
             fields.extend(app_map(target, body, None))
 
@@ -607,8 +618,18 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
 
         def mutate(tree):
             node = _node(tree, "identities", name, "identity")
+            # Fix round 2 (I3): an identity a locked app posts through DEFINES a
+            # locked space. Re-pointing its webhook moves the lock off that
+            # space and frees it for a new inbound app, so it is refused
+            # outright rather than modelled.
+            lockers = sorted(a.app_id for a in registry.current.apps.values()
+                             if a.inbound_locked and name in a.identities)
+            if lockers:
+                raise StoreError(403, f"identity {name!r} is granted to inbound_locked app "
+                                      f"{lockers[0]!r}: replacing its webhook is a registry "
+                                      "file edit, not a console action. " + RULE_6)
             # Fix round I3.2: moving an identity's space moves every inbound app
-            # that holds it — and, if a locked app holds it, moves the lock.
+            # that holds it.
             apps, spaces = _shape(registry.current)
             spaces[name] = space
             guard_locked_spaces((apps, spaces),

@@ -251,10 +251,14 @@ def test_locked_app_cannot_be_widened_even_with_confirmation(gw):
 
 def test_locked_app_can_still_be_edited_outbound_and_lock_survives(gw):
     client, holder, wiring, tmp = gw
+    # Fix round 2: a locked app's GRANTS are console-immutable, so the outbound
+    # edit this pins is a route edit on its existing identity (was: a switch to
+    # i1, which is now — correctly — a 403).
     r = client.put("/admin/api/apps/locked", headers=AUTH,
-                   json={"identities": ["i1"], "routes": {"default": "i1"},
+                   json={"identities": ["il"], "routes": {"default": "il"},
                          "allow_inbound": False})
     assert r.status_code == 200
+    assert holder.apps["locked"].routes == {"default": "il"}
     assert holder.apps["locked"].inbound_locked is True
     assert "inbound_locked: true" in (tmp / "registry.yaml").read_text(encoding="utf-8")
 
@@ -695,3 +699,69 @@ def test_m6_mint_and_rotate_responses_are_no_store(gw):
     assert r.status_code == 201 and r.headers["Cache-Control"] == "no-store"
     r = client.post("/admin/api/apps/newapp/rotate-key", headers=AUTH, json={})
     assert r.status_code == 200 and r.headers["Cache-Control"] == "no-store"
+
+
+# ============================================================================
+# Fix round 2 — a locked app's grants are console-immutable (I3)
+# ============================================================================
+def test_r2_regranting_a_locked_app_is_403_so_its_space_stays_locked(gw):
+    """Probe sequence 1, step 1: moving `locked` off `il` used to un-lock
+    spaces/LOCKED, after which a new inbound app could take `il`."""
+    client, holder, *_ = gw
+    r = client.put("/admin/api/apps/locked", headers=AUTH,
+                   json={"identities": ["i1"], "routes": {}, "allow_inbound": False})
+    assert r.status_code == 403 and "file edit" in r.json()["detail"]
+    assert holder.apps["locked"].identities == ["il"]
+    # Additions are refused too — symmetric and simple.
+    r = client.put("/admin/api/apps/locked", headers=AUTH,
+                   json={"identities": ["il", "i1"], "routes": {}, "allow_inbound": False})
+    assert r.status_code == 403
+    # ...and the follow-up the bypass needed is still refused.
+    assert _new_app(client, identities=["il"], routes={}, allow_inbound=True,
+                    confirm_app_id="newapp").status_code == 403
+
+
+def test_r2_moving_a_locked_apps_identity_out_of_its_space_is_403(gw):
+    """Probe sequence 2, step 1: replacing `il`'s webhook used to move the lock
+    elsewhere and free spaces/LOCKED for a new identity + inbound app."""
+    client, holder, *_ = gw
+    r = client.post("/admin/api/identities/il/webhook", headers=AUTH, json={"webhook_url": HOOK})
+    assert r.status_code == 403 and "file edit" in r.json()["detail"]
+    assert holder.identities["il"].space == "spaces/LOCKED"
+
+
+def test_r2_locked_app_route_edit_and_identity_rename_still_work(gw):
+    client, holder, *_ = gw
+    r = client.put("/admin/api/apps/locked", headers=AUTH,
+                   json={"identities": ["il"], "routes": {"alert": "il"}, "allow_inbound": False})
+    assert r.status_code == 200 and holder.apps["locked"].routes == {"alert": "il"}
+    r = client.put("/admin/api/identities/il", headers=AUTH, json={"display": "Renamed"})
+    assert r.status_code == 200 and holder.identities["il"].display == "Renamed"
+
+
+def _hand_violation(client, tmp):
+    """A hand edit puts `hand` inbound in the locked space; the console reloads."""
+    p = tmp / "registry.yaml"
+    p.write_text(p.read_text(encoding="utf-8") +
+                 "  hand:\n    key_env: ADM_KH\n    identities: [il]\n    allow_inbound: true\n",
+                 encoding="utf-8")
+    assert client.post("/admin/api/reload", headers=AUTH, json={}).status_code == 200
+
+
+def test_r2_a_hand_written_violation_tolerates_an_unrelated_write(gw):
+    client, holder, wiring, tmp = gw
+    _hand_violation(client, tmp)
+    r = client.put("/admin/api/apps/a1", headers=AUTH,
+                   json={"identities": ["i1"], "routes": {"default": "i1"},
+                         "allow_inbound": False})
+    assert r.status_code == 200
+
+
+def test_r2_touching_the_violating_app_must_narrow_it(gw):
+    client, holder, wiring, tmp = gw
+    _hand_violation(client, tmp)
+    keep = {"identities": ["il"], "routes": {"default": "il"}, "allow_inbound": True}
+    r = client.put("/admin/api/apps/hand", headers=AUTH, json=keep)
+    assert r.status_code == 403 and "locked" in r.json()["detail"]
+    r = client.put("/admin/api/apps/hand", headers=AUTH, json={**keep, "allow_inbound": False})
+    assert r.status_code == 200 and holder.apps["hand"].allow_inbound is False

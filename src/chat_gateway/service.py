@@ -838,8 +838,11 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
             # CG-90 spec §7. Counters never degrade (a refusal is a guard
             # working, CG-12); `shadowed_env_names` is an operator to-do, not a
             # fault. Only `memory_disk_diverged` degrades — below, in `reasons`.
-            # Names only: `last_write_error` is authored by the store and the
-            # router and carries ids and env-var NAMES, never a value (rule #2).
+            # `last_write_error` is an authored CATEGORY only ("refused:
+            # conflict", "failed: write rolled back (OSError)") — never a
+            # refusal message, which can quote admin-supplied text. The full
+            # message goes only to the authenticated caller (fix round I2,
+            # rule #2; `registry_store.category_for`).
             "admin": admin.health() if admin is not None else {"enabled": False},
             "registry": registry.health(),
             "inbox": {"pending": inbox.pending_counts(), "dropped": inbox.dropped,
