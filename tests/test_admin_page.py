@@ -96,6 +96,30 @@ def test_write_never_throws_after_the_mutation_succeeded():
     assert body.rstrip().endswith("return out;")
 
 
+def test_conditional_children_never_render_as_literal_null():
+    """UAT (Task 8) saw a literal "null" on the board and the reveal panel:
+    DOM append/prepend/replaceChildren stringify null. Every such call must go
+    through the one helper that skips null/undefined."""
+    js = (STATIC / "admin.js").read_text(encoding="utf-8")
+    helper = js[js.index("function toNodes("):]
+    helper = helper[:helper.index("\n}\n")]
+    assert "if (c != null)" in helper
+    assert "function view(...nodes) { $(\"view\").replaceChildren(...toNodes(nodes)); }" in js
+    calls = re.findall(r"\.(append|prepend|replaceChildren)\(([^)]*)", js)
+    assert calls, "expected DOM insertion calls"
+    for method, arg in calls:
+        assert arg.startswith("...toNodes("), f".{method}({arg}) bypasses toNodes"
+
+
+def test_rule_6_is_stated_once_in_the_typed_confirm():
+    """The server's 428 detail already quotes hard rule #6; the page appends its
+    own copy only when the server's text lacks it."""
+    js = (STATIC / "admin.js").read_text(encoding="utf-8")
+    fn = js[js.index("async function withInboundConfirm("):]
+    fn = fn[:fn.index("\n}\n")]
+    assert '/hard rule #6/i.test(e.message) ? e.message : e.message + "\\n\\n" + RULE_6' in fn
+
+
 def test_no_inline_style_attribute_the_csp_would_block():
     """The page's CSP is `style-src 'self'` with no 'unsafe-inline', which blocks
     `style="…"` attributes — including ones set through setAttribute. A styled

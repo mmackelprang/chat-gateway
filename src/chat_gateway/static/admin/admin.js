@@ -23,12 +23,20 @@ function el(tag, attrs, ...children) {
     else if (v === true) n.setAttribute(k, "");
     else if (v !== false && v != null) n.setAttribute(k, v);
   }
-  for (const c of children.flat()) if (c != null) n.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  n.append(...toNodes(children));
   return n;
+}
+// The ONE place children become nodes: conditional children (`cond ? x : null`)
+// are skipped, never stringified into a literal "null", and strings become
+// text nodes. Every append/replaceChildren goes through this.
+function toNodes(children) {
+  const out = [];
+  for (const c of children.flat(Infinity)) if (c != null) out.push(c instanceof Node ? c : document.createTextNode(String(c)));
+  return out;
 }
 const $ = (id) => document.getElementById(id);
 function toast(msg, isError) { const t = $("toast"); t.textContent = msg || ""; t.className = isError ? "error" : "ok"; }
-function view(...nodes) { $("view").replaceChildren(...nodes); }
+function view(...nodes) { $("view").replaceChildren(...toNodes(nodes)); }
 
 // FastAPI's `detail` is a string for an HTTPException and a list of
 // {loc, msg, type} for a validation 422. Under /admin the 422 list carries no
@@ -237,7 +245,9 @@ async function withInboundConfirm(appId, send) {
   try { return await send(""); }
   catch (e) {
     if (e.status !== 428) throw e;
-    const typed = await typedConfirm(e.message + "\n\n" + RULE_6, appId);
+    // The server's 428 detail already quotes rule #6; add it only if it does not.
+    const msg = /hard rule #6/i.test(e.message) ? e.message : e.message + "\n\n" + RULE_6;
+    const typed = await typedConfirm(msg, appId);
     if (typed === null) throw new Error("cancelled");
     return await send(typed);
   }
@@ -251,7 +261,7 @@ function typedConfirm(message, expected) {
       el("label", {}, "Type ", el("strong", { text: expected }), " to confirm", input),
       el("button", { type: "button", class: "primary", text: "Confirm", on: { click: () => { card.remove(); resolve(input.value); } } }), " ",
       el("button", { type: "button", text: "Cancel", on: { click: () => { card.remove(); resolve(null); } } }));
-    $("view").prepend(card);
+    $("view").prepend(...toNodes([card]));
     input.focus();
   });
 }
