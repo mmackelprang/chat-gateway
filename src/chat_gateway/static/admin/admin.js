@@ -362,7 +362,21 @@ function replaceWebhook(name) {
     el("p", { text: "Google Chat has no regenerate button: delete the old webhook in the space, create a new one, paste its URL here." }),
     el("label", {}, "New webhook URL", input),
     el("button", { type: "button", class: "primary", text: "Replace", on: { click: async () => {
-      try { await write("POST", "/admin/api/identities/" + encodeURIComponent(name) + "/webhook", { webhook_url: input.value }); input.value = ""; toast("Webhook replaced."); board(); }
+      // CG-90 final review I1: moving this identity to a NEW space widens every
+      // inbound app holding it, and the server answers 428 naming them. One
+      // typed confirmation — the identity name — covers all of them.
+      const send = (c) => write("POST", "/admin/api/identities/" + encodeURIComponent(name) + "/webhook", { webhook_url: input.value, confirm_name: c });
+      try {
+        try { await send(""); }
+        catch (e) {
+          if (e.status !== 428) throw e;
+          const msg = /hard rule #6/i.test(e.message) ? e.message : e.message + "\n\n" + RULE_6;
+          const typed = await typedConfirm(msg, name);
+          if (typed === null) throw new Error("cancelled");
+          await send(typed);
+        }
+        input.value = ""; toast("Webhook replaced."); board();
+      }
       catch (e) { fail(e); }
     } } }));
 }

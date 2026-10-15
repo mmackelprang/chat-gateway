@@ -120,6 +120,15 @@ def test_rule_6_is_stated_once_in_the_typed_confirm():
     assert '/hard rule #6/i.test(e.message) ? e.message : e.message + "\\n\\n" + RULE_6' in fn
 
 
+def test_replace_webhook_handles_the_inbound_428():
+    """CG-90 final review I1: moving an inbound app's identity to a new space is
+    a 428; the page answers it with one typed confirmation of the identity name."""
+    js = (STATIC / "admin.js").read_text(encoding="utf-8")
+    fn = js[js.index("function replaceWebhook("):]
+    fn = fn[:fn.index("\n}\n")]
+    assert "e.status !== 428" in fn and "typedConfirm(" in fn and "confirm_name" in fn
+
+
 def test_no_inline_style_attribute_the_csp_would_block():
     """The page's CSP is `style-src 'self'` with no 'unsafe-inline', which blocks
     `style="…"` attributes — including ones set through setAttribute. A styled

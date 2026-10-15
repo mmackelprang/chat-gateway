@@ -885,3 +885,48 @@ def test_c1_a_derived_name_already_set_outside_the_registry_is_409(gw):
                     json={"name": "newid", "display": "N", "webhook_url": HOOK})
     assert r.status_code == 409 and "GOOGLE_CHAT_WEBHOOK_URL__NEWID" in r.json()["detail"]
     assert _clean(r.text) and "newid" not in holder.identities
+
+
+# -- I1: an inbound app gaining a space is a widening ----------------------------
+def test_i1_inbound_app_gaining_another_tenants_space_needs_confirmation(fin):
+    client, holder, wiring, tmp = fin
+    body = {"identities": ["mine", "other"], "routes": {"default": "mine"},
+            "allow_inbound": True}
+    r = client.put("/admin/api/apps/consumer", headers=AUTH, json=body)
+    assert r.status_code == 428 and "identity spaces added" in r.json()["detail"]
+    assert holder.apps["consumer"].identities == ["mine"]
+    assert holder.apps_for_space("spaces/OTHERTENANT") == ["legacy"]
+    r = client.put("/admin/api/apps/consumer", headers=AUTH,
+                   json={**body, "confirm_app_id": "consumer"})
+    assert r.status_code == 200
+    widened = [a for a in _audit_actions(tmp) if a["action"] == "inbound_widened"]
+    assert widened and "identity spaces added" in widened[-1]["fields"]
+
+
+def test_i1_an_outbound_app_gaining_a_space_needs_no_confirmation(fin):
+    client, holder, *_ = fin
+    r = client.put("/admin/api/apps/legacy", headers=AUTH,
+                   json={"identities": ["other", "mine"], "routes": {}, "allow_inbound": False})
+    assert r.status_code == 200
+
+
+def test_i1_webhook_move_of_an_inbound_apps_identity_needs_confirmation(fin):
+    client, holder, wiring, tmp = fin
+    r = client.post("/admin/api/identities/mine/webhook", headers=AUTH,
+                    json={"webhook_url": HOOK_ELSEWHERE})
+    assert r.status_code == 428
+    assert "consumer" in r.json()["detail"] and _clean(r.text)
+    assert holder.identities["mine"].space == "spaces/MINE"
+    assert os.environ["FIN_W_MINE"] == "https://x.example/mine"
+    r = client.post("/admin/api/identities/mine/webhook", headers=AUTH,
+                    json={"webhook_url": HOOK_ELSEWHERE, "confirm_name": "mine"})
+    assert r.status_code == 200 and holder.identities["mine"].space == "spaces/ELSEWHERE"
+    widened = [a for a in _audit_actions(tmp) if a["action"] == "inbound_widened"]
+    assert widened and widened[-1]["target"] == "consumer"
+
+
+def test_i1_webhook_replace_in_the_same_space_needs_no_confirmation(fin):
+    client, holder, *_ = fin
+    same = "https://chat.googleapis.com/v1/spaces/MINE/messages?key=KEYVAL&token=TOKVAL"
+    r = client.post("/admin/api/identities/mine/webhook", headers=AUTH, json={"webhook_url": same})
+    assert r.status_code == 200

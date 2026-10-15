@@ -63,15 +63,31 @@ def parse_webhook_space(url: str) -> str:
     return f"spaces/{m.group(1)}"
 
 
-def widening(old: App | None, new) -> list[str]:
+def widening(old: App | None, new, spaces: dict[str, str] | None = None) -> list[str]:
     """Which parts of `new` widen inbound relative to `old` (spec §6.4).
 
     `new.callback_url is None` means "not sent, unchanged" (fix round I4), so
-    it is compared as the old value — it cannot widen anything."""
+    it is compared as the old value — it cannot widen anything.
+
+    `spaces` is the live identity -> space map. Inbound is routed BY SPACE
+    (`Registry.apps_for_space`), so an inbound app granted an identity homed in
+    a space it did not already post in starts receiving that space's traffic —
+    possibly another tenant's — and that is a widening exactly as much as
+    flipping `allow_inbound` is (CG-90 final review I1). Measured before this:
+    granting another tenant's identity to an inbound app answered 200 with no
+    confirmation. Judged only when the app WAS inbound: when it was not, the
+    `allow_inbound` reason already demands the same typed confirmation, and
+    covers every space at once."""
     reasons: list[str] = []
     old_in = bool(old and old.allow_inbound)
     if new.allow_inbound and not old_in:
         reasons.append("allow_inbound")
+    if new.allow_inbound and old_in and spaces is not None:
+        def homed(names) -> set[str]:
+            return {spaces[n] for n in names if spaces.get(n)}
+
+        if homed(getattr(new, "identities", ())) - homed(old.identities):
+            reasons.append("identity spaces added")
     old_cb = old.callback_url if old else ""
     new_cb = old_cb if new.callback_url is None else new.callback_url
     if new_cb and new_cb != old_cb:
@@ -230,6 +246,10 @@ class DisplayIn(_Guarded):
 
 class WebhookIn(_Guarded):
     webhook_url: str = ""
+    # CG-90 final review I1: moving an inbound app's identity to another space
+    # widens that app's inbound. ONE typed confirmation — the identity's name —
+    # covers every app the 428 names; the page asks once, not once per app.
+    confirm_name: str = ""
 
 
 class ConfirmApp(_Guarded):
@@ -359,7 +379,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         where `registry.current` agrees with the file being edited (fix round
         I3.3; closes M1, the guard evaluated against a snapshot that could be
         swapped before the write landed)."""
-        reasons = widening(old, body)
+        reasons = widening(old, body, _shape(registry.current)[1])
         if not reasons:
             return []
         if old is not None and old.inbound_locked:
@@ -645,6 +665,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         except ValueError as exc:
             raise refuse(422, str(exc)) from exc
         managed_name(ident.webhook_url_env)
+        widened: list[str] = []
 
         def mutate(tree):
             node = _node(tree, "identities", name, "identity")
@@ -664,10 +685,26 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             spaces[name] = space
             guard_locked_spaces((apps, spaces),
                                 {a for a, (_, _, ids) in apps.items() if name in ids})
+            # CG-90 final review I1. Not a locked space, but still a NEW space
+            # for every inbound app holding this identity — the same widening
+            # `widening()` names "identity spaces added" for a grant. A
+            # same-space replace (a rotated webhook) moves nothing.
+            live = registry.current.identities.get(name)
+            if live is None or live.space != space:
+                movers = sorted(a.app_id for a in registry.current.apps.values()
+                                if a.allow_inbound and name in a.identities)
+                if movers and body.confirm_name != name:
+                    raise StoreError(428, f"identity {name!r} is held by inbound app(s) "
+                                          f"{', '.join(movers)}: moving it to another space "
+                                          "widens what they receive — type the identity name "
+                                          f"to confirm. {RULE_6}")
+                widened.extend(movers)
             node["space"] = space
 
         run(mutate, {ident.webhook_url_env: body.webhook_url.strip()}, sha=body.registry_sha256)
         audit.record("webhook_replaced", name, [ident.webhook_url_env, "space"])
+        for app_id in widened:
+            audit.record("inbound_widened", app_id, ["identity spaces added"])
         return {"name": name, "space": space}
 
     @router.post("/api/identities/{name}/delete", dependencies=[Depends(require_admin)])
