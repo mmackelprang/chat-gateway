@@ -950,7 +950,10 @@ def test_failure_at_registry_write_rolls_back_secrets(tmp_path, monkeypatch):
     def boom(*a, **kw):
         raise OSError("disk full")
 
-    monkeypatch.setattr(rs.os, "replace", boom)
+    # `copymode`, not `os.replace`: `os` is one shared module object, so
+    # patching `os.replace` would also break ManagedSecrets' own writes and
+    # its rollback. `shutil.copymode` is called only by the registry write.
+    monkeypatch.setattr(rs.shutil, "copymode", boom)
     with pytest.raises(StoreError) as e:
         store.apply(_add_a2, secrets={"K2": "cgk_two"})
     assert e.value.status == 500
@@ -961,7 +964,7 @@ def test_failure_at_registry_write_rolls_back_secrets(tmp_path, monkeypatch):
 def test_failed_rollback_marks_divergence(tmp_path, monkeypatch):
     store, *_ = _store(tmp_path)
     import chat_gateway.registry_store as rs
-    monkeypatch.setattr(rs.os, "replace", lambda *a, **kw: (_ for _ in ()).throw(OSError("x")))
+    monkeypatch.setattr(rs.shutil, "copymode", lambda *a, **kw: (_ for _ in ()).throw(OSError("x")))
     monkeypatch.setattr(store._secrets, "restore", lambda snap: (_ for _ in ()).throw(OSError("y")))
     with pytest.raises(StoreError):
         store.apply(_add_a2, secrets={"K2": "cgk_two"})
@@ -1153,12 +1156,6 @@ class RegistryStore:
             try:
                 if secrets:
                     self._secrets.apply(secrets)
-            except ValueError as exc:
-                # `ManagedSecrets.apply` validates every value BEFORE writing
-                # anything, so a refusal here has nothing to roll back. A 422,
-                # not the 500 below; the message names the variable only.
-                raise self._refuse(422, str(exc)) from exc
-            try:
                 if changed:
                     # 7. backup  8. atomic write
                     self._backup()
@@ -1169,6 +1166,11 @@ class RegistryStore:
                         os.fsync(fh.fileno())
                     shutil.copymode(self._path, tmp)
                     os.replace(tmp, self._path)
+            except ValueError as exc:
+                # `ManagedSecrets.apply` validates every value BEFORE writing
+                # anything, so this refusal has nothing to roll back. A 422,
+                # not the 500 below; the message names the variable only.
+                raise self._refuse(422, str(exc)) from exc
             except Exception as exc:  # noqa: BLE001 — roll back, then report
                 try:
                     self._secrets.restore(snap)
@@ -1512,6 +1514,12 @@ def test_webhook_url_is_trimmed_and_never_echoed(gw):
     assert bad.status_code == 422 and "KEYVAL" not in bad.text
 
 
+def test_a_missing_field_never_echoes_the_webhook_url(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/identities", headers=AUTH, json={"webhook_url": HOOK})
+    assert r.status_code == 422 and "KEYVAL" not in r.text and "TOKVAL" not in r.text
+
+
 def test_replace_webhook_updates_space(gw):
     client, holder, *_ = gw
     r = client.post("/admin/api/identities/i1/webhook", headers=AUTH, json={"webhook_url": HOOK})
@@ -1745,18 +1753,22 @@ class AppCreate(AppFields):
     app_id: str
 
 
+# ⚠ Hard rule #2: every field that can carry a webhook URL DEFAULTS to "" and
+# is checked by hand. FastAPI's 422 body echoes the offending `input`, and for
+# a missing required field that input is the whole request body — webhook URL
+# included. With defaults, a missing field never reaches pydantic's echo.
 class IdentityCreate(_Guarded):
-    name: str
-    display: str
-    webhook_url: str
+    name: str = ""
+    display: str = ""
+    webhook_url: str = ""
 
 
 class DisplayIn(_Guarded):
-    display: str
+    display: str = ""
 
 
 class WebhookIn(_Guarded):
-    webhook_url: str
+    webhook_url: str = ""
 
 
 class ConfirmApp(_Guarded):
@@ -1975,6 +1987,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
     # -- identities ------------------------------------------------------------
     @router.post("/api/identities", status_code=201, dependencies=[Depends(require_admin)])
     def create_identity(body: IdentityCreate):
+        if not body.display.strip() or not body.webhook_url.strip():
+            raise refuse(422, "name, display and webhook_url are all required")
         check_id(body.name, "identity")
         if body.name in registry.identities:
             raise refuse(409, f"identity {body.name!r} already exists")
@@ -2405,8 +2419,8 @@ ol.guide li { margin:.25rem 0; }
 ```javascript
 // chat-gateway admin console (CG-90). No framework, no storage: the admin key
 // lives in `adminKey` for the life of this tab only. Every piece of data is
-// rendered through textContent — never innerHTML — so registry content cannot
-// become markup.
+// rendered through textContent, never parsed as HTML, so registry content
+// cannot become markup.
 "use strict";
 
 let adminKey = "";
