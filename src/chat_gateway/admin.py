@@ -13,7 +13,7 @@ import hmac
 import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -28,7 +28,7 @@ from .auth import mint_key
 from .delivery import DeliveryLog
 from .inbox import Inbox
 from .managed_secrets import ManagedSecrets
-from .registry import ADMIN_KEY_ENV, SEVERITIES, App
+from .registry import ADMIN_KEY_ENV, SEVERITIES, App, RegistryError
 from .registry_holder import RegistryHolder
 from .registry_store import RegistryStore, StoreError, category_for, flow_seq
 
@@ -38,9 +38,47 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _WEBHOOK_PATH = re.compile(r"^/v1/spaces/([A-Za-z0-9_-]+)/messages$")
 RATE_LIMIT_FAILURES = 5
 RATE_LIMIT_WINDOW_S = 60.0
+#: The console's auth posture (CG-91). Env-var NAME only (hard rule #2).
+AUTH_ENV = "GATEWAY_ADMIN_AUTH"
+AUTH_KEY = "key"
+AUTH_OPEN = "open"
 STATIC_DIR = Path(__file__).parent / "static" / "admin"
 RULE_6 = ("Inbound crosses to a consumer only by that consumer's explicit "
           "registry opt-in (hard rule #6).")
+
+
+def admin_auth_posture(raw: str | None) -> str:
+    """Parse `GATEWAY_ADMIN_AUTH`: absent or empty is `key`; only the two exact
+    values are accepted. Never coerced or lowercased — a typo such as `Open`
+    must refuse to boot rather than silently pick a posture (hard rule #7)."""
+    if raw is None or raw == "":
+        return AUTH_KEY
+    if raw in (AUTH_KEY, AUTH_OPEN):
+        return raw
+    raise RegistryError(f"{AUTH_ENV}={raw!r} is not one of 'key', 'open' "
+                        "(CG-91; absence means 'key')")
+
+
+def cross_origin_reason(headers: Mapping[str, str]) -> str | None:
+    """Why this request looks cross-origin, or None to accept it (CG-91).
+
+    Refuses a browser-declared `Sec-Fetch-Site` other than same-origin/none, or
+    an `Origin` whose host:port differs from `Host`; `Origin: null` (an empty
+    netloc) is refused whatever `Host` says. A non-browser client sends neither
+    header and is accepted by design. Scheme is deliberately not compared, so a
+    TLS-terminating proxy that preserves `Host` does not break the page. Keys
+    are expected lowercased, as Starlette's `Headers` provides. The messages
+    name the header and never echo its value (hard rule #2).
+    """
+    site = headers.get("sec-fetch-site")
+    if site is not None and site.lower() not in ("same-origin", "none"):
+        return "Sec-Fetch-Site is not same-origin"
+    origin = headers.get("origin")
+    if origin is not None:
+        netloc = urlparse(origin).netloc.lower()
+        if not netloc or netloc != headers.get("host", "").lower():
+            return "Origin does not match Host"
+    return None
 
 
 def env_name(prefix: str, ident: str) -> str:
@@ -176,10 +214,17 @@ class AdminWiring:
     store: RegistryStore
     secrets: ManagedSecrets
     audit: AdminAudit
+    auth: str = AUTH_KEY
+    #: Requests refused by the cross-origin guard. A bare counter, kept OFF the
+    #: store's `last_write_error` on purpose: the guard fires before any
+    #: credential check, so an unauthenticated host must not be able to become
+    #: the latest writer of that field and mask a real store failure.
+    cross_origin_refused: int = 0
 
     def health(self) -> dict:
-        return {"enabled": True, "writes": self.store.writes,
+        return {"enabled": True, "auth": self.auth, "writes": self.store.writes,
                 "refused": self.store.refused,
+                "cross_origin_refused": self.cross_origin_refused,
                 # An authored CATEGORY, never a message: this lands on the
                 # unauthenticated /healthz (fix round I2, hard rule #2).
                 "last_write_error": self.store.last_write_error,
@@ -271,11 +316,21 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
     router = APIRouter(prefix="/admin")
 
     def require_admin(request: Request, response: Response,
-                      authorization: str | None = Header(default=None)) -> None:
+                      authorization: str | None = Header(default=None)) -> str:
         # no-store on every admin answer: two of them carry a freshly minted
         # key, and a cached copy of that response is a second home for it.
         response.headers["Cache-Control"] = "no-store"
+        # Cross-origin guard first, in both postures and before any credential
+        # logic: a valid bearer from a foreign page is still a forged request.
+        reason = cross_origin_reason(request.headers)
+        if reason:
+            wiring.cross_origin_refused += 1
+            raise HTTPException(403, reason)
         host = request.client.host if request.client else "?"
+        if wiring.auth == AUTH_OPEN:
+            # Operator-chosen posture: no credential is read, so there is
+            # nothing to rate-limit and no key to compare with a tenant's.
+            return host
         limiter.check(host)
         # Read per request, not at mount: rotating the admin key is an env
         # change plus restart today, and an unset key must refuse EVERYTHING
@@ -288,7 +343,11 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         # on a non-ASCII str, and Starlette decodes headers as latin-1 — so one
         # non-ASCII byte in the header was a 500 the limiter never counted, an
         # unthrottled probe. As bytes it is an ordinary, counted 401.
-        if not expected or not presented or not hmac.compare_digest(presented, expected):
+        if not presented:
+            # No credential at all is the page's own probe on load, not a guess:
+            # it must not eat the failed-login budget a real operator needs.
+            raise HTTPException(401, "admin key required", headers={"WWW-Authenticate": "Bearer"})
+        if not expected or not hmac.compare_digest(presented, expected):
             limiter.fail(host)
             raise HTTPException(401, "admin key required", headers={"WWW-Authenticate": "Bearer"})
         # Hard rule #4: two credentials, never one. `load_registry` already
@@ -299,6 +358,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             if v and hmac.compare_digest(v, expected):
                 raise HTTPException(503, f"the admin key equals app {app.app_id!r}'s API key — "
                                          "mint a separate admin key (hard rule #4)")
+        return host
 
     def refuse(status: int, message: str, category: str | None = None) -> HTTPException:
         # The store counts it and keeps the CATEGORY only (I2); the message goes
@@ -515,8 +575,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         }
 
     # -- apps ------------------------------------------------------------------
-    @router.post("/api/apps", status_code=201, dependencies=[Depends(require_admin)])
-    def create_app_entry(body: AppCreate):
+    @router.post("/api/apps", status_code=201)
+    def create_app_entry(body: AppCreate, client: str = Depends(require_admin)):
         check_id(body.app_id, "app")
         if body.app_id in registry.apps:
             raise refuse(409, f"app {body.app_id!r} already exists")
@@ -540,14 +600,14 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             apps[body.app_id] = m
 
         run(mutate, {key_env: key}, sha=body.registry_sha256)
-        audit.record("app_created", body.app_id, ["key_env", *fields])
+        audit.record("app_created", body.app_id, ["key_env", *fields], client=client)
         if widened:
-            audit.record("inbound_widened", body.app_id, widened)
+            audit.record("inbound_widened", body.app_id, widened, client=client)
         return {"app_id": body.app_id, "key_env": key_env, "key": key,
                 "shadows_env_file": key_env in secrets.hand_env_names}
 
-    @router.put("/api/apps/{app_id}", dependencies=[Depends(require_admin)])
-    def update_app_entry(app_id: str, body: AppFields):
+    @router.put("/api/apps/{app_id}")
+    def update_app_entry(app_id: str, body: AppFields, client: str = Depends(require_admin)):
         get_app(app_id)
         check_refs(body)
         fields: list[str] = []
@@ -572,13 +632,13 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             fields.extend(app_map(target, body, None))
 
         run(mutate, sha=body.registry_sha256)
-        audit.record("app_updated", app_id, fields)
+        audit.record("app_updated", app_id, fields, client=client)
         if widened:
-            audit.record("inbound_widened", app_id, widened)
+            audit.record("inbound_widened", app_id, widened, client=client)
         return {"app_id": app_id}
 
-    @router.post("/api/apps/{app_id}/rotate-key", dependencies=[Depends(require_admin)])
-    def rotate_key(app_id: str, body: _Guarded | None = None):
+    @router.post("/api/apps/{app_id}/rotate-key")
+    def rotate_key(app_id: str, body: _Guarded | None = None, client: str = Depends(require_admin)):
         app = get_app(app_id)
         managed_name(app.key_env)
         key = mint_key()
@@ -592,12 +652,12 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             _node(tree, "apps", app_id, "app")
 
         run(mutate, {app.key_env: key}, sha=body.registry_sha256 if body else None)
-        audit.record("key_rotated", app_id, [app.key_env])
+        audit.record("key_rotated", app_id, [app.key_env], client=client)
         return {"app_id": app_id, "key_env": app.key_env, "key": key,
                 "shadows_env_file": app.key_env in secrets.hand_env_names}
 
-    @router.post("/api/apps/{app_id}/delete", dependencies=[Depends(require_admin)])
-    def delete_app_entry(app_id: str, body: ConfirmApp):
+    @router.post("/api/apps/{app_id}/delete")
+    def delete_app_entry(app_id: str, body: ConfirmApp, client: str = Depends(require_admin)):
         app = get_app(app_id)
         if body.confirm_app_id != app_id:
             raise refuse(428, "deleting an app requires typing its id to confirm")
@@ -627,12 +687,12 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
 
         remove = {app.key_env: None} if secrets.source_of(app.key_env) == "managed" else None
         run(mutate, remove, sha=body.registry_sha256)
-        audit.record("app_deleted", app_id, [])
+        audit.record("app_deleted", app_id, [], client=client)
         return {"app_id": app_id}
 
     # -- identities ------------------------------------------------------------
-    @router.post("/api/identities", status_code=201, dependencies=[Depends(require_admin)])
-    def create_identity(body: IdentityCreate):
+    @router.post("/api/identities", status_code=201)
+    def create_identity(body: IdentityCreate, client: str = Depends(require_admin)):
         if not body.display.strip() or not body.webhook_url.strip():
             raise refuse(422, "name, display and webhook_url are all required")
         check_id(body.name, "identity")
@@ -659,7 +719,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             identities[body.name] = m
 
         run(mutate, {url_env: body.webhook_url.strip()}, sha=body.registry_sha256)
-        audit.record("identity_created", body.name, ["display", "webhook_url_env", "space"])
+        audit.record("identity_created", body.name, ["display", "webhook_url_env", "space"], client=client)
         return {"name": body.name, "webhook_url_env": url_env, "space": space}
 
     def get_identity(name: str):
@@ -668,8 +728,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             raise HTTPException(404, f"unknown identity {name!r}")
         return ident
 
-    @router.put("/api/identities/{name}", dependencies=[Depends(require_admin)])
-    def update_identity(name: str, body: DisplayIn):
+    @router.put("/api/identities/{name}")
+    def update_identity(name: str, body: DisplayIn, client: str = Depends(require_admin)):
         get_identity(name)
         if not body.display.strip():
             # `load_registry` would accept "" and render a blank sender name.
@@ -679,11 +739,11 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             _node(tree, "identities", name, "identity")["display"] = body.display
 
         run(mutate, sha=body.registry_sha256)
-        audit.record("identity_updated", name, ["display"])
+        audit.record("identity_updated", name, ["display"], client=client)
         return {"name": name}
 
-    @router.post("/api/identities/{name}/webhook", dependencies=[Depends(require_admin)])
-    def replace_webhook(name: str, body: WebhookIn):
+    @router.post("/api/identities/{name}/webhook")
+    def replace_webhook(name: str, body: WebhookIn, client: str = Depends(require_admin)):
         ident = get_identity(name)
         if ident.mode != "webhook" or not ident.webhook_url_env:
             raise refuse(409, f"identity {name!r} is not a webhook identity")
@@ -729,13 +789,13 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             node["space"] = space
 
         run(mutate, {ident.webhook_url_env: body.webhook_url.strip()}, sha=body.registry_sha256)
-        audit.record("webhook_replaced", name, [ident.webhook_url_env, "space"])
+        audit.record("webhook_replaced", name, [ident.webhook_url_env, "space"], client=client)
         for app_id in widened:
-            audit.record("inbound_widened", app_id, ["identity spaces added"])
+            audit.record("inbound_widened", app_id, ["identity spaces added"], client=client)
         return {"name": name, "space": space}
 
-    @router.post("/api/identities/{name}/delete", dependencies=[Depends(require_admin)])
-    def delete_identity(name: str, body: ConfirmIdentity):
+    @router.post("/api/identities/{name}/delete")
+    def delete_identity(name: str, body: ConfirmIdentity, client: str = Depends(require_admin)):
         ident = get_identity(name)
         if body.confirm_name != name:
             raise refuse(428, "deleting an identity requires typing its name to confirm")
@@ -751,17 +811,17 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         env = ident.webhook_url_env
         remove = {env: None} if env and secrets.source_of(env) == "managed" else None
         run(mutate, remove, sha=body.registry_sha256)
-        audit.record("identity_deleted", name, [])
+        audit.record("identity_deleted", name, [], client=client)
         return {"name": name}
 
     # -- reload ----------------------------------------------------------------
-    @router.post("/api/reload", dependencies=[Depends(require_admin)])
-    def reload():
+    @router.post("/api/reload")
+    def reload(client: str = Depends(require_admin)):
         try:
             store.reload()
         except StoreError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
-        audit.record("reloaded_from_disk", "registry.yaml", [])
+        audit.record("reloaded_from_disk", "registry.yaml", [], client=client)
         return {"registry_sha256": store.sha256}
 
     return router

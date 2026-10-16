@@ -8,9 +8,9 @@
 <script src="/admin/static/admin.js" defer></script>
 </head>
 <body>
-<header><h1>chat-gateway admin</h1><span id="sha" class="muted"></span></header>
+<header><h1>chat-gateway admin</h1><span id="sha" class="muted"></span><span id="auth-mode" class="pill warn" hidden>open · no sign-in</span></header>
 <main>
-  <section id="login">
+  <section id="login" hidden>
     <h2>Sign in</h2>
     <p class="muted">The admin key is held in this tab's memory only. Reloading asks again.</p>
     <form id="login-form">

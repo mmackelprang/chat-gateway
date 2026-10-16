@@ -5,11 +5,12 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from chat_gateway.admin import AdminWiring, env_name, parse_webhook_space, widening
+from chat_gateway.admin import (AUTH_KEY, AUTH_OPEN, AdminWiring, admin_auth_posture,
+                                cross_origin_reason, env_name, parse_webhook_space, widening)
 from chat_gateway.admin_audit import AdminAudit
 from chat_gateway.inbox import Inbox
 from chat_gateway.managed_secrets import ManagedSecrets
-from chat_gateway.registry import App, load_registry
+from chat_gateway.registry import App, RegistryError, load_registry
 from chat_gateway.registry_holder import RegistryHolder
 from chat_gateway.registry_store import RegistryStore
 from chat_gateway.service import create_app
@@ -55,8 +56,12 @@ class RecordingAdapter:
         return {"status": "delivered"}
 
 
-def _build(tmp_path, monkeypatch, adapter):
-    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+def _build(tmp_path, monkeypatch, adapter, auth="key"):
+    if auth == "key":
+        monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    else:
+        # Open posture reads no credential: prove it by not providing one.
+        monkeypatch.delenv("CHAT_GATEWAY_ADMIN_KEY", raising=False)
     monkeypatch.setenv("ADM_K1", "cgk_tenant_one")
     monkeypatch.setenv("ADM_W1", "https://x.example/hook")
     p = tmp_path / "registry.yaml"
@@ -66,7 +71,8 @@ def _build(tmp_path, monkeypatch, adapter):
                              process_env_names=frozenset({"CHAT_GATEWAY_ADMIN_KEY"}),
                              environ=os.environ)
     wiring = AdminWiring(store=RegistryStore(p, holder, secrets), secrets=secrets,
-                         audit=AdminAudit(tmp_path / "state" / "admin_audit.jsonl"))
+                         audit=AdminAudit(tmp_path / "state" / "admin_audit.jsonl", auth=auth),
+                         auth=auth)
     client = TestClient(create_app(holder, Inbox(), {"webhook": adapter}, admin=wiring))
     return client, holder, wiring
 
@@ -80,6 +86,13 @@ def _clean_minted_env():
 @pytest.fixture()
 def gw(tmp_path, monkeypatch):
     client, holder, wiring = _build(tmp_path, monkeypatch, object())
+    yield client, holder, wiring, tmp_path
+    _clean_minted_env()
+
+
+@pytest.fixture()
+def gw_open(tmp_path, monkeypatch):
+    client, holder, wiring = _build(tmp_path, monkeypatch, object(), auth="open")
     yield client, holder, wiring, tmp_path
     _clean_minted_env()
 
@@ -122,6 +135,123 @@ def test_widening_cases():
     assert widening(old, N(allowed_users=["a@x", "b@x"])) == ["allowed_users added"]
     assert widening(old, N(callback_url="https://cb")) == ["callback_url"]
     assert widening(old, N(allow_inbound=False, allowed_users=[])) == []
+
+
+# -- posture ----------------------------------------------------------------
+def test_wiring_and_audit_default_to_key_posture(tmp_path):
+    """CG-88 lesson: pin the dataclass/constructor defaults themselves, not just the
+    loader that passes the value explicitly on every path."""
+    assert AdminWiring.__dataclass_fields__["auth"].default == AUTH_KEY == "key"
+    assert AdminAudit(tmp_path / "a.jsonl").auth == "key"
+
+
+def test_posture_defaults_to_key_when_absent_or_empty():
+    assert admin_auth_posture(None) == AUTH_KEY
+    assert admin_auth_posture("") == AUTH_KEY
+
+
+def test_posture_accepts_exactly_the_two_values():
+    assert admin_auth_posture("key") == AUTH_KEY
+    assert admin_auth_posture("open") == AUTH_OPEN
+
+
+@pytest.mark.parametrize("raw", ["Open", "OPEN", "KEY", "yes", "1", "true", " open"])
+def test_posture_is_never_coerced(raw):
+    with pytest.raises(RegistryError) as e:
+        admin_auth_posture(raw)
+    assert "GATEWAY_ADMIN_AUTH" in str(e.value) and "'key'" in str(e.value) and "'open'" in str(e.value)
+
+
+def test_wiring_defaults_to_key_and_reports_it(gw):
+    client, holder, wiring, tmp = gw
+    assert wiring.auth == AUTH_KEY
+    assert client.get("/healthz").json()["admin"]["auth"] == "key"
+
+
+# -- cross-origin guard -----------------------------------------------------
+@pytest.mark.parametrize("headers", [
+    {}, {"sec-fetch-site": "same-origin"}, {"sec-fetch-site": "none"},
+    {"origin": "http://gw.local:8085", "host": "gw.local:8085"},
+    {"origin": "http://GW.LOCAL:8085", "host": "gw.local:8085"},
+])
+def test_guard_accepts_same_origin_and_non_browser_requests(headers):
+    assert cross_origin_reason(headers) is None
+
+
+@pytest.mark.parametrize("headers,word", [
+    ({"sec-fetch-site": "cross-site"}, "Sec-Fetch-Site"),
+    ({"sec-fetch-site": "same-site"}, "Sec-Fetch-Site"),
+    ({"origin": "http://evil.example", "host": "gw.local:8085"}, "Origin"),
+    ({"origin": "null", "host": "gw.local:8085"}, "Origin"),
+    ({"origin": "null"}, "Origin"),
+    ({"origin": "http://gw.local:9000", "host": "gw.local:8085"}, "Origin"),
+])
+def test_guard_refuses_cross_origin_evidence_and_never_echoes_it(headers, word):
+    reason = cross_origin_reason(headers)
+    assert word in reason and "evil" not in reason and "9000" not in reason
+
+
+def test_key_mode_refuses_a_valid_bearer_from_a_foreign_origin(gw):
+    client, holder, wiring, tmp = gw
+    r = client.get("/admin/api/state", headers={**AUTH, "Origin": "http://evil.example"})
+    assert r.status_code == 403 and "evil" not in r.text
+    admin = client.get("/healthz").json()["admin"]
+    assert admin["cross_origin_refused"] == 1
+    # The guard must not touch the store's slot: an unauthenticated host would
+    # otherwise be able to mask a real store failure (latest-wins).
+    assert admin["last_write_error"] is None and admin["refused"] == 0
+    r = client.post("/admin/api/reload", headers={**AUTH, "Sec-Fetch-Site": "cross-site"}, json={})
+    assert r.status_code == 403
+    admin = client.get("/healthz").json()["admin"]
+    assert admin["cross_origin_refused"] == 2
+    assert admin["last_write_error"] is None and admin["refused"] == 0
+
+
+def test_guard_runs_before_the_limiter_and_is_not_a_failed_login(gw):
+    client, holder, wiring, tmp = gw
+    bad = {"Authorization": "Bearer wrong"}
+    foreign = {**AUTH, "Origin": "http://evil.example"}
+    # Four failures, then cross-origin refusals: if those counted, the fifth
+    # wrong bearer below would already be locked out.
+    assert [client.get("/admin/api/state", headers=bad).status_code for _ in range(4)] == [401] * 4
+    assert [client.get("/admin/api/state", headers=foreign).status_code for _ in range(3)] == [403] * 3
+    assert client.get("/admin/api/state", headers=bad).status_code == 401   # 5th real failure
+    # Now locked out: a same-origin request is 429, a cross-origin one is
+    # still the guard's 403 (it runs first), and neither changes the lockout.
+    assert client.get("/admin/api/state", headers=AUTH).status_code == 429
+    assert client.get("/admin/api/state", headers=foreign).status_code == 403
+    assert client.get("/admin/api/state", headers=bad).status_code == 429
+
+
+# -- open mode --------------------------------------------------------------
+def test_open_mode_needs_no_credential(gw_open):
+    client, *_ = gw_open
+    assert client.get("/admin/api/state").status_code == 200
+    assert client.get("/admin/api/state", headers={"Authorization": "Bearer wrong"}).status_code == 200
+    assert client.get("/healthz").json()["admin"]["auth"] == "open"
+
+
+def test_open_mode_skips_the_limiter_and_the_tenant_key_equality_check(gw_open, monkeypatch):
+    client, *_ = gw_open
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", "cgk_tenant_one")  # equals ADM_K1
+    codes = [client.get("/admin/api/state", headers={"Authorization": "Bearer wrong"}).status_code
+             for _ in range(7)]
+    assert codes == [200] * 7
+
+
+def test_open_mode_keeps_the_guards(gw_open):
+    client, *_ = gw_open
+    assert client.get("/admin/api/state", headers={"Origin": "http://evil.example"}).status_code == 403
+    r = client.post("/admin/api/apps/a1/delete", json={"confirm_app_id": "nope"})
+    assert r.status_code == 428
+    r = client.post("/admin/api/apps/locked/delete", json={"confirm_app_id": "locked"})
+    assert r.status_code == 403
+
+
+def test_key_mode_header_less_requests_do_not_burn_the_limiter(gw):
+    client, *_ = gw
+    assert [client.get("/admin/api/state").status_code for _ in range(6)] == [401] * 6
+    assert client.get("/admin/api/state", headers=AUTH).status_code == 200
 
 
 # -- auth -------------------------------------------------------------------
@@ -183,6 +313,10 @@ def test_create_app_mints_once_and_it_authenticates(gw):
     assert key not in client.get("/admin/api/state", headers=AUTH).text
     audit = (tmp / "state" / "admin_audit.jsonl").read_text(encoding="utf-8")
     assert "app_created" in audit and key not in audit
+    for raw in audit.splitlines():  # the new fields carry names, never a value
+        line = json.loads(raw)
+        assert key not in json.dumps(line)
+        assert line["auth"] == "key" and line["client"] == "testclient"
     written = (tmp / "registry.yaml").read_text(encoding="utf-8").split("newapp:")[1]
     assert "allow_inbound: false" in written  # hard rule #7: written, never defaulted
 
@@ -422,6 +556,41 @@ def _boot_env(tmp_path, monkeypatch):
     monkeypatch.setenv("GATEWAY_ENABLE_ADMIN", "1")
     for k in ("CHAT_GATEWAY_ENV_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "GATEWAY_ENABLE_PUBSUB"):
         monkeypatch.delenv(k, raising=False)
+    # A developer's shell must not leak a posture into the suite.
+    monkeypatch.delenv("GATEWAY_ADMIN_AUTH", raising=False)
+
+
+def test_open_mode_boots_without_an_admin_key_and_warns(tmp_path, monkeypatch, capsys):
+    from chat_gateway.__main__ import build_runtime
+    _boot_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("CHAT_GATEWAY_ADMIN_KEY", raising=False)
+    monkeypatch.setenv("GATEWAY_ADMIN_AUTH", "open")
+    admin = build_runtime()[6]
+    assert admin.auth == "open" and admin.audit.auth == "open"
+    assert "admin: WARNING — GATEWAY_ADMIN_AUTH=open" in capsys.readouterr().err
+
+
+def test_posture_in_the_env_file_is_ignored(tmp_path, monkeypatch):
+    from chat_gateway.__main__ import build_runtime
+    _boot_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    monkeypatch.delenv("GATEWAY_ADMIN_AUTH", raising=False)
+    hand = tmp_path / "hand.env"
+    hand.write_text("GATEWAY_ADMIN_AUTH=open\n", encoding="utf-8")
+    monkeypatch.setenv("CHAT_GATEWAY_ENV_FILE", str(hand))
+    try:
+        assert build_runtime()[6].auth == "key"
+    finally:
+        os.environ.pop("GATEWAY_ADMIN_AUTH", None)
+
+
+def test_unknown_posture_is_a_config_error(tmp_path, monkeypatch, capsys):
+    from chat_gateway.__main__ import main
+    _boot_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    monkeypatch.setenv("GATEWAY_ADMIN_AUTH", "yes")
+    assert main(["check"]) == 2
+    assert "GATEWAY_ADMIN_AUTH" in capsys.readouterr().err
 
 
 def test_admin_enabled_without_key_is_a_config_error(tmp_path, monkeypatch, capsys):
@@ -473,6 +642,32 @@ def test_managed_secrets_load_before_and_beat_the_hand_env_file(tmp_path, monkey
         assert admin.secrets.source_of("ADM_K1") == "managed"
     finally:
         os.environ.pop("ADM_K1", None)
+
+
+def test_audit_lines_carry_posture_and_peer(gw, gw_open, monkeypatch):
+    for fixture, posture in ((gw, "key"), (gw_open, "open")):
+        client, holder, wiring, tmp = fixture
+        # Both fixtures share one environment and gw_open's build removed the
+        # admin key: put it back for the key iteration, remove it for open.
+        if posture == "key":
+            monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+        else:
+            monkeypatch.delenv("CHAT_GATEWAY_ADMIN_KEY", raising=False)
+        headers = AUTH if posture == "key" else {}
+        assert client.post("/admin/api/reload", headers=headers, json={}).status_code == 200
+        line = json.loads((tmp / "state" / "admin_audit.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+        assert line["auth"] == posture and line["actor"] == "admin"
+        assert line["client"] == "testclient"
+        assert set(line) == {"at", "actor", "auth", "client", "action", "target", "fields"}
+
+
+def test_every_write_route_records_the_peer(gw):
+    client, holder, wiring, tmp = gw
+    _new_app(client)
+    client.post("/admin/api/apps/newapp/rotate-key", headers=AUTH, json={})
+    client.post("/admin/api/identities", headers=AUTH, json={"name": "i9", "display": "d", "webhook_url": HOOK})
+    for line in (tmp / "state" / "admin_audit.jsonl").read_text(encoding="utf-8").splitlines():
+        assert json.loads(line)["client"] == "testclient"
 
 
 # -- secret-exposure sweep ------------------------------------------------------

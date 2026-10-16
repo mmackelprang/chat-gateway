@@ -1,5 +1,6 @@
 // chat-gateway admin console (CG-90). No framework, no browser storage: the
-// admin key lives in `adminKey` for the life of this tab only. Every piece of
+// admin key lives in `adminKey` for the life of this tab only (in open mode, no
+// key is held at all: the page probes first and never asks). Every piece of
 // data is rendered through textContent, never parsed as markup, so registry
 // content cannot become HTML.
 "use strict";
@@ -49,7 +50,9 @@ function detailText(data, status) {
 }
 
 async function api(method, path, body, key) {
-  const headers = { Authorization: "Bearer " + (key || adminKey) };
+  const headers = {};
+  const k = key || adminKey;
+  if (k) headers.Authorization = "Bearer " + k;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   let data = null;
@@ -81,6 +84,7 @@ function signOut(msg) {
   adminKey = ""; state = null;
   $("console").hidden = true; $("login").hidden = false;
   $("sha").textContent = "";
+  $("auth-mode").hidden = true;
   view();
   $("login-error").textContent = msg || "";
 }
@@ -462,7 +466,22 @@ async function testSend(key, out) {
 }
 
 // --------------------------------------------------------------- boot ---
+// Ask the API before asking the human: in open mode the state call answers
+// with no header and the sign-in form never appears; in key mode it is a 401
+// (which does not count toward the login rate limit) and the form is shown.
+async function probePosture() {
+  try {
+    await refresh();
+    $("console").hidden = false; $("auth-mode").hidden = false;
+    board();
+  } catch (e) {
+    $("login").hidden = false;
+    $("login-error").textContent = e.status === 401 ? "" : e.message;
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  probePosture();
   $("login-form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     adminKey = $("admin-key").value.trim();

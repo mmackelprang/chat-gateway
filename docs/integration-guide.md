@@ -517,10 +517,12 @@ true when written and went stale as rows landed without them being recounted:
 CG-76 added four (`delivery.delivery_failures` and the three
 `heartbeats.*undeliverable`/`orphaned` rows), CG-88 one
 (`registry.inbound_defaulted`), and CG-90 eight (`delivery.unroutable_live` and
-seven `admin.*`, of which only `admin.memory_disk_diverged` degrades). The
-struck numbers below are kept so the arithmetic of the original is readable.
+seven `admin.*`, of which only `admin.memory_disk_diverged` degrades).
+⚠ *Extended 2026-10-16 (CG-91):* the table now has **FIFTY-EIGHT** rows,
+CG-91 having added two (`admin.auth`, `admin.cross_origin_refused`, neither
+degrading); the `**yes**` count stays twenty-three. The struck numbers below are kept so the arithmetic of the original is readable.
 
-Of the ~~forty-three~~ **fifty-six** rows, ~~**eighteen**~~ **twenty-three carry
+Of the ~~forty-three~~ ~~fifty-six~~ **fifty-eight** rows, ~~**eighteen**~~ **twenty-three carry
 `**yes**` in the Degrades? column**. Counted as *fields* the number is
 ~~**twenty-one**~~ **twenty-six**, and both are right: each of the
 three liveness triples (`delivery.*`, `retention.*`, `heartbeats.*`) is read in
@@ -598,6 +600,8 @@ answer, and the last of the three degrades **cumulatively**: see its row.
 | `registry.inbound_defaulted` | app ids whose registry entry says **nothing** about `allow_inbound` and therefore inherit the loader's default, which is **deny** (CG-88, 2026-08-31; before that date the default was `true`, so omitting the key GRANTED inbound). Empty is the correct state. It exists because an operator diffing the three copies of the registry — two of them off-repo — has nothing else that says which posture came from a file and which came from the loader. **Not a fault at any length**: the gateway is denying, which is the safe answer, and degrading on a guarantee working would teach you to ignore `degraded` — the same verdict `retention.files_deleted` and `subscriber.suppressed_opt_out` already have | no — the safe default working |
 | `delivery.unroutable_live` | queued jobs dropped **at send time** because the admin console withdrew the identity grant after they were accepted (CG-90). The send-time sibling of `unroutable_at_boot` — but where that one degrades, this does not: a withdrawn grant being honoured is the guard working (CG-12) | no — the guard working |
 | `admin.enabled` | whether the admin console (`/admin`, CG-90) is mounted. The `admin` block is **always present**; when the console is off it is `{"enabled": false}` and carries none of the fields below | no |
+| `admin.auth` | `"key"` or `"open"` — what authenticates `/admin` (CG-91). Present whenever `admin.enabled` is true. A chosen posture is not a fault, so it never degrades and never appears in `reasons`; it exists so a reader of `/healthz` cannot mistake an open console for a locked one | no |
+| `admin.cross_origin_refused` | `/admin/api` requests refused by the same-origin guard since start (CG-91). Counted on its own field because the guard runs before authentication and must not be able to move `last_write_error` | no |
 | `admin.writes` | console writes that landed since start | no |
 | `admin.refused` | console requests refused since start — a bad id, an out-of-band edit, an `inbound_locked` app, a widening without confirmation. A refusal is a guard working | no |
 | `admin.last_write_error` | the last refusal or rolled-back write, as an **authored category only** — e.g. `refused: conflict`, `failed: write rolled back (OSError)` — never the message, which can quote admin-supplied text (`service.py:841-845`). The message goes only to the authenticated caller. `null` after a successful write | no |

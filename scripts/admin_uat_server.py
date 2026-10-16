@@ -10,7 +10,7 @@ import uvicorn
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from chat_gateway.admin import AdminWiring  # noqa: E402
+from chat_gateway.admin import AdminWiring, admin_auth_posture  # noqa: E402
 from chat_gateway.admin_audit import AdminAudit  # noqa: E402
 from chat_gateway.envelope import DeliveryResult  # noqa: E402
 from chat_gateway.inbox import Inbox  # noqa: E402
@@ -46,12 +46,15 @@ apps:
 """, encoding="utf-8")
 os.environ.update({"CHAT_GATEWAY_ADMIN_KEY": "cgk_uat_admin", "UAT_K_TRADER": "cgk_uat_trader",
                    "UAT_W_OPS": "https://chat.googleapis.com/v1/spaces/UATOPS/messages?key=k&token=t"})
+posture = admin_auth_posture(os.environ.get("GATEWAY_ADMIN_AUTH"))
 holder = RegistryHolder(load_registry(reg))
 secrets = ManagedSecrets(tmp / "state" / "managed.env",
                          process_env_names=frozenset({"CHAT_GATEWAY_ADMIN_KEY"}))
 wiring = AdminWiring(store=RegistryStore(reg, holder, secrets), secrets=secrets,
-                     audit=AdminAudit(tmp / "state" / "admin_audit.jsonl"))
+                     audit=AdminAudit(tmp / "state" / "admin_audit.jsonl", auth=posture),
+                     auth=posture)
 app = create_app(holder, Inbox(), {"webhook": FakeWebhook()}, admin=wiring)
 app.state.dispatcher.start()
-print(f"UAT dir: {tmp}\nadmin key: cgk_uat_admin\nopen http://127.0.0.1:8099/admin", flush=True)
+auth_line = "admin auth: open" if posture == "open" else "admin auth: key — admin key: cgk_uat_admin"
+print(f"UAT dir: {tmp}\n{auth_line}\nopen http://127.0.0.1:8099/admin", flush=True)
 uvicorn.run(app, host="127.0.0.1", port=8099)

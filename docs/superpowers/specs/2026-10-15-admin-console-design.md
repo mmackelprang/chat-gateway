@@ -41,6 +41,8 @@ does this — tokens, webhook setup and URLs from one place — and applies it.
 | D6 | YAML comments | **Add `ruamel.yaml`** round-trip editing | *Accept loss* (file becomes machine-owned); *`notes:` field* (schema change + migration) |
 | D7 | Homelab | **The homelab repo is updated** with the console's deployment, secret and dashboard facts (§10) | — added by the user at §2 approval |
 
+⚠ *Annotated 2026-10-16 (CG-91): a third posture exists — `GATEWAY_ADMIN_AUTH=open`, no credential, LAN bind as the whole lock. User decision; the D2 row is left standing.*
+
 ⚠ **D3 is the decision with the largest consequence and is recorded plainly:**
 the admin key controls every app that is not `inbound_locked`, including the
 real-money tenant's identities and routes. `inbound_locked` (D4) protects
@@ -165,6 +167,8 @@ whether it does today.
 All `/admin/api/*` calls carry `Authorization: Bearer <admin key>` from page
 memory. The key is never put in `localStorage`, `sessionStorage` or a cookie, so
 a reload asks again; that also means no CSRF surface.
+
+⚠ *Annotated 2026-10-16 (CG-91): under open mode the page sends no `Authorization` at all; see that spec §4.*
 
 1. **Status board** (read-only): per app and identity — `key_configured`,
    `env_resolved`, `space_set`, `allow_inbound`, `inbound_locked`, routes,

@@ -103,7 +103,9 @@ opt-in admin console (CG-90): `admin` (the `/admin` router), `admin_audit`,
 `iac/` — gcloud script (`.sh` + Windows `.ps1` sibling) + terraform; `docs/` —
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
-`python` is 3.13.7) — offline, 680 passing, 7 skipped (measured 2026-10-15).
+`python` is 3.13.7) — offline. Windows dev box: 680 passed, 7 skipped
+(2026-10-15); WSL venv, Python 3.13: 721 passed, 0 skipped (2026-10-16, CG-91) —
+different machines, not a delta.
 
 ## Current status (2026-07-31)
 
@@ -780,3 +782,14 @@ Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
   is an operator action (that same subsection).~~ ✅ **ENABLED ON THE BOX
   2026-10-15** — the record has one home, `docs/deploy/nas.md` §10, *Run
   2026-10-15*. No ledger flag moved.
+- **Admin console open mode, since CG-91 (2026-10-16) — a user decision.**
+  `GATEWAY_ADMIN_AUTH=open` makes `/admin` check no credential and the page show
+  no login; absence is `key`, today's behaviour. The accepted cost (anything that
+  can reach the port can use the console) is recorded plainly in the spec's §2,
+  and the design has ONE home:
+  `docs/superpowers/specs/2026-10-16-admin-open-mode-design.md`. The flag is read
+  from the **process env only**, so a line in `.env` is ignored. No hard rule
+  changed and no ledger flag moved. Adds `admin.auth` and
+  `admin.cross_origin_refused` to `/healthz`, neither degrading (rows in the
+  integration guide). Merged is not in effect: the box rollout is an operator
+  action.

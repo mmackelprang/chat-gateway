@@ -1,6 +1,7 @@
 :root { --bg:#fafafa; --fg:#1b1b1b; --muted:#666; --line:#ddd; --accent:#1a5fb4; --warn:#9a6700; --err:#b3261e; --card:#fff; --ok:#2e7d32; }
 @media (prefers-color-scheme: dark) { :root { --bg:#161616; --fg:#e8e8e8; --muted:#9a9a9a; --line:#333; --accent:#78aeed; --warn:#e5b45b; --err:#f2b8b5; --card:#1f1f1f; --ok:#8bd08f; } }
 * { box-sizing: border-box; }
+[hidden] { display:none !important; }
 html, body { overflow-x:hidden; }
 body { margin:0; font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
 header { display:flex; flex-wrap:wrap; gap:.25rem 1rem; align-items:baseline; padding:1rem 16px; border-bottom:1px solid var(--line); }
@@ -29,6 +30,7 @@ td button { margin:0 .25rem .25rem 0; }
 .ok { color:var(--ok); }
 .note { font-size:.9em; color:var(--muted); margin:.25rem 0; }
 .pill { display:inline-block; padding:0 .45rem; margin-right:.25rem; border-radius:999px; border:1px solid var(--line); font-size:.85em; }
+.pill.warn { border-color:var(--warn); }
 .secret { font-family:ui-monospace, monospace; word-break:break-all; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:.5rem; }
 pre { overflow-x:auto; max-width:100%; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:.75rem; font-size:.85em; }
 code { word-break:break-all; }
