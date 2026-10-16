@@ -116,6 +116,16 @@ dialog[data-tone=danger] h2 { color:var(--err); }
 .notice.alert { border-color:var(--err); }
 .notice.status { border-color:var(--ok); }
 .notice p { margin:0; flex:1; white-space:pre-line; }
+/* app inspector: grants grouped by room, a meta line under each */
+.pill.err { border-color:var(--err); color:var(--err); }
+.roomgroup { margin:.75rem 0; }
+.roomhead { font-weight:600; font-size:.9em; padding:.2rem .4rem; border-radius:4px; }
+.roomhead.locked { background:var(--locked-bg); }
+.grant { padding:.35rem .4rem; border-bottom:1px dashed var(--line); }
+.grant:last-child { border-bottom:none; }
+.grant .grant-label { margin:0; display:flex; flex-wrap:wrap; gap:.2rem .35rem; align-items:center; }
+.grant .meta { font-size:.85em; color:var(--muted); margin:.1rem 0 0 1.6rem; }
+table.plain { font-size:.9em; }
 /* sticky save bar */
 .savebar { position:sticky; bottom:0; background:var(--panel); border-top:1px solid var(--line); padding:.6rem 0; display:flex; gap:.75rem; align-items:center; justify-content:flex-end; margin-top:1rem; }
 .savebar .muted { margin-right:auto; }

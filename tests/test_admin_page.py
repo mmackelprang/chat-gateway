@@ -425,3 +425,61 @@ def test_board_states_are_worded_as_the_spec():
     assert 'class: "cards"' in js  # phone rendering of the same data
     css = (STATIC / "admin.css").read_text(encoding="utf-8")
     assert css.count("var(--group-h)") == 2 and "--group-h:" in css  # one height for the group row and the identity row's top
+
+
+# --- CG-92 Task 8: the app inspector — grants by room, consequences before Save
+
+def test_app_inspector_replaces_app_detail_and_tracks_dirty():
+    js = _js()
+    assert "function appInspector(" in js and "function appDetail(" not in js
+    fn = _fn(js, "function appInspector(")
+    assert "expandRoomsOf(" in fn  # D5: entry expands the app's rooms and selects its row
+    assert "setDirty(" in fn
+    assert '"Unsaved changes"' in js and '"No changes"' in js
+    assert 'class: "savebar"' in js
+    assert "ungrant" in fn  # `?ungrant=<name>` enters with that box unchecked and the bar dirty
+    assert 'addEventListener("input"' in fn and 'addEventListener("change"' in fn
+
+
+def test_app_inspector_copy_is_the_specs():
+    js = _js()
+    # API key card: one status line by key_source; rotate/mint disabled when the process env owns the key
+    assert 'key_source === "process"' in js
+    assert "Missing — this app cannot authenticate. Mint a key to fix it." in js
+    assert "which overrides managed.env at boot — rotate it in the compose environment, not here" in js
+    assert "is still in the read-only .env — inert now, but it would come back if managed.env were lost. Remove that line by hand." in js
+    # Sends as: the three dynamic notes and the locked callout
+    assert "New room for an inbound app — Save will ask you to confirm (rule #6)" in js
+    assert "Also removes its routes: " in js and "Severities left without a route return 503 at /v1/notify" in js
+    assert " — an inbound app cannot be granted an identity here." in js
+    assert "Grants on an inbound_locked app are a registry file edit, not a console action. Routes and display names stay editable here." in js
+    assert "held by no other app" in js and "also held by " in js
+    # Routes: the computed CG-86 line, four variants
+    assert "an all-clear will land in a different room from the alert it closes" in js
+    assert "All severities post to one room." in js
+    assert "No routes — every /v1/notify returns 503. Set a default at least" in js
+    # Inbound
+    assert "Receives inbound from:" in js and "nothing (inbound off)" in js
+    assert "Inbound can be narrowed here, never widened." in js
+    assert "turning this on asks for a typed confirmation" in js
+    # Recent deliveries, danger zone
+    assert "No deliveries since the gateway started. The log is in memory; the newest five are shown." in js
+    assert "inbox_pending" in js and "poll or drain its inbox first" in js
+    assert "Deleting an inbound_locked app is a registry file edit" in js
+    assert "queued messages close as unroutable" in js
+
+
+def test_read_app_fields_keeps_the_ordered_identities_rule_and_the_put_body():
+    js = _js()
+    fn = _fn(js, "function readAppFields(")
+    assert "if (a.inbound_locked) identities = a.identities.slice();" in fn
+    for key in ("identities,", "routes,", "allow_inbound:", 'callback_url: readOptional(form, "callback_url")',
+                "allowed_users:", 'unreachable_message: readOptional(form, "unreachable_message")'):
+        assert key in fn, key
+    save = _fn(js, "function appInspector(")
+    assert 'withInboundConfirm(appId, (c) => write("PUT", "/admin/api/apps/" + encodeURIComponent(appId), Object.assign(readAppFields(form, a), { confirm_app_id: c })))' in save
+
+
+def test_router_parses_the_query_string():
+    fn = _fn(_js(), "function routeFromHash(")
+    assert "URLSearchParams" in fn

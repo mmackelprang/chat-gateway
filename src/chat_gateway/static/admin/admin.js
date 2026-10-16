@@ -533,27 +533,146 @@ function optionalField(name, label, isSet, locked) {
   return parts;
 }
 
-function appFields(a) {
+// The rooms a list of identities posts into — for the "new room for an inbound
+// app" note and the derived receives-from line. Identities with no room count
+// for nothing here: they cannot route inbound.
+function spacesOf(names) {
+  return new Set(names.map((n) => state.identities[n] && state.identities[n].space).filter(Boolean));
+}
+// The three sources the server names (managed_secrets.source_of). Anything
+// else is reported as what it is rather than guessed at: "unset" with a
+// resolving key means the value came from somewhere this gateway does not
+// track (the UAT server's os.environ, for one).
+function keySourceWords(src) {
+  return src === "managed" ? "managed.env" : src === ".env" ? "the hand-written .env" : src === "process" ? "the process environment" : "an untracked source (" + src + ")";
+}
+
+// Spec §4.3 part 4: ONE computed sentence replaces the static CG-86 warning.
+// Severity picks the identity and the identity picks the room, so routes in
+// two rooms mean an all-clear can post where nobody watching the alert sees it.
+function computeRouteLine(routes) {
+  if (!Object.keys(routes).length) return { cls: "error", text: "No routes — every /v1/notify returns 503. Set a default at least." };
+  const bySpace = new Map();
+  for (const sev of [...SEVERITIES, "default"]) {
+    if (!routes[sev]) continue;
+    const i = state.identities[routes[sev]];
+    const sp = roomLabel(i && i.space);
+    if (!bySpace.has(sp)) bySpace.set(sp, []);
+    bySpace.get(sp).push(sev === "default" ? "everything else" : sev);
+  }
+  const missing = routes.default ? [] : SEVERITIES.filter((s) => !routes[s]);
+  const gap = missing.length ? " " + missing.join(", ") + " " + (missing.length === 1 ? "has" : "have") + " neither a route nor a default and returns 503 at /v1/notify." : "";
+  if (bySpace.size > 1) {
+    const words = [...bySpace].map(([sp, ss]) => ss.join(", ") + " → " + sp).join(", ");
+    return { cls: "warn", text: words + " — an all-clear will land in a different room from the alert it closes (CG-86)." + gap };
+  }
+  if (missing.length) return { cls: "error", text: "Routed severities post to one room." + gap };
+  return { cls: "muted", text: "All severities post to one room." };
+}
+
+// Spec §4.3 part 5. A saved inbound app reads its rooms from
+// `state.rooms[*].inbound_apps` (D2: the server's derivation). A form that is
+// turning inbound on, or changing its grants, has no such entry yet, so the
+// rooms of the checked grants stand in and the line says it is pending Save.
+function receivesLine(appId, a, on, names) {
+  if (!on) return "Receives inbound from: nothing (inbound off).";
+  const saved = appId && a.allow_inbound ? Object.keys(state.rooms || {}).filter((k) => k && state.rooms[k].inbound_apps.includes(appId)) : [];
+  const live = [...spacesOf(names)].sort();
+  const pending = !a.allow_inbound || live.join("\n") !== saved.slice().sort().join("\n");
+  const rooms = pending ? live : saved;
+  if (!rooms.length) return "Receives inbound from: no room yet — grant an identity that has a room.";
+  return "Receives inbound from: " + rooms.join(", ") + " — every message and card interaction in those rooms" + (pending ? " (after Save)." : ".");
+}
+
+// Grants, routes and inbound as one form (spec §4.3 parts 3–5), shared with the
+// new-app flow (a blank app, no id). Grants are grouped by `state.rooms` (D2);
+// the routes selects list GRANTED identities only and re-render when a grant
+// changes, dropping a selection that was unchecked. Every note is recomputed
+// from the live form against the SAVED app, so each one names what Save would
+// do rather than what the form currently shows.
+function appFields(a, opts) {
+  const appId = (opts && opts.appId) || null;
+  const ungrant = (opts && opts.ungrant) || null;
   const locked = !!a.inbound_locked;
-  const ids = Object.keys(state.identities);
-  const idBoxes = ids.map((n) => el("label", {},
-    el("input", { type: "checkbox", name: "identity", value: n, checked: a.identities.includes(n), disabled: locked }), " " + n));
-  const routeSel = (sev) => el("label", {}, sev === "default" ? "default (every severity without its own route)" : sev,
-    el("select", { name: "route-" + sev }, el("option", { value: "", text: sev === "default" ? "— none —" : "(use default)" }),
-      ids.map((n) => el("option", { value: n, text: n, selected: (a.routes[sev] || "") === n }))));
+  const current = new Set(a.identities);
+  const checked = new Set(a.identities.filter((n) => n !== ungrant));
+  const routes = Object.assign({}, a.routes);
+  const allow = el("input", { type: "checkbox", name: "allow_inbound", checked: a.allow_inbound, disabled: locked && !a.allow_inbound });
+  const noteFns = [];
+  const refreshNotes = () => { for (const f of noteFns) f(); };
+
+  // --- sends as: one row per identity, under its room's heading
+  const grantRow = (space, room, n) => {
+    const i = state.identities[n];
+    const others = holders(n).filter((x) => x !== appId);
+    const lockedByOther = !!room.locked_by && room.locked_by !== appId;
+    // Disabled on a locked app (grants are a file edit) and in a room another
+    // locked app owns when THIS app is inbound (the server would refuse it).
+    const box = el("input", { type: "checkbox", name: "identity", value: n, checked: checked.has(n), disabled: locked || (lockedByOther && a.allow_inbound) });
+    const note = el("div", { class: "meta" });
+    noteFns.push(() => {
+      const parts = [];
+      if (box.checked && !current.has(n) && allow.checked && space && !spacesOf(a.identities).has(space)) {
+        parts.push(el("span", { class: "warn", text: "New room for an inbound app — Save will ask you to confirm (rule #6). " }));
+      }
+      const sevs = appId && !box.checked && current.has(n) ? routesTo(appId, n) : [];
+      if (sevs.length) {
+        parts.push(el("span", { class: "warn", text: "Also removes its routes: " + sevs.map((s) => s + " → " + n).join(", ") + ". Severities left without a route return 503 at /v1/notify. " }));
+      }
+      if (lockedByOther && allow.checked) parts.push(el("span", { text: "Room locked by " + room.locked_by + " — an inbound app cannot be granted an identity here. " }));
+      parts.push(el("span", { text: others.length ? "also held by " + others.join(", ") : "held by no other app" }));
+      note.replaceChildren(...toNodes(parts));
+    });
+    box.addEventListener("change", () => { if (box.checked) checked.add(n); else checked.delete(n); refreshNotes(); renderRoutes(); renderReceives(); });
+    return el("div", { class: "grant" },
+      el("label", { class: "grant-label" }, box, " ", avatarMark(i.avatar, 16), el("strong", { text: n }), " ", el("span", { class: "muted small", text: i.display }),
+        i.mode === "webhook" && !i.env_resolved ? [" ", el("span", { class: "pill err", text: "URL not set" })] : null),
+      note);
+  };
+  const grants = Object.entries(state.rooms || {}).filter(([, r]) => r.identities.length).map(([space, r]) => el("div", { class: "roomgroup" },
+    el("div", { class: "roomhead" + (r.locked_by ? " locked" : "") }, roomLabel(space),
+      r.locked_by ? [" ", el("span", { class: "pill warn", text: "locked by " + r.locked_by })] : null,
+      !space ? el("span", { class: "muted small", text: " · cannot route inbound · not covered by any lock" }) : null),
+    r.identities.map((n) => grantRow(space, r, n))));
+
+  // --- routes: granted identities only, as "name — room"
+  const routeBox = el("div");
+  const routeLine = el("p", { class: "small muted" });
+  function renderRouteLine() { const r = computeRouteLine(routes); routeLine.className = "small " + r.cls; routeLine.textContent = r.text; }
+  function renderRoutes() {
+    for (const sev of Object.keys(routes)) if (!checked.has(routes[sev])) delete routes[sev]; // an unchecked selection is dropped
+    const granted = Object.keys(state.identities).filter((n) => checked.has(n));
+    routeBox.replaceChildren(...toNodes(["default", ...SEVERITIES].map((sev) => {
+      const sel = el("select", { name: "route-" + sev },
+        el("option", { value: "", text: sev === "default" ? "— none —" : "(use default)" }),
+        granted.map((n) => el("option", { value: n, selected: routes[sev] === n, text: n + " — " + roomLabel(state.identities[n].space) })));
+      sel.addEventListener("change", () => { if (sel.value) routes[sev] = sel.value; else delete routes[sev]; renderRouteLine(); });
+      return el("label", {}, sev === "default" ? "default (every severity without its own route)" : sev, sel);
+    })));
+    renderRouteLine();
+  }
+
+  // --- inbound
+  const receives = el("p", { class: "muted small" });
+  function renderReceives() { receives.textContent = receivesLine(appId, a, allow.checked, [...checked]); }
+  allow.addEventListener("change", () => { refreshNotes(); renderReceives(); });
+  renderRoutes(); refreshNotes(); renderReceives();
+
   return el("div", {},
-    el("fieldset", {}, el("legend", { text: "Identities this app may send as" }),
-      locked ? el("p", { class: "warn", text: "This app is inbound_locked. " + FILE_EDIT }) : null,
-      idBoxes),
-    el("fieldset", {}, el("legend", { text: "Notify routes" }),
-      el("p", { class: "warn", text: "Severity picks the SPACE, not just the loudness (CG-86): split routes put an all-clear in a different room from the alert it closes." }),
-      routeSel("default"), SEVERITIES.map(routeSel)),
+    el("fieldset", {}, el("legend", { text: "Sends as" }),
+      locked ? el("div", { class: "callout", text: "Grants on an inbound_locked app are a registry file edit, not a console action. Routes and display names stay editable here." })
+        : el("p", { class: "muted small", text: "Granting an identity lets this app post as it. Several apps may hold one identity; the room it posts into heads each group." }),
+      grants.length ? grants : el("p", { class: "muted small", text: "No identities registered yet — nothing to grant." })),
+    el("fieldset", {}, el("legend", { text: "Routes" }),
+      el("p", { class: "muted small", text: "Severity picks the identity, and the identity picks the room. Only granted identities can be routes." }),
+      routeBox, routeLine),
     el("fieldset", {}, el("legend", { text: "Inbound" }),
-      locked ? el("p", { class: "warn", text: "This app is inbound_locked. Inbound can only be narrowed here; widening is a registry file edit." }) : null,
-      el("label", {}, el("input", { type: "checkbox", name: "allow_inbound", checked: a.allow_inbound, disabled: locked && !a.allow_inbound }), " allow_inbound"),
+      locked ? el("div", { class: "callout", text: "This app is inbound_locked. Inbound can be narrowed here, never widened." }) : null,
+      el("label", {}, allow, " allow_inbound", !a.allow_inbound && !locked ? el("span", { class: "muted small", text: " — turning this on asks for a typed confirmation" }) : null),
+      receives,
       optionalField("callback_url", "callback_url (push delivery; none = poll only)", !!a.callback_url_set, locked),
-      el("label", {}, "allowed_users (one email per line; empty = anyone in the space)", el("textarea", { name: "allowed_users", rows: "3" }, (a.allowed_users || []).join("\n"))),
-      optionalField("unreachable_message", "unreachable_message", !!a.unreachable_message_set, false)));
+      el("label", {}, "allowed_users (one email per line; empty = anyone in the room)", el("textarea", { name: "allowed_users", rows: "3" }, (a.allowed_users || []).join("\n"))),
+      optionalField("unreachable_message", "unreachable_message (in-thread text when the callback is down)", !!a.unreachable_message_set, false)));
 }
 
 function readOptional(form, name) {
@@ -683,41 +802,122 @@ function shortcutsDialog() {
   close.focus();
 }
 
-function appInspector(appId) {
+// ------------------------------------------------------- app inspector ---
+// Spec §4.3. One form (grants, routes, inbound) with a sticky save bar; the
+// key card, deliveries and danger zone sit outside it because none of them is
+// saved by Save. The notes before Save are the point: an operator sees what a
+// grant change costs (routes removed, a rule #6 confirmation) before the
+// server says so.
+
+// Part 2. One status line by key_source and one action. Rotate and mint are
+// the same endpoint (nothing dies on a mint); both are disabled with the reason
+// when the process environment owns the key, because managed.env cannot win.
+function keyCard(appId, a) {
+  const processOwned = a.key_source === "process";
+  const verb = a.key_configured ? "Rotate" : "Mint";
+  const line = !a.key_configured
+    ? el("p", { class: "error" }, el("span", { class: "dot err" }), "Missing — this app cannot authenticate. Mint a key to fix it.")
+    : el("p", { class: "ok" }, el("span", { class: "dot ok" }), "Configured · from " + keySourceWords(a.key_source));
+  const btn = el("button", { type: "button", text: a.key_configured ? "Rotate key…" : "Mint a key…", disabled: processOwned, on: { click: async () => {
+    const typed = await typedConfirm({ title: verb + " the API key for " + appId + "?",
+      intro: a.key_configured ? "The current key stops working the moment you confirm. Update the consuming app right after. The new key is shown once." : "The new key is shown once.",
+      expected: appId, verb: verb + " key", tone: "danger" });
+    if (typed === null) return;
+    try { const r = await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/rotate-key", {}); showKey(r); }
+    catch (e) { fail(e); }
+  } } });
+  return el("div", { class: "card" }, el("h3", { text: "API key" }), line,
+    processOwned ? el("div", { class: "callout", text: "Set in the gateway's process environment, which overrides managed.env at boot — rotate it in the compose environment, not here." }) : null,
+    (state.shadowed_env_names || []).includes(a.key_env)
+      ? el("div", { class: "callout warn", text: "An older value of " + a.key_env + " is still in the read-only .env — inert now, but it would come back if managed.env were lost. Remove that line by hand." }) : null,
+    el("p", {}, btn));
+}
+
+// Part 6. The log hands the five oldest→newest; the table reads newest first.
+function deliveriesCard(a) {
+  const recs = (a.recent_deliveries || []).slice().reverse();
+  return el("div", { class: "card" }, el("h3", { text: "Recent deliveries" }),
+    recs.length
+      ? el("table", { class: "plain" },
+        el("thead", {}, el("tr", {}, ["When", "Kind", "Status", "Detail"].map((h) => el("th", { scope: "col", text: h })))),
+        el("tbody", {}, recs.map((d) => el("tr", {},
+          el("td", { title: d.ts, text: relTime(d.ts) || d.ts }),
+          el("td", { text: d.kind }),
+          // Only a terminal failure is red: `enqueued`/`sending` are in flight, not faults.
+          el("td", { class: d.status === "delivered" ? "ok" : TERMINAL.includes(d.status) ? "error" : "muted", text: d.status }),
+          el("td", { class: "muted", text: d.detail || d.title || "" })))))
+      : el("p", { class: "muted small", text: "No deliveries since the gateway started. The log is in memory; the newest five are shown." }));
+}
+
+// Part 7. Delete is disabled with the reason wherever the server would refuse
+// (a locked app: file edit; unpolled replies: C3), so the refusal is the
+// exception rather than the discovery.
+function dangerZone(appId, a) {
+  const n = a.inbox_pending || 0;
+  const reason = a.inbound_locked ? "Deleting an inbound_locked app is a registry file edit, not a console action."
+    : n > 0 ? n + " unpolled inbound " + (n === 1 ? "reply" : "replies") + " — poll or drain its inbox first." : "";
+  const managed = a.key_source === "managed";
+  const btn = el("button", { type: "button", class: "danger", text: "Delete app…", disabled: !!reason, on: { click: async () => {
+    const typed = await typedConfirm({ title: "Delete app " + appId + "?",
+      intro: "Its queued messages close as unroutable." + (managed ? " Its managed key is removed from managed.env." : ""),
+      expected: appId, verb: "Delete app", tone: "danger" });
+    if (typed === null) return;
+    try { await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/delete", { confirm_app_id: typed }); toast("Deleted " + appId + "."); setDirty(false); navigate(hrefFor("board")); }
+    catch (e) { fail(e); }
+  } } });
+  return el("div", { class: "card" }, el("h3", { text: "Danger zone" }),
+    el("p", { class: "muted small", text: "Deleting closes this app's queued messages as unroutable" + (managed ? " and removes its managed key from managed.env." : ".") }),
+    el("p", {}, btn),
+    reason ? el("div", { class: "callout", text: reason }) : null);
+}
+
+// The sticky bar: status words, Discard, Save. `mark` is the one writer of the
+// page's dirty flag for this view, so the bar and guardNavigation cannot disagree.
+function saveBar(onDiscard) {
+  const status = el("span", { class: "muted small" });
+  const save = el("button", { type: "submit", class: "primary", text: "Save" });
+  const discard = el("button", { type: "button", text: "Discard", on: { click: onDiscard } });
+  const bar = el("div", { class: "savebar" }, status, discard, save);
+  const mark = (v, why) => { setDirty(v); save.disabled = !v; status.textContent = v ? "Unsaved changes" + (why ? " — " + why : "") : "No changes"; };
+  return { bar, mark, save };
+}
+
+function appInspector(appId, query) {
   const a = state.apps[appId];
-  const form = el("form", {}, appFields(a), el("button", { type: "submit", class: "primary", text: "Save" }));
+  expandRoomsOf(appId); // D5: this row is highlighted on return and its rooms are open
+  // `?ungrant=<name>` (from an identity inspector): enter with that box unchecked
+  // and the bar already dirty, so the routes note is on screen before Save.
+  const asked = query ? query.get("ungrant") : null;
+  const ungrant = asked && a.identities.includes(asked) ? asked : null;
+  const clean = () => { setDirty(false); if (ungrant) navigate(hrefFor("app", appId)); else appInspector(appId); };
+  const fields = appFields(a, { appId, ungrant });
+  const { bar, mark } = saveBar(clean);
+  const inline = el("div", { class: "callout err", hidden: true });
+  const form = el("form", {}, fields, inline, bar);
+  // Every control in the form is dirty-tracked by these two events; the
+  // re-rendered route selects bubble through the same listeners.
+  form.addEventListener("input", () => mark(true));
+  form.addEventListener("change", () => mark(true));
+  mark(!!ungrant, ungrant ? ungrant + " is unchecked; review and Save" : null);
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    inline.hidden = true;
     try {
       await withInboundConfirm(appId, (c) => write("PUT", "/admin/api/apps/" + encodeURIComponent(appId), Object.assign(readAppFields(form, a), { confirm_app_id: c })));
       toast("Saved " + appId + ". Live now.");
-      setDirty(false); navigate(hrefFor("board"));
-    } catch (e) { fail(e); }
+      clean(); // re-render from the refreshed state; the bar reads "No changes"
+    } catch (e) {
+      fail(e);
+      // A refusal also renders at the form (spec §4.6), not as a notice alone.
+      if (e && e.message !== "cancelled" && e.status !== 401) { inline.textContent = explain(e); inline.hidden = false; }
+    }
   });
-  view(el("h2", { text: "App " + appId }),
-    el("p", { class: "muted", text: "API key env var: " + a.key_env + " (" + a.key_source + ")" }),
+  view(el("h2", {}, appId, " ", pills(a)),
+    el("p", { class: "muted small" }, "API key env var ", el("code", { text: a.key_env })),
+    keyCard(appId, a),
     form,
-    el("div", { class: "card" },
-      el("h3", { text: "Rotate API key" }),
-      el("p", { text: "The current key stops working the moment you confirm. Update the consuming app right after." }),
-      el("button", { type: "button", text: "Rotate key", on: { click: async () => {
-        const typed = await typedConfirm({ title: "Rotate the API key for " + appId + "?", intro: "The old key dies immediately. Update the consuming app right after.",
-          expected: appId, verb: "Rotate key", tone: "danger" });
-        if (typed === null) return;
-        try { const r = await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/rotate-key", {}); showKey(r); }
-        catch (e) { fail(e); }
-      } } })),
-    el("div", { class: "card" },
-      el("h3", { text: "Delete app" }),
-      a.inbound_locked
-        ? el("p", { class: "note", text: "This app is inbound_locked: deleting it is a registry file edit, not a console action." })
-        : el("button", { type: "button", class: "danger", text: "Delete " + appId, on: { click: async () => {
-          const typed = await typedConfirm({ title: "Delete app " + appId + "?", intro: "Its queued messages close as unroutable.",
-            expected: appId, verb: "Delete app", tone: "danger" });
-          if (typed === null) return;
-          try { await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/delete", { confirm_app_id: typed }); toast("Deleted " + appId); setDirty(false); navigate(hrefFor("board")); }
-          catch (e) { fail(e); }
-        } } })));
+    deliveriesCard(a),
+    dangerZone(appId, a));
 }
 
 // ----------------------------------------------------------- new app ---
@@ -911,17 +1111,21 @@ function hrefFor(name, id) {
 
 function routeFromHash() {
   const raw = routeKey(window.location.hash).replace(/^#/, "");
-  const path = raw.split("?")[0];
+  const q = raw.indexOf("?");
+  const path = q < 0 ? raw : raw.slice(0, q);
+  // The query is a route's entry hint (`#/app/x?ungrant=name`), never state.
+  const query = new URLSearchParams(q < 0 ? "" : raw.slice(q + 1));
+  const r = (name, params) => ({ name, params, query });
   const seg = path.split("/").filter(Boolean).map((x) => { try { return decodeURIComponent(x); } catch (_) { return x; } });
-  if (!seg.length) return { name: "board", params: {} };
-  if (seg[0] === "app" && seg.length === 2) return { name: "app", params: { id: seg[1] } };
-  if (seg[0] === "identity" && seg.length === 2) return { name: "identity", params: { id: seg[1] } };
-  if (seg[0] === "identity" && seg.length === 3 && seg[2] === "replace") return { name: "replace", params: { id: seg[1] } };
-  if (seg[0] === "room" && seg.length === 2) return { name: "room", params: { id: seg[1] } };
-  if (seg[0] === "new-app" && seg.length === 1) return { name: "new-app", params: {} };
-  if (seg[0] === "new-identity" && seg.length === 1) return { name: "new-identity", params: {} };
-  if (seg[0] === "reveal" && seg.length === 1) return { name: "reveal", params: {} };
-  return { name: "notfound", params: { kind: "view", id: path } };
+  if (!seg.length) return r("board", {});
+  if (seg[0] === "app" && seg.length === 2) return r("app", { id: seg[1] });
+  if (seg[0] === "identity" && seg.length === 2) return r("identity", { id: seg[1] });
+  if (seg[0] === "identity" && seg.length === 3 && seg[2] === "replace") return r("replace", { id: seg[1] });
+  if (seg[0] === "room" && seg.length === 2) return r("room", { id: seg[1] });
+  if (seg[0] === "new-app" && seg.length === 1) return r("new-app", {});
+  if (seg[0] === "new-identity" && seg.length === 1) return r("new-identity", {});
+  if (seg[0] === "reveal" && seg.length === 1) return r("reveal", {});
+  return r("notfound", { kind: "view", id: path });
 }
 
 // Runs `fn` now when the page is clean; otherwise asks once and runs it only
@@ -997,14 +1201,14 @@ function revealView() {
 function render() {
   shownHash = routeKey(window.location.hash);
   if (!state) { view(loadError ? boardError(loadError) : boardLoading()); return; }
-  const { name, params } = routeFromHash();
+  const { name, params, query } = routeFromHash();
   if (name !== "reveal") revealData = null;
   setCrumbs();
   switch (name) {
     case "board": setNav("board"); board(); break;
     case "app": {
       const a = (Object.hasOwn(state.apps, params.id) && state.apps[params.id]) || notFound("app", params.id);
-      if (a) { setNav(null); setCrumbs({ text: "App " + params.id }); appInspector(params.id); }
+      if (a) { setNav(null); setCrumbs({ text: "App " + params.id }); appInspector(params.id, query); }
       break;
     }
     case "identity": {
