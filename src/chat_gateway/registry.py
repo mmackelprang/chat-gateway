@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -78,7 +79,10 @@ def normalize_avatar(raw) -> str | None:
             if name in AVATAR_NAMES:
                 return name
         if raw.startswith("https://"):
-            return raw
+            parsed = urlparse(raw)
+            if (parsed.scheme == "https" and parsed.netloc
+                    and not any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in raw)):
+                return raw
     raise ValueError(f"avatar {raw!r} must be a bundled icon name or an https URL")
 
 

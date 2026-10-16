@@ -650,7 +650,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
     def create_app_entry(body: AppCreate, client: str = Depends(require_admin)):
         check_id(body.app_id, "app")
         if body.app_id in registry.apps:
-            raise refuse(409, f"app {body.app_id!r} already exists")
+            raise refuse(409, f"app {body.app_id!r} already exists", "refused: already exists")
         check_refs(body)
         key_env = env_name(KEY_PREFIX, body.app_id)
         managed_name(key_env)
@@ -768,7 +768,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             raise refuse(422, "name, display and webhook_url are all required")
         check_id(body.name, "identity")
         if body.name in registry.identities:
-            raise refuse(409, f"identity {body.name!r} already exists")
+            raise refuse(409, f"identity {body.name!r} already exists", "refused: already exists")
         try:
             space = parse_webhook_space(body.webhook_url)
         except ValueError as exc:
@@ -838,7 +838,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
     def replace_webhook(name: str, body: WebhookIn, client: str = Depends(require_admin)):
         ident = get_identity(name)
         if ident.mode != "webhook" or not ident.webhook_url_env:
-            raise refuse(409, f"identity {name!r} is not a webhook identity")
+            raise refuse(409, f"identity {name!r} is not a webhook identity", "refused: already exists")
         try:
             space = parse_webhook_space(body.webhook_url)
         except ValueError as exc:

@@ -44,7 +44,8 @@ def test_normalize_avatar_accepts(raw, want):
 
 
 @pytest.mark.parametrize(
-    "raw", ["Alert", "http://x.example/a.png", "../alert", "alert.png", 42]
+    "raw", ["Alert", "http://x.example/a.png", "../alert", "alert.png", 42,
+          "https://", "https://a b", "https://x.example/a\n"]
 )
 def test_normalize_avatar_refuses_without_coercing(raw):
     with pytest.raises(ValueError, match="a bundled icon name or an https URL"):

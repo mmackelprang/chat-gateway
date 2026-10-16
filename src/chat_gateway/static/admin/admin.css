@@ -2,7 +2,7 @@
 @media (prefers-color-scheme: dark) { :root { --bg:#161616; --fg:#e8e8e8; --muted:#9a9a9a; --line:#333; --accent:#78aeed; --warn:#e5b45b; --err:#f2b8b5; --card:#1f1f1f; --ok:#8bd08f; --panel:#1b1b1b; --locked-bg:rgba(229,180,91,.10); --accent-soft:rgba(120,174,237,.14); --locked-solid:#2a2519; } }
 * { box-sizing: border-box; }
 [hidden] { display:none !important; }
-html, body { overflow-x:hidden; }
+html, body { overflow-x:clip; }
 body { margin:0; font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
 header { display:flex; flex-wrap:wrap; gap:.25rem 1rem; align-items:baseline; padding:1rem 16px; border-bottom:1px solid var(--line); }
 h1 { font-size:1.15rem; margin:0; }

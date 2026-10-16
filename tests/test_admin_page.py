@@ -129,7 +129,7 @@ def test_rule_6_is_stated_once_in_the_typed_confirm():
     js = (STATIC / "admin.js").read_text(encoding="utf-8")
     fn = js[js.index("async function withInboundConfirm("):]
     fn = fn[:fn.index("\n}\n")]
-    assert '/hard rule #6/i.test(e.message) ? e.message : e.message + "\\n\\n" + RULE_6' in fn
+    assert "note: has || !/hard rule #6/i.test(e.message) ? RULE_6 : null" in fn
 
 
 def test_mcp_snippet_is_gated_on_the_state_flag():
@@ -332,8 +332,8 @@ def test_show_key_bypasses_the_guard_and_sign_out_clears_dirty():
 def test_dialog_copy_prefers_reasons_over_detail():
     js = _js()
     assert 'REFUSED_INTRO = "The server refused this save until you confirm:"' in js
-    assert "intro: has ? REFUSED_INTRO : msg" in _fn(js, "async function withInboundConfirm(")
-    assert "intro: has ? REFUSED_INTRO : msg" in _fn(js, "function replaceWebhook(")
+    assert "intro: has ? REFUSED_INTRO : e.message" in _fn(js, "async function withInboundConfirm(")
+    assert "intro: has ? REFUSED_INTRO : e.message" in _fn(js, "function replaceWebhook(")
 
 
 def test_view_is_not_a_live_region_and_toast_rule_is_gone():
@@ -367,7 +367,7 @@ def test_rooms_collapse_by_default_in_page_memory_only():
     assert '"aria-expanded"' in js
     assert '"any identity here"' in js
     assert '"Expand all rooms"' in js and '"Collapse all rooms"' in js
-    assert '" rooms expanded · remembered for this session only"' in js
+    assert '" room groups expanded · remembered for this session only"' in js
     assert "Enter expands the room" in js
     # a collapsed group header shows the id WITHOUT `spaces/`; the full id stays in the title and the expanded header
     fn = _fn(js, "function groupHeaderCell(")

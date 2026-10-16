@@ -514,7 +514,7 @@ function board() {
     el("div", { class: "matrix-tools" },
       el("button", { type: "button", id: "expand-all", text: "Expand all rooms", disabled: nOpen === roomKeys.length, on: { click: expandAll } }),
       el("button", { type: "button", id: "collapse-all", text: "Collapse all rooms", disabled: nOpen === 0, on: { click: collapseAll } }),
-      el("span", { class: "muted", text: nOpen + " of " + roomKeys.length + " rooms expanded · remembered for this session only" })),
+      el("span", { class: "muted", text: nOpen + " of " + roomKeys.length + " room groups expanded · remembered for this session only" })),
     el("div", { class: "matrix-wrap", role: "region", "aria-label": "Grant matrix (scrolls)" }, table),
     legend(),
     el("div", { class: "cards" }, f.apps.map(appCard)));
@@ -546,7 +546,7 @@ function spacesOf(names) {
 // resolving key means the value came from somewhere this gateway does not
 // track (the UAT server's os.environ, for one).
 function keySourceWords(src) {
-  return src === "managed" ? "managed.env" : src === ".env" ? "the hand-written .env" : src === "process" ? "the process environment" : "an untracked source (" + src + ")";
+  return src === "managed" ? "managed.env" : src === ".env" ? "the hand-written .env" : src === "process" ? "the process environment" : src === "unset" ? "the environment (source not tracked)" : "an untracked source (" + src + ")";
 }
 
 // Spec §4.3 part 4: ONE computed sentence replaces the static CG-86 warning.
@@ -713,11 +713,10 @@ async function withInboundConfirm(appId, send) {
   catch (e) {
     if (e.status !== 428) throw e;
     // The server's 428 detail already quotes rule #6; add it only if it does not.
-    const msg = /hard rule #6/i.test(e.message) ? e.message : e.message + "\n\n" + RULE_6;
     const has = !!(e.reasons && e.reasons.length); // bullets cover the detail; do not print both
     const typed = await typedConfirm({ title: "Confirm: widen inbound for " + appId,
-      intro: has ? REFUSED_INTRO : msg, reasons: e.reasons,
-      note: has && !/hard rule #6/i.test(e.message) ? RULE_6 : null, expected: appId, verb: "Widen inbound", tone: "warn" });
+      intro: has ? REFUSED_INTRO : e.message, reasons: e.reasons,
+      note: has || !/hard rule #6/i.test(e.message) ? RULE_6 : null, expected: appId, verb: "Widen inbound", tone: "warn" });
     if (typed === null) throw new Error("cancelled");
     return await send(typed);
   }
@@ -726,6 +725,9 @@ async function withInboundConfirm(appId, send) {
 // ------------------------------------------------------------- dialog ---
 // Resolves with the dialog's returnValue once it closes, then hands focus back
 // to whatever opened it. Escape closes natively with returnValue "" (= cancel).
+function closeOpen(dlg) {
+  return new Promise((resolve) => { dlg.addEventListener("close", () => resolve(), { once: true }); dlg.close(""); });
+}
 function dialogClosed(dlg, trigger) {
   return new Promise((resolve) => {
     dlg.addEventListener("close", () => {
@@ -738,9 +740,9 @@ function dialogClosed(dlg, trigger) {
 // Typed confirmation: the verb button stays disabled until the text equals
 // `expected`, so a mismatch cannot be submitted. Resolves the typed text, or
 // null on Cancel/Escape.
-function typedConfirm({ title, intro, reasons, note, expected, verb, tone }) {
+async function typedConfirm({ title, intro, reasons, note, expected, verb, tone }) {
   const dlg = $("confirm");
-  if (dlg.open) dlg.close();
+  if (dlg.open) await closeOpen(dlg);
   const trigger = document.activeElement;
   const input = el("input", { id: "confirm-input", autocomplete: "off", "aria-label": "Type " + expected + " to confirm" });
   const verbBtn = el("button", { type: "button", class: tone === "danger" ? "danger" : "primary", text: verb, disabled: true });
@@ -767,9 +769,9 @@ function typedConfirm({ title, intro, reasons, note, expected, verb, tone }) {
 
 // One-shot "Discard …?" dialog for the unsaved new-app draft and a dirty
 // inspector. Escape keeps editing. Resolves true only on Discard.
-function discardConfirm(title) {
+async function discardConfirm(title) {
   const dlg = $("confirm");
-  if (dlg.open) dlg.close();
+  if (dlg.open) await closeOpen(dlg);
   const trigger = document.activeElement;
   const keep = el("button", { type: "button", class: "primary", text: "Keep editing" });
   const discard = el("button", { type: "button", class: "danger", text: "Discard" });
@@ -909,9 +911,8 @@ function appInspector(appId, query) {
       toast("Saved " + appId + ". Live now.");
       clean(); // re-render from the refreshed state; the bar reads "No changes"
     } catch (e) {
-      fail(e);
-      // A refusal also renders at the form (spec §4.6), not as a notice alone.
-      showFormError(e, inline);
+      // A refusal also renders at the form (spec §4.6); a stale panel replaces the alert.
+      if (!showFormError(e, inline)) fail(e);
     }
   });
   view(el("h2", {}, appId, " ", pills(a)),
@@ -944,10 +945,12 @@ function stalePanel(e, host) {
     kind !== "refresh" ? el("p", {}, reloadBtn, " pick up a hand edit to registry.yaml — validates the file, then swaps it live") : null,
     el("p", { class: "muted small", text: "Then compare and Save again." })]));
 }
+// Returns true when the stale panel took the refusal (no separate alert notice).
 function showFormError(e, host) {
-  if (!e || e.message === "cancelled" || e.status === 401) return;
-  if (e.status === 409 && e.category !== "refused: still granted" && e.category !== "refused: unpolled inbound" && e.category !== "refused: env name in use" && e.category !== "refused: secret in process env") { stalePanel(e, host); return; }
+  if (!e || e.message === "cancelled" || e.status === 401) return false;
+  if (e.status === 409 && (e.category === "refused: conflict" || e.category === "refused: edited outside the console")) { stalePanel(e, host); return true; }
   host.className = "callout err"; host.textContent = explain(e); host.hidden = false;
+  return false;
 }
 
 function newDraft() { return { app_id: "", identities: [], routes: {}, allow_inbound: false, callback_url: "", unreachable_message: "", allowed_users: [], pre: null }; }
@@ -997,7 +1000,7 @@ function newApp() {
       const r = await withInboundConfirm(appId, (c) => write("POST", "/admin/api/apps", Object.assign(readAppFields(form, blank), { app_id: appId, confirm_app_id: c })));
       draft = null;
       showKey(r);
-    } catch (e) { fail(e); showFormError(e, panel); }
+    } catch (e) { if (!showFormError(e, panel)) fail(e); }
   });
   view(el("h2", { text: "New app" }), form);
 }
@@ -1052,6 +1055,7 @@ function newIdentity(query) {
   const envLine = el("p", { class: "muted small" });
   nameIn.addEventListener("input", () => { envLine.textContent = "Webhook env var: GOOGLE_CHAT_WEBHOOK_URL__" + nameIn.value.trim().toUpperCase().replace(/-/g, "_"); });
   const panel = el("div", { class: "callout err", hidden: true, role: "alert" });
+  if (ticket && draft) setDirty(true, DISCARD_NEW_APP); // the draft is at stake until Back to new app
   const form = el("form", {},
     el("fieldset", {}, el("legend", { text: "1 · Pick an avatar, then create the webhook in Google Chat" }),
       el("p", { class: "muted", text: "The name and avatar of a webhook are fixed when it is created in Chat; the gateway cannot set them. Choose the icon first so you have its URL ready to paste." }),
@@ -1070,6 +1074,7 @@ function newIdentity(query) {
       el("p", { class: "muted small", text: "Stored in managed.env. Never shown again." })),
     panel,
     el("button", { type: "submit", class: "primary", text: "Create identity" }));
+  if (ticket && draft) form.addEventListener("input", () => setDirty(true, DISCARD_NEW_APP));
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     panel.hidden = true;
@@ -1078,7 +1083,7 @@ function newIdentity(query) {
     const body = { name: f("name").trim(), display: f("display").trim(), webhook_url: f("webhook_url") };
     if (avatar) body.avatar = avatar;
     try { identityCreated(await write("POST", "/admin/api/identities", body), ticket); }
-    catch (e) { fail(e); showFormError(e, panel); }
+    catch (e) { if (!showFormError(e, panel)) fail(e); }
   });
   view(el("h2", { text: "New identity (Chat webhook)" }), form);
 }
@@ -1087,6 +1092,7 @@ function identityCreated(r, ticket) {
     const d = draft || (draft = newDraft());
     if (!d.identities.includes(r.name)) d.identities.push(r.name);
     d.pre = r.name;
+    setDirty(false); // going back to the draft is not discarding it
     navigate(hrefFor("new-app"));
   };
   view(el("div", { class: "card" },
@@ -1141,17 +1147,16 @@ function replaceWebhook(name) {
         try { await send(""); }
         catch (e) {
           if (e.status !== 428) throw e;
-          const msg = /hard rule #6/i.test(e.message) ? e.message : e.message + "\n\n" + RULE_6;
           const has = !!(e.reasons && e.reasons.length);
           const typed = await typedConfirm({ title: "Confirm: replace the webhook for " + name,
-            intro: has ? REFUSED_INTRO : msg, reasons: e.reasons,
-            note: has && !/hard rule #6/i.test(e.message) ? RULE_6 : null, expected: name, verb: "Replace webhook", tone: "warn" });
+            intro: has ? REFUSED_INTRO : e.message, reasons: e.reasons,
+            note: has || !/hard rule #6/i.test(e.message) ? RULE_6 : null, expected: name, verb: "Replace webhook", tone: "warn" });
           if (typed === null) throw new Error("cancelled");
           await send(typed);
         }
         input.value = ""; toast("Webhook replaced."); navigate(hrefFor("identity", name));
       }
-      catch (e) { fail(e); showFormError(e, panel); }
+      catch (e) { if (!showFormError(e, panel)) fail(e); }
     } } }));
 }
 
@@ -1316,7 +1321,7 @@ function reveal(r) {
     el("p", { class: "muted", text: "202 enqueued is not delivery — this waits for the delivery log to say delivered or failed." }),
     el("button", { type: "button", class: "primary", text: "Send test", on: { click: () => testSend(key, result) } }),
     result,
-    el("p", {}, el("button", { type: "button", class: "primary", text: "Done — I have stored the key", on: { click: () => navigate(hrefFor("board")) } })),
+    el("p", {}, el("button", { type: "button", class: "primary", text: "Done — I have stored the key", on: { click: () => navigate(r.app_id ? hrefFor("app", r.app_id) : hrefFor("board")) } })),
     el("p", { class: "muted small", text: "Leave this page and the key is gone; rotate again to get a new one." }));
 }
 
@@ -1440,11 +1445,14 @@ function revealView() {
   reveal(revealData);
 }
 
+let lastRenderedHash = null;
 function render() {
   shownHash = routeKey(window.location.hash);
   if (!state) { view(loadError ? boardError(loadError) : boardLoading()); return; }
   const { name, params, query } = routeFromHash();
   if (name !== "reveal") revealData = null;
+  if (lastRenderedHash !== null && lastRenderedHash !== shownHash) for (const n of $("notices").querySelectorAll(".notice.alert")) n.remove();
+  lastRenderedHash = shownHash;
   if (name !== "new-app" && name !== "new-identity") draft = null;
   setCrumbs();
   switch (name) {

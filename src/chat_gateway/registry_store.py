@@ -54,6 +54,7 @@ _DEFAULT_CATEGORY = {
 CATEGORIES: tuple[str, ...] = (
     *_DEFAULT_CATEGORY.values(),
     "refused: edited outside the console",
+    "refused: already exists",
     "refused: registry unparseable",
     "refused: registry validation",
     "refused: parser disagreement",

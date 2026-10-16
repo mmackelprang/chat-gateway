@@ -1387,6 +1387,14 @@ def test_refusal_bodies_still_granted_has_a_category_and_no_reasons(gw):
     assert client.get("/healthz").json()["admin"]["last_write_error"] == "refused: still granted"
 
 
+def test_duplicate_identity_is_409_with_its_own_category(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/identities", headers=AUTH,
+                    json={"name": "i1", "display": "Dup", "webhook_url": HOOK})
+    assert r.status_code == 409
+    assert r.json()["category"] == "refused: already exists"
+
+
 def test_refusal_bodies_widening_428_lists_its_reasons(gw):
     client, *_ = gw
     r = _new_app(client, allow_inbound=True)
