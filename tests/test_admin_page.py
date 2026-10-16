@@ -150,3 +150,24 @@ def test_no_inline_style_attribute_the_csp_would_block():
     assert "style=" not in html and "<style" not in html
     assert not re.search(r"""\bstyle\s*:\s*["']""", js)
     assert "setAttribute(\"style\"" not in js and "setAttribute('style'" not in js
+
+
+def test_page_probes_before_showing_the_login():
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "admin.js").read_text(encoding="utf-8")
+    assert '<section id="login" hidden>' in html
+    assert 'id="auth-mode" class="pill warn" hidden>open · no sign-in<' in html
+    fn = js[js.index("async function probePosture("):]
+    fn = fn[:fn.index("\n}\n")]
+    assert "await refresh()" in fn and 'e.status === 401' in fn
+    # a 401 shows the login silently; any other failure shows its message
+    assert '$("login-error").textContent = ""' in fn or "login-error" in fn
+    assert 'document.addEventListener("DOMContentLoaded"' in js and "probePosture()" in js
+
+
+def test_api_sends_no_authorization_header_without_a_key():
+    js = (STATIC / "admin.js").read_text(encoding="utf-8")
+    fn = js[js.index("async function api("):]
+    fn = fn[:fn.index("\n}\n")]
+    assert 'Authorization: "Bearer " +' not in fn
+    assert 'if (k) headers.Authorization = "Bearer " + k;' in fn
