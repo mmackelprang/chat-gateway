@@ -96,9 +96,15 @@ with the threat model stated above.
     gap. Scheme is deliberately not compared, so a TLS-terminating proxy in front
     of the gateway would not break the page; the netloc comparison is what
     defeats a page on another origin.
-  The 403 is counted through `refuse()` like every other refusal and its
-  category lands in `admin.last_write_error`; the message names the header that
-  failed and never echoes its value.
+  The 403 is a plain refusal counted on its own `/healthz` integer,
+  `admin.cross_origin_refused`, which never degrades — **not** through
+  `refuse()` and `store.note_refusal`. ⚠ *Corrected 2026-10-16 in Task 2's
+  review:* the first draft routed it through the store like every other refusal,
+  which would have made this the first **unauthenticated** writer to
+  `admin.last_write_error` — latest-wins, so any host on the LAN could overwrite
+  a genuine write failure the operator was about to read. The message names the
+  header that failed and never echoes its value. An `Origin` whose netloc is
+  empty (`null`, or an unparseable value) is refused even when `Host` is absent.
 - **Audit lines gain two fields, in both modes:** `client` — the peer address
   as the container sees it, `request.client.host` — and `auth` — `"key"` or
   `"open"`, what authenticated the action. With no credential, the address is
