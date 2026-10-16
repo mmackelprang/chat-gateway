@@ -185,8 +185,11 @@ repaired tables.
 > section and the spec differ, the spec wins. Two later user decisions are
 > folded in below as dated amendments: D5 (bounded-height matrix + collapsible
 > rooms) and D6 (avatar picker, remembered in the registry). The new-identity
-> stepper (§3.5) now opens with the avatar picker and the gateway serves the
-> bundled icons itself; the GitHub gallery link is gone from the guide.
+> stepper (§3.5) now opens with the avatar picker; the gateway serves the
+> bundled icons for the page's own rendering, but the URL the picker hands the
+> operator to paste into Chat is the **public GitHub raw URL** (Google fetches
+> it; the gateway is LAN-bound — spec §5, ruling R1). The gallery link is gone
+> from the guide.
 
 Mode: **Operate**. Familiar controls, restrained colour, density where the
 operator benefits, brand in the details. No motion beyond a 150 ms focus/hover

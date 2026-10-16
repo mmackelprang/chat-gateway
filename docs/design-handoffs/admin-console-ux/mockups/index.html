@@ -97,7 +97,7 @@ main { max-width:1240px; margin:0 auto; padding:1rem 16px 4rem; position:relativ
 .dot.ok { background:var(--ok); }
 .dot.err { background:var(--err); }
 .dot.granted { background:var(--accent); width:12px; height:12px; margin:0; }
-.avatar { vertical-align:-4px; margin-right:.3rem; flex:none; }
+.avatar { vertical-align:-4px; margin-right:.3rem; flex:none; border-radius:50%; object-fit:cover; }
 .avatar.none circle { fill:none; stroke:var(--muted); stroke-dasharray:2 2; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:1rem; margin:1rem 0; }
 .callout { border:1px solid var(--line); background:var(--panel); border-radius:6px; padding:.5rem .75rem; margin:.5rem 0; font-size:.95em; }
@@ -259,9 +259,12 @@ const SEVERITIES = ["alert", "warning", "info"];
 const RULE_6 = "Inbound crosses to a consumer only by that consumer's explicit registry opt-in (hard rule #6).";
 const MOCK = " (mockup — nothing written)";
 const BASE = "http://192.168.1.20:8099";
-// Placeholder names for the twenty bundled PNGs under assets/avatars/png/.
-const AVATARS = ["bell", "bot", "chart", "clock", "cloud", "compass", "flag", "gear", "globe", "heart", "home", "key", "leaf", "mail", "phone", "pin", "rocket", "shield", "star", "wrench"];
-const avatarUrl = (name) => BASE + "/admin/static/avatars/" + name + ".png";
+// The twenty bundled PNGs (assets/avatars/png/), copied beside this file as avatars/<name>.png.
+// In the product the page renders them from /admin/static/avatars/<name>.png.
+const AVATARS = ["agent", "alert", "build", "calendar", "database", "deploy", "finance", "heartbeat", "home", "info", "jobs", "messages", "phone", "report", "resolved", "search", "security", "server", "trading", "warning"];
+// The URL handed to the operator is the PUBLIC raw GitHub URL (R1): Google fetches avatars
+// from the internet and the gateway is LAN-bound. Gateway-served PNGs are for this page only.
+const avatarUrl = (name) => "https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png/" + name + ".png";
 
 // ----------------------------------------------------------- fake data ---
 const NOW = Date.now(), MIN = 60000, HR = 3600000, DAY = 86400000;
@@ -274,9 +277,9 @@ let state = {
   inbound_defaulted: ["pmtrader"],
   avatars: AVATARS,
   identities: {
-    "aitrader-alerts":    { display: "aitrader",                   mode: "webhook", space: "spaces/AAQAtrdA1", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__AITRADER_ALERTS",     env_resolved: true,  secret_source: ".env",    avatar: "chart" },
-    "aitrader-reports":   { display: "aitrader reports",           mode: "webhook", space: "spaces/AAQAtrdR2", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__AITRADER_REPORTS",    env_resolved: true,  secret_source: ".env",    avatar: "clock" },
-    "family-reminders":   { display: "Reminders · familyworkspace", mode: "webhook", space: "spaces/AAQAfam01", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__FAMILY_REMINDERS",    env_resolved: true,  secret_source: "managed", avatar: "bell" },
+    "aitrader-alerts":    { display: "aitrader",                   mode: "webhook", space: "spaces/AAQAtrdA1", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__AITRADER_ALERTS",     env_resolved: true,  secret_source: ".env",    avatar: "trading" },
+    "aitrader-reports":   { display: "aitrader reports",           mode: "webhook", space: "spaces/AAQAtrdR2", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__AITRADER_REPORTS",    env_resolved: true,  secret_source: ".env",    avatar: "report" },
+    "family-reminders":   { display: "Reminders · familyworkspace", mode: "webhook", space: "spaces/AAQAfam01", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__FAMILY_REMINDERS",    env_resolved: true,  secret_source: "managed", avatar: "calendar" },
     "job-hunter":         { display: "Job Hunter",                 mode: "webhook", space: "spaces/AAQAjob02", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__JOB_HUNTER",          env_resolved: true,  secret_source: ".env",    avatar: "https://example.com/icons/jobhunter.png" },
     "legacy-notify":      { display: "Legacy notifier",            mode: "webhook", space: "",                 webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__LEGACY_NOTIFY",       env_resolved: false, secret_source: "unset",   avatar: null },
     "pm-familyworkspace": { display: "PM · familyworkspace",       mode: "webhook", space: "spaces/AAQAfam01", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__FAMILYWORKSPACE__PM", env_resolved: true,  secret_source: ".env",    avatar: "home" },
@@ -354,24 +357,18 @@ function envName(prefix, id) { return prefix + id.toUpperCase().replace(/-/g, "_
 function ensureCollapsed() { if (!collapsed) collapsed = new Set(rooms().map((r) => r.key)); }
 function expandFor(appId) { ensureCollapsed(); const app = state.apps[appId]; if (!app) return; for (const r of rooms()) if (r.identities.some((n) => app.identities.includes(n))) collapsed.delete(r.key); }
 
-// Avatars: an inline SVG stands in for the bundled PNG; a dashed circle is the neutral mark (custom URL or none).
+// Avatars: a bundled icon renders as the real PNG (avatars/<name>.png beside this file; the
+// product serves /admin/static/avatars/<name>.png). Custom URL or none → a neutral dashed circle.
 function avatarMark(value, size) {
   const s = size || 16;
+  const bundled = value && AVATARS.includes(value);
+  if (bundled) return el("img", { class: "avatar", src: "avatars/" + value + ".png", alt: "", width: String(s), height: String(s), title: "avatar: " + value });
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
-  svg.setAttribute("width", s); svg.setAttribute("height", s); svg.setAttribute("viewBox", "0 0 20 20");
+  svg.setAttribute("width", s); svg.setAttribute("height", s); svg.setAttribute("viewBox", "0 0 20 20"); svg.setAttribute("class", "avatar none"); svg.setAttribute("role", "img");
   const c = document.createElementNS(ns, "circle"); c.setAttribute("cx", "10"); c.setAttribute("cy", "10"); c.setAttribute("r", "9");
-  svg.append(c);
-  const bundled = value && AVATARS.includes(value);
-  svg.setAttribute("class", "avatar" + (bundled ? "" : " none"));
-  if (bundled) {
-    let h = 0; for (const ch of value) h = (h * 31 + ch.charCodeAt(0)) % 360;
-    c.setAttribute("fill", "hsl(" + h + " 45% 55%)");
-    const t = document.createElementNS(ns, "text"); t.setAttribute("x", "10"); t.setAttribute("y", "14"); t.setAttribute("text-anchor", "middle"); t.setAttribute("font-size", "11"); t.setAttribute("fill", "#fff"); t.setAttribute("font-family", "system-ui"); t.textContent = value[0].toUpperCase();
-    svg.append(t);
-  }
-  svg.setAttribute("role", "img");
-  const title = document.createElementNS(ns, "title"); title.textContent = bundled ? "avatar: " + value : value ? "custom avatar URL" : "no avatar recorded"; svg.append(title);
+  const title = document.createElementNS(ns, "title"); title.textContent = value ? "custom avatar URL" : "no avatar recorded";
+  svg.append(c, title);
   return svg;
 }
 function avatarWords(value) { return !value ? "none recorded" : AVATARS.includes(value) ? "bundled icon “" + value + "”" : "custom URL"; }
@@ -382,8 +379,8 @@ function avatarPicker(current, onChange) {
   const custom = el("input", { type: "url", placeholder: "https://… (a public PNG; never a secret)", autocomplete: "off", value: value && !AVATARS.includes(value) ? value : "" });
   const grid = el("div", { class: "picker", role: "group", "aria-label": "Bundled avatars" });
   const render = () => {
-    grid.replaceChildren(...AVATARS.map((n) => el("button", { type: "button", "aria-pressed": String(value === n), on: { click: () => { value = n; custom.value = ""; render(); } } }, avatarMark(n, 28), n)),
-      el("button", { type: "button", "aria-pressed": String(!value), on: { click: () => { value = null; custom.value = ""; render(); } } }, avatarMark(null, 28), "none"));
+    grid.replaceChildren(...AVATARS.map((n) => el("button", { type: "button", "aria-pressed": String(value === n), on: { click: () => { value = n; custom.value = ""; render(); } } }, avatarMark(n, 40), n)),
+      el("button", { type: "button", "aria-pressed": String(!value), on: { click: () => { value = null; custom.value = ""; render(); } } }, avatarMark(null, 40), "none"));
     urlBox.value = value ? (AVATARS.includes(value) ? avatarUrl(value) : value) : "";
     onChange && onChange(value);
   };
@@ -393,7 +390,7 @@ function avatarPicker(current, onChange) {
     el("label", {}, "Or a custom https URL", custom),
     el("label", {}, "Paste this into the webhook's Avatar URL in Google Chat", urlBox),
     el("div", { class: "row" }, el("button", { type: "button", text: "Select URL", on: { click: () => { urlBox.focus(); urlBox.select(); notify("URL selected — press Ctrl+C (or ⌘C) to copy."); } } }),
-      el("span", { class: "muted small", text: "The gateway serves its bundled icons itself; the avatar is a name or a public image URL, never a secret." })));
+      el("span", { class: "muted small", text: "This is the icon's public URL — Google fetches it, so it cannot be a LAN address. The avatar recorded here is a name or a public image URL, never a secret." })));
   wrap.value = () => value;
   return wrap;
 }
@@ -824,7 +821,7 @@ function identityView(name) {
   // Avatar card: what is recorded, and a picker to change it (D6).
   const avatarCard = el("div", { class: "card" });
   const showAvatar = () => avatarCard.replaceChildren(el("h3", { text: "Avatar" }),
-    el("div", { class: "row" }, avatarMark(i.avatar, 32), el("span", {}, "Recorded: " + avatarWords(i.avatar), i.avatar && !AVATARS.includes(i.avatar) ? el("span", { class: "muted small", text: " — " + i.avatar }) : null),
+    el("div", { class: "row" }, avatarMark(i.avatar, 20), el("span", {}, "Recorded: " + avatarWords(i.avatar), i.avatar && !AVATARS.includes(i.avatar) ? el("span", { class: "muted small", text: " — " + i.avatar }) : null),
       el("button", { type: "button", text: "Change avatar…", on: { click: editAvatar } })),
     el("p", { class: "muted small", text: "The icon Chat shows is set in the webhook's dialog in Google Chat; the gateway cannot set it. What is recorded here is which icon you chose, so the board can show it and you can paste its URL again when the webhook is recreated." }));
   const editAvatar = () => {
@@ -840,7 +837,7 @@ function identityView(name) {
   const deleteDisabled = hs.length ? "Remove it from " + hs.length + " app" + (hs.length > 1 ? "s" : "") + " first." : "";
 
   view(
-    el("h2", {}, avatarMark(i.avatar, 24), name, " ", r.lockedBy ? el("span", { class: "pill warn", text: "room locked by " + r.lockedBy }) : null, !hs.length ? el("span", { class: "pill", text: "unused" }) : null),
+    el("h2", {}, avatarMark(i.avatar, 20), name, " ", r.lockedBy ? el("span", { class: "pill warn", text: "room locked by " + r.lockedBy }) : null, !hs.length ? el("span", { class: "pill", text: "unused" }) : null),
     el("p", { class: "muted small" }, "Room ", el("a", { href: "#/room/" + r.key, text: roomLabel(r.space) }), " · webhook env var ", el("code", { text: i.webhook_url_env || "—" })),
     el("div", { class: "card" }, status, el("p", { class: "muted small", text: "The sender name and avatar Chat shows are fixed by the webhook itself; the display name below is what /v1/identities reports." }), dispRow),
     avatarCard,

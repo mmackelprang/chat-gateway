@@ -266,7 +266,8 @@ Render: `mockup-app-aitrader.png`. One form, one **Save** in a sticky save bar
    (input, Save, Cancel; `PUT /api/identities/<name>`), and the sentence *"The
    sender name and avatar Chat shows are fixed by the webhook itself; the display
    name is what /v1/identities reports."*
-   **Avatar card (D6):** the mark at 32 px, *"Recorded: bundled icon “phone” /
+   **Avatar card (D6):** the mark at 20 px (the inspector size; the header's
+   mark beside the identity name is 20 px too), *"Recorded: bundled icon “phone” /
    custom URL — https://… / none recorded"*, and **Change avatar…**, which
    swaps the card for the picker (§4.6) with **Save avatar** / **Cancel**
    (`PUT /api/identities/<name>` with `avatar`). Copy under it: *"The icon Chat
@@ -328,14 +329,18 @@ current route and asking, not by letting the view change first.
 
 **New identity — `#/new-identity`.** A three-step stepper on one view: *Pick an
 avatar, then create the webhook in Google Chat* (D6 — the **avatar picker**
-first: the bundled icons from `state.avatars` as `aria-pressed` buttons plus
-*none*, a *custom https URL* field, and a read-only URL box *"Paste this into
+first: the bundled icons from `state.avatars` as `aria-pressed` buttons — each
+a ~40 px tile with the icon's name under it — plus *none*, a *custom https URL* field, and a read-only URL box *"Paste this into
 the webhook's Avatar URL in Google Chat"* with a **Select URL** button, since
 the clipboard API is unavailable over plain HTTP; then the existing guide,
 `admin.js:333-340`, with its third step reworded *"Set the name; paste the
 avatar URL above into Avatar URL. Both are fixed at creation and cannot be
 changed later without a new webhook"*, and the GitHub gallery link gone because
-the gateway serves the icons itself; intro: *"The name and avatar of a webhook
+the picker replaces it — **the URL in the box is the PUBLIC GitHub raw URL**
+built from `AVATAR_PNG_PATTERN` (`admin.js:16`), never a gateway URL: Google's
+servers fetch the avatar and this gateway is LAN-bound (CG-55), so a same-origin
+URL would give the webhook a blank icon fixed at creation (*controller's ruling
+R1, 2026-10-16*); intro: *"The name and avatar of a webhook
 are fixed when it is created in Chat; the gateway cannot set them. Choose the
 icon first so you have its URL ready to paste"*), *Name it here* (name with
 env-var name derived live;
@@ -486,11 +491,33 @@ Hard rule #2 applies: a category is a fixed string, never interpolated.
   (hard rule #7's shape). Absent = none. **Hard rule #2:** the value is an icon
   name or a public image URL — never a secret, never a webhook URL — so it may
   appear in `state`, in audit field lists and on the page.
-- **Served icons:** the gateway serves the bundled PNGs itself, e.g.
-  `GET /admin/static/avatars/<name>.png`, same-origin so the page's CSP
-  `img-src 'self'` holds and the gallery link to GitHub disappears from the
-  guide. `state.avatars` lists the available names so the picker never
-  hard-codes them.
+- **Served icons — for the PAGE's rendering only** (*controller's ruling R1,
+  2026-10-16*): the gateway serves the bundled PNGs itself, e.g.
+  `GET /admin/static/avatars/<name>.png`, unauthenticated with the existing
+  static route's headers, same-origin so the page's CSP `img-src 'self'` holds
+  with no CSP change; a custom https URL is never fetched by the page and renders
+  as the neutral mark. **The URL handed to the operator to paste into Chat is
+  the public GitHub raw URL**, `AVATAR_PNG_PATTERN` (`admin.js:16`) with the
+  name substituted — Google fetches avatars from the public internet and the
+  gateway is published on the LAN address only (CG-55). The gallery link may
+  go; the raw-URL pattern stays as the constant the page builds from. A custom
+  URL equal to a bundled icon's raw URL **normalises to that bundled name on
+  save** (loader or write path — planner's choice), so the board never shows a
+  neutral mark for an icon it has. `state.avatars` is the **sorted listing of
+  the packaged directory at boot**, so the picker never hard-codes names and
+  the validator matches a name against that list — never joins it onto a path.
+- **Packaging** (*controller's ruling R2, 2026-10-16*): `assets/avatars/png/`
+  stays where it is — the public URLs are pinned to that path and the README
+  promises it. The generator `assets/avatars/build.py` writes the same PNGs to
+  a second output, `src/chat_gateway/static/admin/avatars/`; `pyproject`
+  package-data gains `static/admin/avatars/*`; a test asserts the two
+  directories are byte-identical by name so the two homes cannot drift (the
+  test is the guard, CG-88 style). Declined: moving the PNGs (breaks published
+  URLs); shipping a top-level `assets/` in the wheel/Dockerfile (a different
+  layout for twenty files).
+- **Builder's decidables, accepted as written:** `avatar` is allowed on
+  `mode: app` identities too; `update_identity` treats `display` as
+  absent-means-unchanged so an avatar-only save need not resend it.
 - **`state.identities[*].avatar`:** the recorded value or `null`.
 - **Write path:** `POST /api/identities` accepts `avatar`; the identity `PUT`
   (today `DisplayIn`, display only) accepts `avatar` as absent-means-unchanged,
@@ -535,7 +562,12 @@ response body beyond the `run()` fix site. Those are the plan's.
 | `--accent-soft` | `--accent` at ~10–14 % alpha | Focused/hovered matrix cell, current nav item, route chips |
 
 Primitives, all from existing tokens: `.dot` (10 px status circle, `ok` /
-`err` / neutral, always beside text), `.matrix` (sticky first column, group
+`err` / neutral, always beside text), `.avatar` (a bundled icon is an
+`<img src="/admin/static/avatars/<name>.png" alt="">` with `border-radius:
+50%`, sized to its row — 16 px in matrix and list headers, 20 px in inspector
+headers and the Avatar card, 40 px tiles with the name beneath in the picker
+grid; custom URL or none is a dashed-circle SVG of the same size with a
+`title`, never a fetched image), `.matrix` (sticky first column, group
 headers), `.chip` (a smaller `.pill`), `.callout` (1 px `--line` border,
 `--panel` fill, no coloured left bar), `dialog` (border, 8 px radius,
 `--panel`, 40 % backdrop), `.skeleton`, `.notice`. Typography, radii, button
@@ -607,7 +639,12 @@ Offline pytest in the CG-88 style, then UAT with the tester agent.
   writing (422 with the field named); absent means unchanged on `PUT`;
   `state.identities[*].avatar` round-trips; the icon route serves exactly the
   bundled files and 404s anything else (no path traversal — a name is matched
-  against the list, not joined onto a path).
+  against the list, not joined onto a path); a custom URL equal to a bundled
+  icon's raw URL is stored as the bundled name (R1).
+- **Two homes, one guard (R2):** `assets/avatars/png/` and
+  `src/chat_gateway/static/admin/avatars/` contain the same file names with
+  byte-identical contents; `state.avatars` equals the sorted stems of the
+  packaged directory.
 - **No storage for board state (D5):** the collapsed-rooms set and selected
   app are page variables; the storage-reference test above covers them.
 - **Suite count** measured on the branch at merge time and written here, not
@@ -654,8 +691,11 @@ identity with no space — so each state below is reachable):
     Collapse all work and the count line updates; a reload returns to
     all-collapsed (nothing stored).
 11. Avatars (D6): the new-identity stepper shows the picker first; picking an
-    icon fills the URL box with a same-origin `/admin/static/avatars/…png` URL
-    and **Select URL** selects it; the created identity carries the icon on
+    icon fills the URL box with the public
+    `https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png/<name>.png`
+    URL (never a gateway URL) and **Select URL** selects it; the board renders
+    the same icon from the gateway's own `/admin/static/avatars/<name>.png`
+    (check the request in the network tab); the created identity carries the icon on
     the board; on an identity page **Change avatar…** → pick → **Save avatar**
     round-trips through `state`; a custom `http://` URL is refused at the
     field; an identity with none shows the dashed mark.
@@ -685,6 +725,9 @@ identity with no space — so each state below is reachable):
   schema, written against `registry.py`) gains the `avatar` row; the runbook's
   §1 identity row drops the GitHub gallery URL in favour of the console's
   picker, keeping the gallery as the fallback for a gateway without the console.
+- `assets/avatars/README.md` (or wherever `build.py` is documented) — the
+  second output directory and the drift test (R2); `pyproject.toml` —
+  package-data for `static/admin/avatars/*`.
 
 **Homelab repo:** no change — no new env name, mount or secret.
 
