@@ -55,7 +55,7 @@ def test_only_known_static_files_are_served(gw):
 def test_no_inline_script_and_no_third_party_origin():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     assert "<script>" not in html and "onclick=" not in html
-    for f in STATIC.iterdir():
+    for f in (p for p in STATIC.iterdir() if p.is_file()):  # avatars/ holds PNGs
         text = f.read_text(encoding="utf-8")
         assert "http://" not in text and "cdn" not in text.lower()
 
