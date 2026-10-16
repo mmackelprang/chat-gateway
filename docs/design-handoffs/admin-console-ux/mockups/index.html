@@ -1,0 +1,1147 @@
+<!doctype html>
+<!--
+  THROWAWAY VISUAL MOCKUP — chat-gateway admin console, CG-92 (recommended option C:
+  grant matrix + inspectors). Companion to the CG-92 spec and the handoff overview.
+
+  This is NOT product code. It uses inline <style> and <script>, which the real
+  /admin page's CSP forbids; it renders fake data; every "write" only toasts
+  (creating an identity and changing an avatar update in-memory fake state so
+  the flows can be seen working). Open from file://. No external resources.
+
+  Revision 2026-10-16 (D5, D6): the matrix scrolls in its own bounded region
+  with sticky headers and a sticky app column; room groups collapse to one
+  column (all collapsed by default; a room expands when it holds a grant of the
+  app last opened in an inspector); avatar picker on the new-identity stepper
+  and the identity inspector. Inline SVG circles stand in for the twenty PNG
+  icons under assets/avatars/png/; the names below are placeholders.
+
+  Fake data mirrors config/registry.example.yaml plus two more apps
+  (rotaryphone, pmtrader — pmtrader shares pm-familyworkspace with
+  aiteam-harness and agent-mcp) and one unused identity with no room recorded.
+  Space ids, keys and env values are invented.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gateway Admin — mockup</title>
+<style>
+:root { --bg:#fafafa; --fg:#1b1b1b; --muted:#666; --line:#ddd; --accent:#1a5fb4; --warn:#9a6700; --err:#b3261e; --card:#fff; --ok:#2e7d32;
+  --panel:#f1f1f1; --locked-bg:rgba(154,103,0,.08); --accent-soft:rgba(26,95,180,.10); --locked-solid:#f3ecdc; }
+@media (prefers-color-scheme: dark) { :root { --bg:#161616; --fg:#e8e8e8; --muted:#9a9a9a; --line:#333; --accent:#78aeed; --warn:#e5b45b; --err:#f2b8b5; --card:#1f1f1f; --ok:#8bd08f;
+  --panel:#1b1b1b; --locked-bg:rgba(229,180,91,.10); --accent-soft:rgba(120,174,237,.14); --locked-solid:#2a2519; } }
+* { box-sizing:border-box; }
+html, body { overflow-x:hidden; }
+body { margin:0; font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+::selection { background:var(--accent); color:#fff; }
+a { color:var(--accent); }
+button { font:inherit; padding:.4rem .8rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); cursor:pointer; transition:background .15s, border-color .15s; }
+button:hover:not(:disabled) { border-color:var(--muted); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible, summary:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+button:disabled { opacity:.5; cursor:not-allowed; }
+button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+button.danger { color:var(--err); border-color:var(--err); }
+button.danger-solid { background:var(--err); color:#fff; border-color:var(--err); }
+button.link { border:none; background:none; padding:0; color:var(--accent); text-decoration:underline; }
+button.toggle { padding:0 .4rem; font-size:.8em; line-height:1.5; margin-right:.4rem; }
+input, select, textarea { font:inherit; padding:.35rem .5rem; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); width:100%; max-width:100%; }
+input[type=checkbox], input[type=radio] { width:auto; margin:0 .4rem 0 0; vertical-align:-2px; }
+input:disabled, select:disabled, textarea:disabled { opacity:.6; }
+label { display:block; margin:.5rem 0; }
+fieldset { border:1px solid var(--line); border-radius:8px; margin:1rem 0; padding:.5rem 1rem 1rem; min-width:0; background:var(--card); }
+legend { font-weight:600; padding:0 .3rem; }
+h1 { font-size:1.15rem; margin:0; }
+h2 { font-size:1.25rem; margin:1.25rem 0 .5rem; }
+h3 { font-size:1.05rem; margin:1rem 0 .4rem; }
+code { word-break:break-all; font-size:.9em; background:var(--panel); padding:0 .25rem; border-radius:4px; }
+pre { overflow-x:auto; max-width:100%; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:.75rem; font-size:.85em; }
+.muted { color:var(--muted); }
+.warn { color:var(--warn); }
+.error { color:var(--err); }
+.ok { color:var(--ok); }
+.small { font-size:.9em; }
+.vh { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.num { font-variant-numeric:tabular-nums; }
+
+/* shell */
+header { border-bottom:1px solid var(--line); background:var(--panel); }
+.bar { max-width:1240px; margin:0 auto; padding:.75rem 16px; display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; }
+.bar .title { display:flex; gap:.75rem; align-items:baseline; flex-wrap:wrap; }
+.bar nav { display:flex; gap:.4rem; flex-wrap:wrap; }
+.bar nav button[aria-current=page] { background:var(--accent-soft); border-color:var(--accent); }
+.bar .grow { flex:1 1 220px; display:flex; gap:.5rem; justify-content:flex-end; align-items:center; }
+.bar .grow input { max-width:300px; }
+details.menu { position:relative; }
+details.menu summary { list-style:none; cursor:pointer; padding:.4rem .8rem; border:1px solid var(--line); border-radius:6px; background:var(--card); display:inline-flex; align-items:center; gap:.4rem; }
+details.menu summary::after { content:""; width:.45em; height:.45em; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform:rotate(45deg) translateY(-2px); }
+details.menu[open] summary::after { transform:rotate(-135deg) translateY(2px); }
+details.menu .sheet { position:absolute; right:0; top:calc(100% + 4px); min-width:300px; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.5rem; z-index:5; box-shadow:0 6px 18px rgba(0,0,0,.12); }
+details.menu .sheet button { display:block; width:100%; text-align:left; border:none; background:none; padding:.5rem .6rem; border-radius:6px; }
+details.menu .sheet button:hover { background:var(--accent-soft); }
+details.menu .sheet .small { padding:0 .6rem .4rem; }
+main { max-width:1240px; margin:0 auto; padding:1rem 16px 4rem; position:relative; }
+#banners p { margin:0 0 .5rem; padding:.5rem .75rem; border:1px solid var(--line); border-radius:6px; background:var(--card); }
+#notices { position:fixed; top:.75rem; right:.75rem; display:flex; flex-direction:column; gap:.5rem; z-index:20; max-width:min(420px, calc(100vw - 1.5rem)); }
+.notice { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.6rem .8rem; box-shadow:0 6px 18px rgba(0,0,0,.14); display:flex; gap:.6rem; align-items:flex-start; }
+.notice.alert { border-color:var(--err); }
+.notice.status { border-color:var(--ok); }
+.notice p { margin:0; flex:1; white-space:pre-line; }
+.crumb { margin:.25rem 0 .5rem; color:var(--muted); font-size:.95em; }
+
+/* primitives */
+.pill { display:inline-block; padding:0 .45rem; margin-right:.25rem; border-radius:999px; border:1px solid var(--line); font-size:.85em; line-height:1.4; vertical-align:middle; }
+.pill.warn { color:var(--warn); border-color:var(--warn); }
+.pill.err { color:var(--err); border-color:var(--err); }
+.chip { display:inline-block; padding:0 .4rem; border-radius:4px; background:var(--accent-soft); color:var(--fg); font-size:.78em; line-height:1.5; margin:.1rem .15rem 0 0; }
+.dot { display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--muted); vertical-align:-1px; margin-right:.3rem; }
+.dot.ok { background:var(--ok); }
+.dot.err { background:var(--err); }
+.dot.granted { background:var(--accent); width:12px; height:12px; margin:0; }
+.avatar { vertical-align:-4px; margin-right:.3rem; flex:none; }
+.avatar.none circle { fill:none; stroke:var(--muted); stroke-dasharray:2 2; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:1rem; margin:1rem 0; }
+.callout { border:1px solid var(--line); background:var(--panel); border-radius:6px; padding:.5rem .75rem; margin:.5rem 0; font-size:.95em; }
+.callout.warn { border-color:var(--warn); }
+.callout.err { border-color:var(--err); }
+.status-strip { font-size:.85em; color:var(--muted); margin-top:.15rem; display:flex; flex-wrap:wrap; gap:.15rem .6rem; }
+.secret { font-family:ui-monospace, monospace; word-break:break-all; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:.5rem; }
+.actions { display:flex; gap:.5rem; flex-wrap:wrap; justify-content:flex-end; margin-top:1rem; }
+.row { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+.skeleton { height:1em; border-radius:4px; background:linear-gradient(90deg, var(--panel), var(--line), var(--panel)); }
+table.plain { width:100%; border-collapse:collapse; margin:.5rem 0; }
+table.plain th, table.plain td { text-align:left; padding:.35rem .5rem; border-bottom:1px solid var(--line); vertical-align:top; }
+.savebar { position:sticky; bottom:0; background:var(--panel); border-top:1px solid var(--line); padding:.6rem 0; display:flex; gap:.75rem; align-items:center; justify-content:flex-end; margin-top:1rem; }
+.savebar .muted { margin-right:auto; }
+ol.guide li { margin:.35rem 0; }
+.stepper { counter-reset:step; list-style:none; padding:0; margin:0; }
+.stepper > li { counter-increment:step; border:1px solid var(--line); border-radius:8px; padding:.75rem 1rem 1rem 3rem; margin:.75rem 0; position:relative; background:var(--card); }
+.stepper > li::before { content:counter(step); position:absolute; left:.9rem; top:.9rem; width:1.5rem; height:1.5rem; border-radius:50%; background:var(--accent); color:#fff; font-size:.85em; display:flex; align-items:center; justify-content:center; }
+.stepper h3 { margin-top:0; }
+.grant { display:grid; grid-template-columns:auto 1fr; gap:.1rem .5rem; align-items:baseline; padding:.3rem 0; border-bottom:1px dashed var(--line); }
+.grant:last-child { border-bottom:none; }
+.grant .meta { grid-column:2; font-size:.88em; color:var(--muted); }
+.roomhead { margin:.75rem 0 .25rem; font-weight:600; font-size:.92em; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; }
+.roomhead.locked { background:var(--locked-bg); padding:.15rem .4rem; border-radius:4px; }
+
+/* avatar picker */
+.picker { display:grid; grid-template-columns:repeat(auto-fill, minmax(84px, 1fr)); gap:.4rem; margin:.5rem 0; }
+.picker button { display:flex; flex-direction:column; align-items:center; gap:.2rem; padding:.5rem .25rem; font-size:.8em; }
+.picker button[aria-pressed=true] { border-color:var(--accent); background:var(--accent-soft); }
+.picker button .avatar { margin:0; }
+
+/* matrix — bounded region, sticky headers and app column (D5) */
+.matrix-tools { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin:0 0 .5rem; font-size:.9em; }
+.matrix-wrap { overflow:auto; max-width:100%; max-height:calc(100vh - 250px); min-height:260px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
+table.matrix { border-collapse:separate; border-spacing:0; min-width:100%; }
+table.matrix caption { text-align:left; padding:.5rem .75rem; color:var(--muted); font-size:.9em; caption-side:bottom; }
+table.matrix th, table.matrix td { padding:.45rem .6rem; border-bottom:1px solid var(--line); border-right:1px solid var(--line); vertical-align:top; text-align:left; }
+table.matrix thead th { position:sticky; z-index:3; background:var(--panel); font-weight:500; }
+table.matrix thead tr.groups th { top:0; height:2.75rem; white-space:nowrap; font-size:.85em; color:var(--muted); border-bottom:none; }
+table.matrix thead tr.idents th { top:2.75rem; min-width:132px; }
+table.matrix thead tr.idents th.collapsed { min-width:96px; }
+table.matrix th:first-child, table.matrix td:first-child { position:sticky; left:0; background:var(--card); z-index:2; min-width:230px; border-right:2px solid var(--line); }
+table.matrix thead th:first-child { z-index:4; background:var(--panel); }
+table.matrix thead tr.groups th.locked, table.matrix thead tr.idents th.locked, table.matrix tbody td.locked { background:var(--locked-solid); }
+table.matrix thead tr.groups th.locked { color:var(--fg); }
+table.matrix thead tr.groups th a { color:inherit; text-decoration:none; }
+table.matrix thead tr.groups th a:hover { text-decoration:underline; }
+table.matrix thead tr.idents th a { color:var(--fg); text-decoration:none; font-weight:600; }
+table.matrix thead tr.idents th a:hover { text-decoration:underline; }
+table.matrix thead tr.idents .disp { display:block; font-size:.82em; color:var(--muted); font-weight:400; }
+table.matrix tbody th a { color:var(--fg); font-weight:600; text-decoration:none; }
+table.matrix tbody th a:hover { text-decoration:underline; }
+table.matrix tbody td { text-align:center; }
+table.matrix tbody td.cell:hover, table.matrix tbody td.cell:focus-visible { background:var(--accent-soft); cursor:pointer; }
+table.matrix tbody tr.selected th, table.matrix tbody tr.selected td { box-shadow:inset 0 0 0 999px var(--accent-soft); }
+table.matrix tbody td .chips { display:block; margin-top:.15rem; }
+table.matrix tbody tr:last-child th, table.matrix tbody tr:last-child td { border-bottom:none; }
+table.matrix [data-grid] { cursor:pointer; }
+.legend { display:flex; gap:1.25rem; flex-wrap:wrap; font-size:.88em; color:var(--muted); margin:.5rem 0 0; align-items:center; }
+.legend .sw { display:inline-block; width:1.1em; height:1.1em; vertical-align:-3px; margin-right:.3rem; border-radius:3px; }
+.cards { display:none; }
+.appcard { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.75rem 1rem; margin:.6rem 0; }
+.appcard .chipsrow { margin:.3rem 0 .1rem; }
+.appcard .chipsrow .room { display:block; font-size:.8em; color:var(--muted); margin-top:.3rem; }
+.appcard .chipsrow .room.locked { background:var(--locked-bg); display:inline-block; padding:0 .3rem; border-radius:3px; }
+.appcard .ichip { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:0 .5rem; margin:.15rem .2rem 0 0; font-size:.88em; color:var(--fg); text-decoration:none; }
+.appcard .ichip small { color:var(--muted); }
+
+/* dialogs */
+dialog { border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--fg); padding:1.25rem; max-width:min(560px, calc(100vw - 2rem)); width:100%; }
+dialog::backdrop { background:rgba(0,0,0,.4); }
+dialog h2 { margin:0 0 .5rem; font-size:1.1rem; }
+dialog[data-tone=warn] h2 { color:var(--warn); }
+dialog[data-tone=danger] h2 { color:var(--err); }
+dialog ul { margin:.25rem 0 .5rem 1.25rem; }
+dialog .actions { margin-top:.75rem; }
+kbd { font:inherit; font-size:.85em; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 .35rem; background:var(--card); }
+
+/* phone */
+@media (max-width:720px) {
+  .matrix-wrap, .legend, .matrix-tools { display:none; }
+  .cards { display:block; }
+  .bar nav { width:100%; }
+  .bar nav button { flex:1; }
+  .bar .grow { width:100%; justify-content:stretch; }
+  .bar .grow input { max-width:none; }
+  .actions button, .savebar button { flex:1; min-height:44px; }
+  button { min-height:40px; }
+  dialog { margin:auto 0 0; max-width:100vw; border-radius:12px 12px 0 0; border-bottom:none; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="title"><h1>chat-gateway admin</h1><span id="sha" class="muted small num"></span><span id="counts" class="muted small"></span><span class="pill" title="CG-91 open mode (shell element kept as CG-91 ships it)">open · no sign-in</span></div>
+    <nav aria-label="Console">
+      <button type="button" id="nav-board">Board</button>
+      <button type="button" id="nav-new-app">New app</button>
+      <button type="button" id="nav-new-identity">New identity</button>
+    </nav>
+    <div class="grow">
+      <input id="filter" type="search" placeholder="Filter apps and identities  /" aria-label="Filter apps and identities" autocomplete="off">
+      <details class="menu" id="regmenu">
+        <summary>Registry</summary>
+        <div class="sheet">
+          <button type="button" id="m-refresh">Refresh view</button>
+          <p class="small muted">Re-read what the running gateway holds — picks up a change made from another tab.</p>
+          <button type="button" id="m-reload">Reload from disk</button>
+          <p class="small muted">Validate registry.yaml as it is on disk and swap it live — after a hand edit.</p>
+          <button type="button" id="m-states">States reference (mockup)</button>
+          <button type="button" id="m-help">Keyboard shortcuts <kbd>?</kbd></button>
+        </div>
+      </details>
+    </div>
+  </div>
+</header>
+<main>
+  <div id="banners"></div>
+  <div id="crumb" class="crumb"></div>
+  <div id="view" aria-live="polite"></div>
+</main>
+<div id="notices" aria-label="Notices"></div>
+<dialog id="confirm"></dialog>
+<dialog id="help" data-tone="none">
+  <h2>Keyboard</h2>
+  <table class="plain">
+    <tr><td><kbd>/</kbd></td><td>Focus the filter</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Back to the board from any view; Cancel in a dialog</td></tr>
+    <tr><td><kbd>?</kbd></td><td>This list</td></tr>
+    <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>Move around the matrix; <kbd>Home</kbd>/<kbd>End</kbd> to row ends. Up from an identity reaches its room header; down from a room header lands on its first column</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Open the app, identity or room under the focused cell; on a collapsed room's column, expand it</td></tr>
+    <tr><td><kbd>Space</kbd></td><td>On a room header: collapse or expand that room</td></tr>
+  </table>
+  <form method="dialog" class="actions"><button type="submit" class="primary">Close</button></form>
+</dialog>
+
+<script>
+"use strict";
+// ------------------------------------------------------------- helpers ---
+const $ = (id) => document.getElementById(id);
+function el(tag, attrs, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "on") for (const [ev, fn] of Object.entries(v)) n.addEventListener(ev, fn);
+    else if (k === "text") n.textContent = v;
+    else if (v === true) n.setAttribute(k, "");
+    else if (v !== false && v != null) n.setAttribute(k, v);
+  }
+  n.append(...toNodes(children));
+  return n;
+}
+function toNodes(children) {
+  const out = [];
+  for (const c of children.flat(Infinity)) if (c != null) out.push(c instanceof Node ? c : document.createTextNode(String(c)));
+  return out;
+}
+const SEVERITIES = ["alert", "warning", "info"];
+const RULE_6 = "Inbound crosses to a consumer only by that consumer's explicit registry opt-in (hard rule #6).";
+const MOCK = " (mockup — nothing written)";
+const BASE = "http://192.168.1.20:8099";
+// Placeholder names for the twenty bundled PNGs under assets/avatars/png/.
+const AVATARS = ["bell", "bot", "chart", "clock", "cloud", "compass", "flag", "gear", "globe", "heart", "home", "key", "leaf", "mail", "phone", "pin", "rocket", "shield", "star", "wrench"];
+const avatarUrl = (name) => BASE + "/admin/static/avatars/" + name + ".png";
+
+// ----------------------------------------------------------- fake data ---
+const NOW = Date.now(), MIN = 60000, HR = 3600000, DAY = 86400000;
+const iso = (ago) => new Date(NOW - ago).toISOString();
+const dl = (ago, kind, title, status, detail) => ({ id: Math.floor(ago / 1000), ts: iso(ago), source: "", kind, title, status, detail: detail || "" });
+let state = {
+  registry_sha256: "91bbcb1c7e4a0f3d55a9c2b1e8d7f6a4",
+  mcp_enabled: true,
+  shadowed_env_names: ["CHAT_GATEWAY_API_KEY__ROTARYPHONE"],
+  inbound_defaulted: ["pmtrader"],
+  avatars: AVATARS,
+  identities: {
+    "aitrader-alerts":    { display: "aitrader",                   mode: "webhook", space: "spaces/AAQAtrdA1", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__AITRADER_ALERTS",     env_resolved: true,  secret_source: ".env",    avatar: "chart" },
+    "aitrader-reports":   { display: "aitrader reports",           mode: "webhook", space: "spaces/AAQAtrdR2", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__AITRADER_REPORTS",    env_resolved: true,  secret_source: ".env",    avatar: "clock" },
+    "family-reminders":   { display: "Reminders · familyworkspace", mode: "webhook", space: "spaces/AAQAfam01", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__FAMILY_REMINDERS",    env_resolved: true,  secret_source: "managed", avatar: "bell" },
+    "job-hunter":         { display: "Job Hunter",                 mode: "webhook", space: "spaces/AAQAjob02", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__JOB_HUNTER",          env_resolved: true,  secret_source: ".env",    avatar: "https://example.com/icons/jobhunter.png" },
+    "legacy-notify":      { display: "Legacy notifier",            mode: "webhook", space: "",                 webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__LEGACY_NOTIFY",       env_resolved: false, secret_source: "unset",   avatar: null },
+    "pm-familyworkspace": { display: "PM · familyworkspace",       mode: "webhook", space: "spaces/AAQAfam01", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__FAMILYWORKSPACE__PM", env_resolved: true,  secret_source: ".env",    avatar: "home" },
+    "pmtrader-alerts":    { display: "pmtrader",                   mode: "webhook", space: "spaces/AAQApmt03", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__PMTRADER_ALERTS",     env_resolved: true,  secret_source: "managed", avatar: null },
+    "rotaryphone-alerts": { display: "rotaryphone",                mode: "webhook", space: "spaces/AAQArot05", webhook_url_env: "GOOGLE_CHAT_WEBHOOK_URL__ROTARYPHONE",         env_resolved: true,  secret_source: "managed", avatar: "phone" },
+  },
+  apps: {
+    "agent-mcp":      { identities: ["pm-familyworkspace", "family-reminders"], routes: {}, allow_inbound: false, inbound_locked: false, callback_url_set: false, allowed_users: [], unreachable_message_set: false, inbox_pending: 0,
+                        key_env: "CHAT_GATEWAY_API_KEY__AGENT_MCP", key_configured: true, key_source: "process",
+                        recent_deliveries: [dl(2 * DAY + 3 * HR, "message", "deploy finished: homelab #212", "delivered")] },
+    "aiteam-harness": { identities: ["pm-familyworkspace"], routes: { default: "pm-familyworkspace" }, allow_inbound: false, inbound_locked: false, callback_url_set: false, allowed_users: [], unreachable_message_set: false, inbox_pending: 0,
+                        key_env: "CHAT_GATEWAY_API_KEY__AITEAM_HARNESS", key_configured: true, key_source: ".env",
+                        recent_deliveries: [dl(2 * DAY + 1 * HR, "notify/info", "stage 6 green", "delivered")] },
+    "aitrader":       { identities: ["aitrader-alerts", "aitrader-reports"], routes: { alert: "aitrader-alerts", warning: "aitrader-reports", info: "aitrader-reports" }, allow_inbound: false, inbound_locked: true, callback_url_set: false, allowed_users: [], unreachable_message_set: false, inbox_pending: 0,
+                        key_env: "CHAT_GATEWAY_API_KEY__AITRADER", key_configured: true, key_source: ".env",
+                        recent_deliveries: [dl(5 * HR, "notify/info", "EOD report", "delivered"), dl(2 * HR + 40 * MIN, "heartbeat", "dead-man: strategy-loop missed", "delivered"), dl(1 * HR + 50 * MIN, "notify/alert", "RESOLVED strategy-loop", "delivered"), dl(40 * MIN, "notify/info", "fills 14:00", "delivered"), dl(12 * MIN, "notify/warning", "spread widened AAPL", "delivered")] },
+    "job-hunter":     { identities: ["job-hunter"], routes: { default: "job-hunter" }, allow_inbound: true, inbound_locked: false, callback_url_set: true, allowed_users: ["owner@example.com"], unreachable_message_set: true, inbox_pending: 2,
+                        key_env: "CHAT_GATEWAY_API_KEY__JOB_HUNTER", key_configured: true, key_source: ".env",
+                        recent_deliveries: [dl(3 * HR + 12 * MIN, "message", "3 new matches to review", "delivered")] },
+    "pmtrader":       { identities: ["pmtrader-alerts", "pm-familyworkspace"], routes: { default: "pm-familyworkspace", alert: "pmtrader-alerts" }, allow_inbound: false, inbound_locked: false, callback_url_set: false, allowed_users: [], unreachable_message_set: false, inbox_pending: 0,
+                        key_env: "CHAT_GATEWAY_API_KEY__PMTRADER", key_configured: false, key_source: "unset",
+                        recent_deliveries: [] },
+    "rotaryphone":    { identities: ["rotaryphone-alerts"], routes: { alert: "rotaryphone-alerts", warning: "rotaryphone-alerts", info: "rotaryphone-alerts" }, allow_inbound: false, inbound_locked: false, callback_url_set: false, allowed_users: [], unreachable_message_set: false, inbox_pending: 0,
+                        key_env: "CHAT_GATEWAY_API_KEY__ROTARYPHONE", key_configured: true, key_source: "managed",
+                        recent_deliveries: [dl(6 * HR, "notify/info", "line idle 8h", "delivered"), dl(25 * MIN, "notify/alert", "handset off-hook", "failed", "webhook HTTP 404")] },
+  },
+};
+let draft = null;      // new-app return ticket (page memory only)
+let revealData = null; // { app_id, key, key_env, shadows } — in memory only
+let filterQ = "";
+let selectedApp = null;          // the app last opened in an inspector (session only)
+let collapsed = null;            // Set of room keys collapsed on the board (session only; null = not initialised)
+
+// -------------------------------------------------------------- derived ---
+const appIds = () => Object.keys(state.apps).sort();
+const identNames = () => Object.keys(state.identities).sort();
+function holders(name) { return appIds().filter((a) => state.apps[a].identities.includes(name)); }
+function routesTo(appId, name) { const app = state.apps[appId]; if (!app) return []; return Object.entries(app.routes).filter(([, v]) => v === name).map(([s]) => s); }
+function roomKey(space) { return space ? space.replace(/^spaces\//, "") : "none"; }
+// In the product this is state.rooms, published by the server (CG-92 D2); the mock derives it.
+function rooms() {
+  const map = new Map();
+  for (const n of identNames()) {
+    const sp = state.identities[n].space;
+    const k = roomKey(sp);
+    if (!map.has(k)) map.set(k, { key: k, space: sp, identities: [], posting: new Set(), inbound: new Set(), lockedBy: null });
+    const r = map.get(k);
+    r.identities.push(n);
+    for (const a of holders(n)) {
+      r.posting.add(a);
+      if (sp && state.apps[a].allow_inbound) r.inbound.add(a);
+      if (sp && state.apps[a].inbound_locked && !r.lockedBy) r.lockedBy = a;
+    }
+  }
+  return [...map.values()].sort((a, b) => (a.key === "none") - (b.key === "none") || a.key.localeCompare(b.key));
+}
+function roomOf(name) { return rooms().find((r) => r.identities.includes(name)); }
+function roomLabel(space) { return space || "No room recorded"; }
+function roomProxy(r) { return r.identities.map((n) => state.identities[n].display).join(", "); }
+function appRooms(appId, identities) { return new Set((identities || state.apps[appId].identities).map((n) => state.identities[n] && state.identities[n].space).filter(Boolean)); }
+function routeRooms(routes) { return new Set(Object.values(routes).map((n) => state.identities[n] && state.identities[n].space).filter(Boolean)); }
+function relTime(ts) {
+  const d = NOW - new Date(ts).getTime();
+  if (d < MIN) return "just now";
+  if (d < HR) return Math.round(d / MIN) + " min ago";
+  if (d < DAY) return Math.round(d / HR) + " h ago";
+  return Math.round(d / DAY) + " d ago";
+}
+function lastDelivery(a) { const r = a.recent_deliveries; return r.length ? r[r.length - 1] : null; }
+function keyState(a) {
+  if (!a.key_configured) return { cls: "err", text: "key missing" };
+  return { cls: "ok", text: "key ok" + (a.key_source === "process" ? " (process)" : a.key_source === "managed" ? " (managed)" : "") };
+}
+function envName(prefix, id) { return prefix + id.toUpperCase().replace(/-/g, "_"); }
+function ensureCollapsed() { if (!collapsed) collapsed = new Set(rooms().map((r) => r.key)); }
+function expandFor(appId) { ensureCollapsed(); const app = state.apps[appId]; if (!app) return; for (const r of rooms()) if (r.identities.some((n) => app.identities.includes(n))) collapsed.delete(r.key); }
+
+// Avatars: an inline SVG stands in for the bundled PNG; a dashed circle is the neutral mark (custom URL or none).
+function avatarMark(value, size) {
+  const s = size || 16;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("width", s); svg.setAttribute("height", s); svg.setAttribute("viewBox", "0 0 20 20");
+  const c = document.createElementNS(ns, "circle"); c.setAttribute("cx", "10"); c.setAttribute("cy", "10"); c.setAttribute("r", "9");
+  svg.append(c);
+  const bundled = value && AVATARS.includes(value);
+  svg.setAttribute("class", "avatar" + (bundled ? "" : " none"));
+  if (bundled) {
+    let h = 0; for (const ch of value) h = (h * 31 + ch.charCodeAt(0)) % 360;
+    c.setAttribute("fill", "hsl(" + h + " 45% 55%)");
+    const t = document.createElementNS(ns, "text"); t.setAttribute("x", "10"); t.setAttribute("y", "14"); t.setAttribute("text-anchor", "middle"); t.setAttribute("font-size", "11"); t.setAttribute("fill", "#fff"); t.setAttribute("font-family", "system-ui"); t.textContent = value[0].toUpperCase();
+    svg.append(t);
+  }
+  svg.setAttribute("role", "img");
+  const title = document.createElementNS(ns, "title"); title.textContent = bundled ? "avatar: " + value : value ? "custom avatar URL" : "no avatar recorded"; svg.append(title);
+  return svg;
+}
+function avatarWords(value) { return !value ? "none recorded" : AVATARS.includes(value) ? "bundled icon “" + value + "”" : "custom URL"; }
+// The picker: bundled icons as pressed-state buttons, a custom https URL, or none; shows the URL to paste into Chat.
+function avatarPicker(current, onChange) {
+  let value = current || null;
+  const urlBox = el("input", { class: "secret", readonly: true, "aria-label": "Avatar URL to paste into Google Chat" });
+  const custom = el("input", { type: "url", placeholder: "https://… (a public PNG; never a secret)", autocomplete: "off", value: value && !AVATARS.includes(value) ? value : "" });
+  const grid = el("div", { class: "picker", role: "group", "aria-label": "Bundled avatars" });
+  const render = () => {
+    grid.replaceChildren(...AVATARS.map((n) => el("button", { type: "button", "aria-pressed": String(value === n), on: { click: () => { value = n; custom.value = ""; render(); } } }, avatarMark(n, 28), n)),
+      el("button", { type: "button", "aria-pressed": String(!value), on: { click: () => { value = null; custom.value = ""; render(); } } }, avatarMark(null, 28), "none"));
+    urlBox.value = value ? (AVATARS.includes(value) ? avatarUrl(value) : value) : "";
+    onChange && onChange(value);
+  };
+  custom.addEventListener("input", () => { value = custom.value.trim() || null; grid.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", "false")); urlBox.value = value || ""; onChange && onChange(value); });
+  render();
+  const wrap = el("div", {}, grid,
+    el("label", {}, "Or a custom https URL", custom),
+    el("label", {}, "Paste this into the webhook's Avatar URL in Google Chat", urlBox),
+    el("div", { class: "row" }, el("button", { type: "button", text: "Select URL", on: { click: () => { urlBox.focus(); urlBox.select(); notify("URL selected — press Ctrl+C (or ⌘C) to copy."); } } }),
+      el("span", { class: "muted small", text: "The gateway serves its bundled icons itself; the avatar is a name or a public image URL, never a secret." })));
+  wrap.value = () => value;
+  return wrap;
+}
+
+// ---------------------------------------------------------------- shell ---
+function notify(msg, kind) {
+  const n = el("div", { class: "notice " + (kind || "status"), role: kind === "alert" ? "alert" : "status" },
+    el("p", { text: msg }),
+    el("button", { type: "button", text: "Dismiss", on: { click: () => n.remove() } }));
+  $("notices").append(n);
+  if (kind !== "alert") setTimeout(() => n.remove(), 6000);
+}
+function view(...nodes) { $("view").replaceChildren(...toNodes(nodes)); }
+function crumb(...parts) {
+  const nodes = [el("a", { href: "#/", text: "Board" })];
+  parts.forEach((p, i) => { nodes.push(" › "); nodes.push(i < parts.length - 1 && p.href ? el("a", { href: p.href, text: p.text }) : el("span", { text: p.text || p })); });
+  $("crumb").replaceChildren(...toNodes(parts.length ? nodes : []));
+}
+function setNav(active) {
+  for (const [id, key] of [["nav-board", "board"], ["nav-new-app", "new-app"], ["nav-new-identity", "new-identity"]]) {
+    if (key === active) $(id).setAttribute("aria-current", "page"); else $(id).removeAttribute("aria-current");
+  }
+}
+function header() {
+  $("sha").textContent = "registry " + state.registry_sha256.slice(0, 12);
+  const n = rooms().filter((r) => r.key !== "none").length;
+  $("counts").textContent = appIds().length + " apps · " + identNames().length + " identities · " + n + " rooms";
+  const b = $("banners"); b.replaceChildren();
+  if (state.shadowed_env_names.length) {
+    const owners = appIds().filter((a) => state.shadowed_env_names.includes(state.apps[a].key_env));
+    b.append(el("p", { class: "warn" }, "Stale secret in the read-only .env: ", el("code", { text: state.shadowed_env_names.join(", ") }),
+      " — an old value that would come back if managed.env were lost. Remove that line by hand. ",
+      owners.map((a) => el("a", { href: "#/app/" + a, text: a }))));
+  }
+  if (state.inbound_defaulted.length) {
+    b.append(el("p", { class: "warn" }, "allow_inbound was left to the loader's default (off) for ",
+      state.inbound_defaulted.map((a, i) => [i ? ", " : null, el("a", { href: "#/app/" + a, text: a })]),
+      ". Saving the app writes it explicitly."));
+  }
+}
+
+// ------------------------------------------------------------ dialogs ---
+function typedConfirm({ title, intro, reasons = [], rule, expected, verb, tone }) {
+  return new Promise((resolve) => {
+    const dlg = $("confirm"); dlg.dataset.tone = tone || "danger";
+    const input = el("input", { autocomplete: "off", "aria-label": "Type " + expected + " to confirm" });
+    const ok = el("button", { type: "button", class: tone === "warn" ? "primary" : "danger-solid", text: verb, disabled: true });
+    const cancel = el("button", { type: "button", text: "Cancel" });
+    input.addEventListener("input", () => { ok.disabled = input.value.trim() !== expected; });
+    const form = el("form", {},
+      el("h2", { text: title }),
+      intro ? el("p", { text: intro }) : null,
+      reasons.length ? el("ul", {}, reasons.map((r) => el("li", { text: r }))) : null,
+      rule ? el("p", { class: "muted small", text: rule }) : null,
+      el("label", {}, "Type ", el("strong", { text: expected }), " to confirm", input),
+      el("div", { class: "actions" }, cancel, ok));
+    form.addEventListener("submit", (ev) => { ev.preventDefault(); if (!ok.disabled) dlg.close("ok"); });
+    ok.addEventListener("click", () => dlg.close("ok"));
+    cancel.addEventListener("click", () => dlg.close("cancel"));
+    const opener = document.activeElement;
+    dlg.replaceChildren(form);
+    dlg.onclose = () => { resolve(dlg.returnValue === "ok" ? input.value.trim() : null); dlg.returnValue = ""; if (opener && opener.focus) opener.focus(); };
+    dlg.showModal(); input.focus();
+  });
+}
+// One-shot "discard?" dialog shared by the new-app draft and a dirty app inspector.
+function discardConfirm(what) {
+  return new Promise((resolve) => {
+    const dlg = $("confirm"); dlg.dataset.tone = "warn";
+    const keep = el("button", { type: "button", class: "primary", text: "Keep editing" });
+    const discard = el("button", { type: "button", text: "Discard" });
+    keep.addEventListener("click", () => dlg.close("keep")); discard.addEventListener("click", () => dlg.close("discard"));
+    dlg.replaceChildren(el("h2", { text: "Discard " + what + "?" }), el("p", { class: "muted small", text: "Escape keeps editing." }), el("div", { class: "actions" }, discard, keep));
+    dlg.onclose = () => { resolve(dlg.returnValue === "discard"); dlg.returnValue = ""; };
+    dlg.showModal(); keep.focus();
+  });
+}
+let dirtyGuard = null; // () => Promise<boolean> — set by a dirty inspector or draft; null when clean
+async function leaveAllowed() { if (!dirtyGuard) return true; const ok = await dirtyGuard(); if (ok) dirtyGuard = null; return ok; }
+
+// --------------------------------------------------------------- board ---
+function matches(q, ...strs) { return !q || strs.some((s) => (s || "").toLowerCase().includes(q)); }
+function toggleRoom(key) {
+  ensureCollapsed();
+  if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+  board();
+  const th = document.querySelector('table.matrix [data-room="' + key + '"][data-grid^="0,"]');
+  if (th) { document.querySelectorAll("table.matrix [data-grid]").forEach((x) => { x.tabIndex = -1; }); th.tabIndex = 0; th.focus(); }
+}
+function board() {
+  setNav("board"); crumb(); ensureCollapsed();
+  const q = filterQ.trim().toLowerCase();
+  const rs = rooms();
+  const identOk = (n) => matches(q, n, state.identities[n].display, state.identities[n].space) || holders(n).some((a) => matches(q, a));
+  const appOk = (a) => matches(q, a) || state.apps[a].identities.some((n) => matches(q, n, state.identities[n].display, state.identities[n].space));
+  const apps = appIds().filter(appOk);
+  const groups = rs.map((r) => ({ r, ids: r.identities.filter(identOk), collapsed: collapsed.has(r.key) })).filter((g) => g.ids.length);
+  // visible columns: one per identity in an expanded room, one per collapsed room
+  const cols = []; groups.forEach((g) => { g.start = cols.length + 1; if (g.collapsed) cols.push({ g, collapsed: true }); else g.ids.forEach((n) => cols.push({ g, name: n })); g.end = cols.length; });
+
+  if (!appIds().length && !identNames().length) return emptyState("both");
+  if (!appIds().length) return emptyState("apps");
+  if (!identNames().length) return emptyState("identities");
+
+  const groupRow = el("tr", { class: "groups" },
+    el("th", { scope: "col", "data-grid": "0,0", "data-span": "0,0", tabindex: "-1" }, el("span", { class: "vh", text: "App" })),
+    groups.map((g, gi) => el("th", { scope: "colgroup", colspan: String(g.collapsed ? 1 : g.ids.length), class: g.r.lockedBy ? "locked" : null, "data-grid": "0," + (gi + 1), "data-span": g.start + "," + g.end, "data-room": g.r.key, tabindex: "-1", "data-href": "#/room/" + g.r.key },
+      el("button", { type: "button", class: "toggle", text: g.collapsed ? "expand" : "collapse", "aria-expanded": String(!g.collapsed), "aria-label": (g.collapsed ? "Expand" : "Collapse") + " room " + roomLabel(g.r.space), tabindex: "-1", on: { click: (ev) => { ev.stopPropagation(); toggleRoom(g.r.key); } } }),
+      el("a", { href: "#/room/" + g.r.key, tabindex: "-1", text: roomLabel(g.r.space) }),
+      g.r.lockedBy ? [" ", el("span", { class: "pill warn", text: "locked by " + g.r.lockedBy })] : null,
+      g.collapsed ? el("span", { class: "muted", text: " · " + g.ids.length + (g.ids.length === 1 ? " identity" : " identities") }) : null,
+      !g.collapsed && g.r.key === "none" ? el("span", { class: "muted", text: " — cannot route inbound; not covered by any lock" }) : null)));
+  const identRow = el("tr", { class: "idents" },
+    el("th", { scope: "col", "data-grid": "1,0", tabindex: "0" }, el("span", { class: "muted small", text: "apps down · identities across" })),
+    cols.map((col, c) => {
+      if (col.collapsed) return el("th", { scope: "col", class: "collapsed" + (col.g.r.lockedBy ? " locked" : ""), "data-grid": "1," + (c + 1), "data-room": col.g.r.key, "data-collapsed": "1", tabindex: "-1" },
+        el("span", { class: "muted small", text: "any identity here" }));
+      const n = col.name; const i = state.identities[n]; const un = !holders(n).length;
+      return el("th", { scope: "col", class: col.g.r.lockedBy ? "locked" : null, "data-grid": "1," + (c + 1), tabindex: "-1", "data-href": "#/identity/" + n },
+        el("span", { class: "dot " + (i.mode !== "webhook" ? "" : i.env_resolved ? "ok" : "err"), title: i.mode !== "webhook" ? "Chat-app identity" : i.env_resolved ? "webhook ready" : "webhook URL not set" }),
+        avatarMark(i.avatar, 16),
+        el("a", { href: "#/identity/" + n, tabindex: "-1", text: n }),
+        un ? [" ", el("span", { class: "pill", text: "unused" })] : null,
+        el("span", { class: "disp", text: i.display }));
+    }));
+  const rowsN = apps.map((a, ri) => {
+    const app = state.apps[a]; const last = lastDelivery(app); const ks = keyState(app);
+    const split = routeRooms(app.routes).size > 1;
+    const marks = [];
+    if (split) marks.push(el("span", { class: "warn", text: "routes span " + routeRooms(app.routes).size + " rooms" }));
+    if (state.shadowed_env_names.includes(app.key_env)) marks.push(el("span", { class: "warn", text: "stale .env value" }));
+    if (state.inbound_defaulted.includes(a)) marks.push(el("span", { class: "warn", text: "inbound defaulted" }));
+    return el("tr", { class: a === selectedApp ? "selected" : null },
+      el("th", { scope: "row", "data-grid": (ri + 2) + ",0", tabindex: "-1", "data-href": "#/app/" + a },
+        el("a", { href: "#/app/" + a, tabindex: "-1", text: a }), " ",
+        el("span", { class: "pill", text: app.allow_inbound ? "inbound on" : "inbound off" }),
+        app.inbound_locked ? el("span", { class: "pill warn", text: "locked" }) : null,
+        el("div", { class: "status-strip" },
+          el("span", { class: ks.cls }, el("span", { class: "dot " + ks.cls }), ks.text),
+          el("span", { class: last ? (last.status === "delivered" ? "" : "error") : "", title: last ? last.ts : "" }, last ? last.status + " " + relTime(last.ts) : "no deliveries"),
+          marks)),
+      cols.map((col, c) => {
+        const lockedCls = col.g.r.lockedBy ? "locked " : "";
+        if (col.collapsed) {
+          const mine = col.g.ids.filter((n) => app.identities.includes(n));
+          const sev = mine.flatMap((n) => routesTo(a, n));
+          return el("td", { class: lockedCls + "cell", "data-grid": (ri + 2) + "," + (c + 1), "data-room": col.g.r.key, "data-collapsed": "1", tabindex: "-1",
+            title: mine.length ? a + " sends into " + roomLabel(col.g.r.space) + " as " + mine.join(", ") + " — Enter expands the room" : a + " does not post into " + roomLabel(col.g.r.space) },
+            mine.length ? el("span", { class: "dot granted" }) : null,
+            mine.length ? el("span", { class: "vh", text: "sends here as " + mine.join(", ") }) : null,
+            sev.length ? el("span", { class: "chips" }, sev.map((s) => el("span", { class: "chip", text: s }))) : null);
+        }
+        const n = col.name; const granted = app.identities.includes(n); const sev = routesTo(a, n);
+        return el("td", { class: lockedCls + "cell", "data-grid": (ri + 2) + "," + (c + 1), tabindex: "-1", "data-href": "#/app/" + a,
+          title: granted ? a + " may send as " + n + (sev.length ? " · " + sev.join(", ") + " route" : "") : a + " may not send as " + n },
+          granted ? el("span", { class: "dot granted" }) : null,
+          granted ? el("span", { class: "vh", text: "may send as" }) : null,
+          sev.length ? el("span", { class: "chips" }, sev.map((s) => el("span", { class: "chip", text: s }))) : null);
+      }));
+  });
+  const table = el("table", { class: "matrix" },
+    el("caption", { text: "Which app may send as which identity, grouped by room. A column with two or more dots is a shared identity; a collapsed room shows one column — a dot means the app sends into that room." }),
+    el("thead", {}, groupRow, identRow), el("tbody", {}, rowsN));
+  gridNav(table);
+  table.addEventListener("click", (ev) => {
+    if (ev.target.closest("button, a")) return;
+    const c = ev.target.closest("[data-grid]"); if (!c) return;
+    if (c.dataset.collapsed) { toggleRoom(c.dataset.room); return; }
+    if (c.dataset.href) location.hash = c.dataset.href;
+  });
+
+  const cards = el("div", { class: "cards" }, apps.map((a) => { const app = state.apps[a]; const last = lastDelivery(app); const ks = keyState(app);
+    return el("div", { class: "appcard" },
+      el("div", {}, el("a", { href: "#/app/" + a }, el("strong", { text: a })), " ", el("span", { class: "pill", text: app.allow_inbound ? "inbound on" : "inbound off" }), app.inbound_locked ? el("span", { class: "pill warn", text: "locked" }) : null),
+      el("div", { class: "status-strip" }, el("span", { class: ks.cls }, el("span", { class: "dot " + ks.cls }), ks.text), el("span", { class: last && last.status !== "delivered" ? "error" : "" }, last ? last.status + " " + relTime(last.ts) : "no deliveries")),
+      el("div", { class: "chipsrow" }, rs.filter((r) => r.identities.some((n) => app.identities.includes(n))).map((r) => [
+        el("span", { class: "room" + (r.lockedBy ? " locked" : "") }, roomLabel(r.space), r.lockedBy ? " · locked by " + r.lockedBy : ""),
+        r.identities.filter((n) => app.identities.includes(n)).map((n) => el("a", { class: "ichip", href: "#/identity/" + n }, avatarMark(state.identities[n].avatar, 14), n, routesTo(a, n).length ? el("small", { text: " · " + routesTo(a, n).join(", ") }) : null))])),
+      !app.identities.length ? el("p", { class: "muted small", text: "No grants — this app cannot send." }) : null);
+  }));
+
+  const allKeys = rs.map((r) => r.key);
+  view(
+    q ? el("p", { class: "muted small", text: apps.length + " of " + appIds().length + " apps · " + cols.filter((c) => !c.collapsed).length + " identities shown of " + identNames().length + " match “" + filterQ.trim() + "”" }) : null,
+    el("div", { class: "matrix-tools" },
+      el("button", { type: "button", text: "Expand all rooms", disabled: collapsed.size === 0, on: { click: () => { collapsed.clear(); board(); } } }),
+      el("button", { type: "button", text: "Collapse all rooms", disabled: collapsed.size === allKeys.length, on: { click: () => { allKeys.forEach((k) => collapsed.add(k)); board(); } } }),
+      el("span", { class: "muted", text: (allKeys.length - collapsed.size) + " of " + allKeys.length + " rooms expanded · remembered for this session only" })),
+    el("div", { class: "matrix-wrap", role: "region", "aria-label": "Grant matrix (scrolls)" }, table),
+    el("p", { class: "legend" },
+      el("span", {}, el("span", { class: "dot granted" }), " may send as (or, in a collapsed room, sends into that room)"),
+      el("span", {}, el("span", { class: "chip", text: "alert" }), " severities routed there"),
+      el("span", {}, el("span", { class: "sw", style: "background:var(--locked-solid);border:1px solid var(--warn)" }), " room locked by an inbound_locked app"),
+      el("span", {}, avatarMark("home", 14), " bundled avatar  ", avatarMark(null, 14), " custom or none"),
+      el("span", {}, el("span", { class: "dot ok" }), "webhook ready  ", el("span", { class: "dot err" }), "URL not set")),
+    cards);
+}
+function gridNav(table) {
+  table.addEventListener("keydown", (ev) => {
+    const cur = ev.target.closest("[data-grid]"); if (!cur) return;
+    const [r, c] = cur.dataset.grid.split(",").map(Number);
+    if (ev.key === " " && r === 0 && cur.dataset.room) { ev.preventDefault(); toggleRoom(cur.dataset.room); return; }
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      if (cur.dataset.collapsed) { toggleRoom(cur.dataset.room); return; }
+      if (cur.dataset.href) location.hash = cur.dataset.href;
+      return;
+    }
+    const all = [...table.querySelectorAll("[data-grid]")];
+    const rowOf = (n) => all.filter((x) => Number(x.dataset.grid.split(",")[0]) === n);
+    let target = null;
+    switch (ev.key) {
+      case "ArrowRight": case "ArrowLeft": case "Home": case "End": {
+        const row = rowOf(r); let nc = ev.key === "Home" ? 0 : ev.key === "End" ? row.length - 1 : c + (ev.key === "ArrowRight" ? 1 : -1);
+        nc = Math.max(0, Math.min(nc, row.length - 1)); target = row.find((x) => Number(x.dataset.grid.split(",")[1]) === nc); break; }
+      case "ArrowUp": {
+        if (r === 0) return;
+        if (r === 1) target = rowOf(0).find((x) => { const [s, e] = x.dataset.span.split(",").map(Number); return c >= s && c <= e; }); // room header spanning this column
+        else target = rowOf(r - 1).find((x) => Number(x.dataset.grid.split(",")[1]) === c);
+        break; }
+      case "ArrowDown": {
+        if (r === 0) { const s = Number(cur.dataset.span.split(",")[0]); target = rowOf(1).find((x) => Number(x.dataset.grid.split(",")[1]) === s); }
+        else target = rowOf(r + 1).find((x) => Number(x.dataset.grid.split(",")[1]) === c);
+        break; }
+      default: return;
+    }
+    if (!target) return;
+    ev.preventDefault(); cur.tabIndex = -1; target.tabIndex = 0; target.focus();
+  });
+}
+function emptyState(kind) {
+  const msgs = {
+    both: ["Nothing registered yet.", "An app needs an identity to send as, so start there.", ["identity", "app"]],
+    apps: [identNames().length + " identities, no apps.", "Nothing can send until an app is registered and granted one.", ["app"]],
+    identities: [appIds().length + " apps and nothing to send as.", "Every grant list is empty.", ["identity"]],
+  }[kind];
+  view(el("div", { class: "card" }, el("h2", { text: msgs[0] }), el("p", { text: msgs[1] }),
+    el("div", { class: "row" },
+      msgs[2].includes("identity") ? el("button", { type: "button", class: msgs[2][0] === "identity" ? "primary" : "", text: "Create an identity", on: { click: () => { location.hash = "#/new-identity"; } } }) : null,
+      msgs[2].includes("app") ? el("button", { type: "button", class: msgs[2][0] === "app" ? "primary" : "", text: "Register an app", on: { click: () => { location.hash = "#/new-app"; } } }) : null),
+    el("p", { class: "muted small", text: "Prefer the manual runbook? docs/registering-an-app.md" })));
+}
+
+// ------------------------------------------------------- app inspector ---
+function optionalField(name, label, isSet, locked) {
+  const input = el("input", { name, autocomplete: "off", disabled: locked, placeholder: isSet ? "(set — not shown; type a new value to replace it)" : "(not set)" });
+  const parts = [el("label", {}, label, input)];
+  if (isSet) {
+    const box = el("input", { type: "checkbox", name: name + "-remove", disabled: locked });
+    box.addEventListener("change", () => { input.disabled = box.checked || locked; if (box.checked) input.value = ""; });
+    parts.push(el("label", { class: "small" }, box, " remove " + name));
+  }
+  return parts;
+}
+function appFields(appId, a, opts) {
+  const locked = !!a.inbound_locked;
+  const ungrant = (opts && opts.ungrant) || null;
+  const current = new Set(a.identities);
+  const checked = new Set(a.identities.filter((n) => n !== ungrant));
+  const routes = Object.assign({}, a.routes);
+  const wrap = el("div");
+  const grants = el("div");
+  const routeBox = el("div");
+  const routeLine = el("p", { class: "small" });
+
+  function renderRoutes() {
+    const granted = identNames().filter((n) => checked.has(n));
+    routeBox.replaceChildren(...["default", ...SEVERITIES].map((sev) => {
+      const sel = el("select", { name: "route-" + sev },
+        el("option", { value: "", text: sev === "default" ? "— none —" : "(use default)" }),
+        granted.map((n) => el("option", { value: n, selected: routes[sev] === n, text: n + " — " + roomLabel(state.identities[n].space) })));
+      sel.addEventListener("change", () => { if (sel.value) routes[sev] = sel.value; else delete routes[sev]; renderRouteLine(); });
+      return el("label", {}, sev === "default" ? "default (every severity without its own route)" : sev, sel);
+    }));
+    for (const sev of Object.keys(routes)) if (!checked.has(routes[sev])) delete routes[sev];
+    renderRouteLine();
+  }
+  function renderRouteLine() {
+    const rr = routeRooms(routes);
+    const hasDefault = !!routes.default; const missing = SEVERITIES.filter((s) => !routes[s] && !hasDefault);
+    routeLine.className = "small " + (rr.size > 1 ? "warn" : missing.length ? "error" : "muted");
+    if (!Object.keys(routes).length) routeLine.textContent = "No routes — every /v1/notify returns 503. Set a default at least.";
+    else if (rr.size > 1) {
+      const by = {}; for (const [s, n] of Object.entries(routes)) (by[state.identities[n].space] = by[state.identities[n].space] || []).push(s);
+      routeLine.textContent = Object.entries(by).map(([sp, ss]) => ss.join(", ") + " → " + sp).join(" · ") + " — an all-clear will land in a different room from the alert it closes (CG-86).";
+    } else routeLine.textContent = "All severities post to one room." + (missing.length ? " Severities with no route and no default (" + missing.join(", ") + ") return 503 at /v1/notify." : "");
+  }
+  function renderGrants() {
+    grants.replaceChildren(...rooms().map((r) => el("div", {},
+      el("div", { class: "roomhead" + (r.lockedBy ? " locked" : "") }, roomLabel(r.space), r.lockedBy ? el("span", { class: "pill warn", text: "locked by " + r.lockedBy }) : null,
+        r.key === "none" ? el("span", { class: "muted small", text: "cannot route inbound · not covered by any lock" }) : null),
+      r.identities.map((n) => {
+        const i = state.identities[n];
+        const others = holders(n).filter((x) => x !== appId);
+        const box = el("input", { type: "checkbox", name: "identity", value: n, checked: checked.has(n), disabled: locked || (r.lockedBy && r.lockedBy !== appId && a.allow_inbound) });
+        const note = el("div", { class: "meta" });
+        const refresh = () => {
+          const parts = [];
+          if (box.checked && !current.has(n) && a.allow_inbound && r.space && !appRooms(appId || "", a.identities).has(r.space)) parts.push(el("span", { class: "warn", text: "New room for an inbound app — Save will ask you to confirm (rule #6). " }));
+          if (!box.checked && current.has(n) && routesTo(appId || "", n).length) parts.push(el("span", { class: "warn", text: "Also removes its routes: " + routesTo(appId, n).join(", ") + " → " + n + ". " }));
+          if (r.lockedBy && r.lockedBy !== appId && a.allow_inbound) parts.push(el("span", { text: "Room locked by " + r.lockedBy + " — an inbound app cannot be granted an identity here. " }));
+          parts.push(el("span", { text: others.length ? "also held by " + others.join(", ") : "held by no other app" }));
+          note.replaceChildren(...parts);
+        };
+        box.addEventListener("change", () => { if (box.checked) checked.add(n); else checked.delete(n); refresh(); renderRoutes(); });
+        refresh();
+        return el("div", { class: "grant" }, el("label", { style: "margin:0" }, box, avatarMark(i.avatar, 14), el("strong", { text: n }), " ", el("span", { class: "muted small", text: i.display }),
+          i.mode === "webhook" && !i.env_resolved ? el("span", { class: "pill err", text: "URL not set" }) : null), note);
+      }))));
+  }
+  renderGrants(); renderRoutes();
+
+  const allow = el("input", { type: "checkbox", name: "allow_inbound", checked: a.allow_inbound, disabled: locked && !a.allow_inbound });
+  const receives = el("p", { class: "muted small" });
+  const renderReceives = () => {
+    if (!allow.checked) { receives.textContent = "Receives inbound from: nothing (inbound off)."; return; }
+    const rr = [...appRooms(appId || "", [...checked])];
+    receives.textContent = rr.length ? "Receives inbound from: " + rr.join(", ") + " — every message and card interaction in those rooms." : "Receives inbound from: no room yet — grant an identity with a room.";
+  };
+  allow.addEventListener("change", renderReceives); grants.addEventListener("change", renderReceives); renderReceives();
+
+  wrap.append(
+    el("fieldset", {}, el("legend", { text: "Sends as" }),
+      locked ? el("div", { class: "callout", text: "Grants on an inbound_locked app are a registry file edit, not a console action. Routes and display names stay editable here." }) : el("p", { class: "muted small", text: "Granting an identity lets this app post as it. Several apps may hold one identity; the room it posts into is shown above each group." }),
+      grants),
+    el("fieldset", {}, el("legend", { text: "Routes" }),
+      el("p", { class: "muted small", text: "Severity picks the identity, and the identity picks the room. Only granted identities can be routes." }),
+      routeBox, routeLine),
+    el("fieldset", {}, el("legend", { text: "Inbound" }),
+      locked ? el("div", { class: "callout", text: "This app is inbound_locked. Inbound can be narrowed here, never widened." }) : null,
+      el("label", {}, allow, " allow_inbound", !a.allow_inbound && !locked ? el("span", { class: "muted small", text: "  — turning this on asks for a typed confirmation" }) : null),
+      receives,
+      optionalField("callback_url", "callback_url (push delivery; none = poll only)", !!a.callback_url_set, locked),
+      el("label", {}, "allowed_users (one email per line; empty = anyone in the room)", el("textarea", { name: "allowed_users", rows: "3" }, (a.allowed_users || []).join("\n"))),
+      optionalField("unreachable_message", "unreachable_message (in-thread text when the callback is down)", !!a.unreachable_message_set, false)));
+  wrap.read = () => ({ identities: [...identNames().filter((n) => checked.has(n))], routes: Object.assign({}, routes), allow_inbound: allow.checked });
+  return wrap;
+}
+function wideningReasons(a, next) {
+  const reasons = [];
+  if (next.allow_inbound && !a.allow_inbound) reasons.push("allow_inbound");
+  if (next.allow_inbound && a.allow_inbound) { const before = appRooms("", a.identities); for (const sp of appRooms("", next.identities)) if (!before.has(sp)) { reasons.push("identity spaces added"); break; } }
+  return reasons;
+}
+function appView(appId, params) {
+  const a = state.apps[appId];
+  if (!a) { crumb({ text: "unknown app" }); view(el("div", { class: "card" }, el("h2", { text: "No app “" + appId + "”" }), el("p", {}, el("a", { href: "#/", text: "Back to the board" })))); return; }
+  setNav(null); crumb({ text: "App " + appId });
+  selectedApp = appId; expandFor(appId);
+  const ungrant = params.get("ungrant");
+  const fields = appFields(appId, a, { ungrant });
+  const save = el("button", { type: "submit", class: "primary", text: "Save", disabled: !ungrant });
+  const dirtyNote = el("span", { class: "muted small", text: ungrant ? "Unsaved changes — " + ungrant + " is unchecked; review and save." : "No changes" });
+  const markDirty = () => { save.disabled = false; dirtyNote.textContent = "Unsaved changes"; dirtyGuard = () => discardConfirm("unsaved changes to " + appId); };
+  if (ungrant) dirtyGuard = () => discardConfirm("unsaved changes to " + appId);
+  const form = el("form", {}, fields, el("div", { class: "savebar" }, dirtyNote, el("button", { type: "button", text: "Discard", on: { click: () => { dirtyGuard = null; appView(appId, new URLSearchParams()); } } }), save));
+  form.addEventListener("input", markDirty); form.addEventListener("change", markDirty);
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const next = fields.read();
+    const reasons = wideningReasons(a, next);
+    if (reasons.length && a.inbound_locked) { notify("Not a console action — " + appId + " is inbound_locked: widening (" + reasons.join(", ") + ") is a registry file edit. " + RULE_6, "alert"); return; }
+    if (reasons.length) {
+      const typed = await typedConfirm({ title: "Confirm: widen inbound for " + appId, intro: "The server refused this save until you confirm:", reasons, rule: RULE_6, expected: appId, verb: "Widen inbound", tone: "warn" });
+      if (typed === null) { notify("Cancelled."); return; }
+    }
+    notify("Saved " + appId + ". Live now." + MOCK); save.disabled = true; dirtyNote.textContent = "No changes"; dirtyGuard = null;
+  });
+
+  const keyLine = !a.key_configured
+    ? el("p", { class: "error" }, el("span", { class: "dot err" }), "Missing — this app cannot authenticate. Mint a key to fix it.")
+    : el("p", { class: "ok" }, el("span", { class: "dot ok" }), "Configured · from " + (a.key_source === "managed" ? "managed.env" : a.key_source === ".env" ? "the hand-written .env" : "the process environment"));
+  const canRotate = a.key_source !== "process";
+  const rotateBtn = el("button", { type: "button", text: a.key_configured ? "Rotate key…" : "Mint a key…", disabled: !canRotate, on: { click: async () => {
+    const typed = await typedConfirm({ title: (a.key_configured ? "Rotate" : "Mint") + " the API key for " + appId, intro: a.key_configured ? "The current key stops working the instant you confirm. The new key is shown once." : "The new key is shown once.", expected: appId, verb: a.key_configured ? "Rotate key" : "Mint key", tone: "danger" });
+    if (typed === null) { notify("Cancelled."); return; }
+    revealData = { app_id: appId, key_env: a.key_env, key: fakeKey(), shadows: state.shadowed_env_names.includes(a.key_env) || a.key_source === ".env" };
+    dirtyGuard = null; location.hash = "#/reveal";
+  } } });
+  const deliveries = a.recent_deliveries.length
+    ? el("table", { class: "plain small" }, el("thead", {}, el("tr", {}, ["When", "Kind", "Status", "Detail"].map((h) => el("th", { text: h })))),
+        el("tbody", {}, [...a.recent_deliveries].reverse().map((d) => el("tr", {}, el("td", { class: "num", title: d.ts, text: relTime(d.ts) }), el("td", { text: d.kind }), el("td", { class: d.status === "delivered" ? "ok" : "error", text: d.status }), el("td", { class: "muted", text: d.detail || d.title })))))
+    : el("p", { class: "muted small", text: "No deliveries since the gateway started. The log is in memory; the newest five are shown." });
+  const deleteReason = a.inbound_locked ? "Deleting an inbound_locked app is a registry file edit, not a console action." : a.inbox_pending ? a.inbox_pending + " unpolled inbound repl" + (a.inbox_pending === 1 ? "y" : "ies") + " — poll or drain its inbox first, then delete." : "";
+
+  view(
+    el("h2", {}, appId, " ", el("span", { class: "pill", text: a.allow_inbound ? "inbound on" : "inbound off" }), a.inbound_locked ? el("span", { class: "pill warn", text: "locked" }) : null),
+    el("p", { class: "muted small" }, "API key env var ", el("code", { text: a.key_env })),
+    el("div", { class: "card" }, el("h3", { text: "API key" }), keyLine,
+      !canRotate ? el("div", { class: "callout", text: "Set in the gateway's process environment, which overrides managed.env at boot — rotate it in the compose environment, not here." }) : null,
+      state.shadowed_env_names.includes(a.key_env) ? el("div", { class: "callout warn", text: "An older value of " + a.key_env + " is still in the read-only .env — inert now, but it would come back if managed.env were lost. Remove that line by hand." }) : null,
+      el("div", { class: "row" }, rotateBtn)),
+    form,
+    el("div", { class: "card" }, el("h3", { text: "Recent deliveries" }), deliveries),
+    el("div", { class: "card" }, el("h3", { text: "Danger zone" }),
+      el("p", { class: "muted small", text: "Deleting closes this app's queued messages as unroutable" + (a.key_source === "managed" ? " and removes its managed key." : ".") }),
+      el("button", { type: "button", class: "danger", text: "Delete app…", disabled: !!deleteReason, on: { click: async () => {
+        const typed = await typedConfirm({ title: "Delete app " + appId + "?", intro: "Its queued messages close as unroutable." + (a.key_source === "managed" ? " Its managed key is removed from managed.env." : ""), expected: appId, verb: "Delete app", tone: "danger" });
+        if (typed === null) { notify("Cancelled."); return; }
+        notify("Deleted " + appId + "." + MOCK); dirtyGuard = null; location.hash = "#/";
+      } } }),
+      deleteReason ? el("div", { class: "callout", text: deleteReason }) : null));
+}
+
+// -------------------------------------------------- identity inspector ---
+function identityView(name) {
+  const i = state.identities[name];
+  if (!i) { crumb({ text: "unknown identity" }); view(el("div", { class: "card" }, el("h2", { text: "No identity “" + name + "”" }), el("p", {}, el("a", { href: "#/", text: "Back to the board" })))); return; }
+  setNav(null); crumb({ text: "Identity " + name });
+  const r = roomOf(name); const hs = holders(name);
+  const locker = appIds().find((a) => state.apps[a].inbound_locked && state.apps[a].identities.includes(name));
+  const status = i.mode !== "webhook"
+    ? el("p", { class: "muted" }, el("span", { class: "dot" }), "Chat-app identity (mode: app) — sends through the service account; no webhook to replace here.")
+    : i.env_resolved ? el("p", { class: "ok" }, el("span", { class: "dot ok" }), "Webhook ready · " + (i.secret_source === "managed" ? "managed.env" : i.secret_source === ".env" ? "the hand-written .env" : "the process environment"))
+    : el("p", { class: "error" }, el("span", { class: "dot err" }), "Webhook URL not set — " + i.webhook_url_env + " is unset; sends as this identity fail at dispatch.");
+
+  const dispRow = el("div", { class: "row" });
+  const showDisp = () => dispRow.replaceChildren(el("span", {}, "Display name: ", el("strong", { text: i.display })), el("button", { type: "button", text: "Rename…", on: { click: editDisp } }));
+  const editDisp = () => {
+    const inp = el("input", { value: i.display, "aria-label": "Display name", autocomplete: "off", style: "max-width:320px" });
+    dispRow.replaceChildren(el("label", { style: "margin:0;flex:1" }, el("span", { class: "vh", text: "Display name" }), inp),
+      el("button", { type: "button", class: "primary", text: "Save", on: { click: () => { if (!inp.value.trim()) { notify("display is required", "alert"); return; } i.display = inp.value.trim(); notify("Saved display name for " + name + "." + MOCK); showDisp(); } } }),
+      el("button", { type: "button", text: "Cancel", on: { click: showDisp } }));
+    inp.focus(); inp.select();
+  };
+  showDisp();
+
+  // Avatar card: what is recorded, and a picker to change it (D6).
+  const avatarCard = el("div", { class: "card" });
+  const showAvatar = () => avatarCard.replaceChildren(el("h3", { text: "Avatar" }),
+    el("div", { class: "row" }, avatarMark(i.avatar, 32), el("span", {}, "Recorded: " + avatarWords(i.avatar), i.avatar && !AVATARS.includes(i.avatar) ? el("span", { class: "muted small", text: " — " + i.avatar }) : null),
+      el("button", { type: "button", text: "Change avatar…", on: { click: editAvatar } })),
+    el("p", { class: "muted small", text: "The icon Chat shows is set in the webhook's dialog in Google Chat; the gateway cannot set it. What is recorded here is which icon you chose, so the board can show it and you can paste its URL again when the webhook is recreated." }));
+  const editAvatar = () => {
+    const picker = avatarPicker(i.avatar);
+    avatarCard.replaceChildren(el("h3", { text: "Avatar" }), picker,
+      el("div", { class: "callout", text: "Recording an avatar here does not change the webhook. Open the webhook in Google Chat and paste the URL above into its Avatar URL field." }),
+      el("div", { class: "actions" }, el("button", { type: "button", text: "Cancel", on: { click: showAvatar } }),
+        el("button", { type: "button", class: "primary", text: "Save avatar", on: { click: () => { i.avatar = picker.value(); notify("Saved avatar for " + name + "." + MOCK); showAvatar(); } } })));
+  };
+  showAvatar();
+
+  const replaceDisabled = i.mode !== "webhook" ? "Not a webhook identity." : locker ? "Held by inbound_locked app " + locker + " — replacing its webhook is a registry file edit." : i.secret_source === "process" ? "Its URL is set in the process environment; change it there." : "";
+  const deleteDisabled = hs.length ? "Remove it from " + hs.length + " app" + (hs.length > 1 ? "s" : "") + " first." : "";
+
+  view(
+    el("h2", {}, avatarMark(i.avatar, 24), name, " ", r.lockedBy ? el("span", { class: "pill warn", text: "room locked by " + r.lockedBy }) : null, !hs.length ? el("span", { class: "pill", text: "unused" }) : null),
+    el("p", { class: "muted small" }, "Room ", el("a", { href: "#/room/" + r.key, text: roomLabel(r.space) }), " · webhook env var ", el("code", { text: i.webhook_url_env || "—" })),
+    el("div", { class: "card" }, status, el("p", { class: "muted small", text: "The sender name and avatar Chat shows are fixed by the webhook itself; the display name below is what /v1/identities reports." }), dispRow),
+    avatarCard,
+    el("div", { class: "card" }, el("h3", { text: "Held by" }),
+      hs.length ? el("table", { class: "plain" }, el("tbody", {}, hs.map((a) => el("tr", {},
+          el("td", {}, el("a", { href: "#/app/" + a, text: a }), " ", state.apps[a].inbound_locked ? el("span", { class: "pill warn", text: "locked" }) : null, state.apps[a].allow_inbound ? el("span", { class: "pill", text: "inbound on" }) : null),
+          el("td", { class: "muted small", text: routesTo(a, name).length ? routesTo(a, name).join(", ") + " route" : "granted, no route" }),
+          el("td", { style: "text-align:right" }, state.apps[a].inbound_locked ? el("span", { class: "muted small", text: "file edit" }) : el("button", { type: "button", text: "Remove grant…", on: { click: () => { location.hash = "#/app/" + a + "?ungrant=" + encodeURIComponent(name); } } }))))))
+        : el("p", { class: "muted", text: "Not granted to any app. Nothing can send as this identity — grant it from an app, or delete it." })),
+    el("div", { class: "card" }, el("h3", { text: "Also posting into this room" }),
+      r.key === "none" ? el("p", { class: "muted small", text: "No room recorded for this identity, so the gateway cannot say who else posts there. Replacing the webhook records the room." })
+      : r.identities.filter((n) => n !== name).length ? el("p", {}, r.identities.filter((n) => n !== name).map((n, k) => [k ? ", " : null, el("a", { href: "#/identity/" + n, text: n }), el("span", { class: "muted small", text: " (" + state.identities[n].display + ")" })]))
+      : el("p", { class: "muted", text: "No other identity posts into " + r.space + "." }),
+      r.lockedBy ? el("div", { class: "callout", text: "Locked by " + r.lockedBy + " (inbound_locked): no other app may receive inbound from this room, and webhooks of identities here are replaced only by a file edit." }) : null),
+    el("div", { class: "card" }, el("h3", { text: "Actions" }),
+      el("div", { class: "row" },
+        el("button", { type: "button", text: "Replace webhook…", disabled: !!replaceDisabled, on: { click: () => { location.hash = "#/identity/" + name + "/replace"; } } }),
+        el("button", { type: "button", class: "danger", text: "Delete…", disabled: !!deleteDisabled, on: { click: async () => {
+          const typed = await typedConfirm({ title: "Delete identity " + name + "?", intro: (i.secret_source === "managed" ? "Its webhook URL is removed from managed.env. " : "") + "Nothing holds it, so no app loses a grant.", expected: name, verb: "Delete identity", tone: "danger" });
+          if (typed === null) { notify("Cancelled."); return; }
+          notify("Deleted " + name + "." + MOCK); location.hash = "#/";
+        } } })),
+      replaceDisabled ? el("div", { class: "callout", text: "Replace webhook: " + replaceDisabled }) : null,
+      deleteDisabled ? el("div", { class: "callout", text: "Delete: " + deleteDisabled + " Use “Remove grant…” beside each holder above." }) : null));
+}
+
+// ------------------------------------------------------ room inspector ---
+function roomView(key) {
+  const r = rooms().find((x) => x.key === key);
+  if (!r) { crumb({ text: "unknown room" }); view(el("div", { class: "card" }, el("h2", { text: "No room “" + key + "”" }), el("p", {}, el("a", { href: "#/", text: "Back to the board" })))); return; }
+  setNav(null); crumb({ text: "Room " + roomLabel(r.space) });
+  view(
+    el("h2", {}, roomLabel(r.space), " ", r.lockedBy ? el("span", { class: "pill warn", text: "locked by " + r.lockedBy }) : null),
+    r.key === "none"
+      ? el("div", { class: "callout warn", text: "These identities have no space recorded. They cannot route inbound (no owner can be found for a message with no room) and are not covered by any inbound_locked app's lock. Replacing an identity's webhook records its room." })
+      : el("p", { class: "muted small", text: "The gateway knows this Chat room only by its id, derived from webhook URLs. Posting here: " + roomProxy(r) + "." }),
+    el("div", { class: "card" }, el("h3", { text: "Identities posting here" }),
+      el("table", { class: "plain" }, el("tbody", {}, r.identities.map((n) => { const i = state.identities[n]; return el("tr", {},
+        el("td", {}, el("span", { class: "dot " + (i.mode !== "webhook" ? "" : i.env_resolved ? "ok" : "err") }), avatarMark(i.avatar, 14), el("a", { href: "#/identity/" + n, text: n })),
+        el("td", { class: "muted small", text: i.display }),
+        el("td", { class: "muted small", text: holders(n).length ? "held by " + holders(n).join(", ") : "unused" })); })))),
+    el("div", { class: "card" }, el("h3", { text: "Apps posting into this room" }),
+      r.posting.size ? el("p", {}, [...r.posting].sort().map((a, k) => [k ? ", " : null, el("a", { href: "#/app/" + a, text: a })])) : el("p", { class: "muted", text: "None." })),
+    el("div", { class: "card" }, el("h3", { text: "Inbound from this room" }),
+      r.inbound.size ? el("p", {}, "Received by ", [...r.inbound].sort().map((a, k) => [k ? ", " : null, el("a", { href: "#/app/" + a, text: a })]), " — every message and card interaction here.")
+        : el("p", { class: "muted", text: r.key === "none" ? "Cannot be routed: no room." : "No app receives inbound from this room; its events are counted as suppressed and never stored." }),
+      r.lockedBy ? el("div", { class: "callout", text: "Locked by " + r.lockedBy + " (inbound_locked). From the console: no other app can be made inbound while holding an identity here, " + r.lockedBy + "'s grants cannot change, and the webhooks of identities here cannot be replaced. Those are registry file edits." }) : null));
+}
+
+// ------------------------------------------------------------ new app ---
+function newApp() {
+  setNav("new-app"); crumb({ text: "New app" });
+  const d = draft || { app_id: "", identities: [], routes: {}, allow_inbound: false, inbound_locked: false, callback_url_set: false, unreachable_message_set: false, allowed_users: [] };
+  if (d.pendingIdentity && state.identities[d.pendingIdentity]) { if (!d.identities.includes(d.pendingIdentity)) d.identities.push(d.pendingIdentity); }
+  const idInput = el("input", { name: "app_id", required: true, pattern: "[a-z0-9][a-z0-9\\-]{0,62}", autocomplete: "off", placeholder: "e.g. rotaryphone", value: d.app_id });
+  const envHint = el("p", { class: "muted small" });
+  const idErr = el("p", { class: "error small" });
+  const upd = () => { const v = idInput.value.trim(); envHint.textContent = v ? "API key env var: " + envName("CHAT_GATEWAY_API_KEY__", v) : "The env-var name is derived from the id."; idErr.textContent = v && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(v) ? "Lowercase letters, digits and hyphens; must not start with “_” or “-”." : (state.apps[v] ? "An app with this id already exists." : ""); };
+  idInput.addEventListener("input", upd); upd();
+  const fields = appFields("", d, {});
+  const snapshot = () => Object.assign(fields.read(), { app_id: idInput.value.trim(), inbound_locked: false, callback_url_set: false, unreachable_message_set: false, allowed_users: [] });
+  dirtyGuard = () => discardConfirm("the unsaved new app");
+  const form = el("form", {},
+    el("fieldset", {}, el("legend", { text: "1 · App id" }), el("label", {}, "App id", idInput), envHint, idErr),
+    el("p", { class: "small" }, "2 · Sends as — pick existing identities below, or ",
+      el("button", { type: "button", class: "link", text: "create a new identity (you will come back here)", on: { click: () => { draft = snapshot(); dirtyGuard = null; location.hash = "#/new-identity?return=new-app"; } } }), "."),
+    fields,
+    el("div", { class: "savebar" }, el("span", { class: "muted small", text: d.pendingIdentity ? "Back from creating " + d.pendingIdentity + " — it is pre-checked." : "Nothing is written until you create the app." }),
+      el("button", { type: "button", text: "Discard draft", on: { click: async () => { if (await discardConfirm("the unsaved new app")) { draft = null; dirtyGuard = null; location.hash = "#/"; } } } }),
+      el("button", { type: "submit", class: "primary", text: "Create app and mint key" })));
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault(); upd(); if (idErr.textContent) { idInput.focus(); return; }
+    const appId = idInput.value.trim(); const next = fields.read();
+    if (next.allow_inbound) {
+      const typed = await typedConfirm({ title: "Confirm: " + appId + " starts with inbound on", intro: "The server refuses this create until you confirm:", reasons: ["allow_inbound"], rule: RULE_6, expected: appId, verb: "Create with inbound", tone: "warn" });
+      if (typed === null) { notify("Cancelled."); return; }
+    }
+    draft = null; dirtyGuard = null;
+    revealData = { app_id: appId, key_env: envName("CHAT_GATEWAY_API_KEY__", appId), key: fakeKey(), shadows: false, created: true };
+    location.hash = "#/reveal";
+  });
+  view(el("h2", { text: "New app" }), el("p", { class: "muted small", text: "Four decisions, then the key is minted and shown once." }), form);
+}
+function fakeKey() { const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"; let s = "cgk_"; for (let k = 0; k < 43; k++) s += a[Math.floor(Math.random() * a.length)]; return s; }
+
+// ------------------------------------------------------- new identity ---
+function newIdentity(params) {
+  setNav("new-identity"); crumb({ text: "New identity" });
+  const ret = params.get("return");
+  const picker = avatarPicker(null);
+  const name = el("input", { name: "name", required: true, autocomplete: "off", placeholder: "e.g. rotaryphone-alerts" });
+  const nameHint = el("p", { class: "muted small" });
+  const nameErr = el("p", { class: "error small" });
+  name.addEventListener("input", () => { const v = name.value.trim(); nameHint.textContent = v ? "Webhook env var: " + envName("GOOGLE_CHAT_WEBHOOK_URL__", v) : ""; nameErr.textContent = v && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(v) ? "Lowercase letters, digits and hyphens." : state.identities[v] ? "An identity with this name already exists." : ""; });
+  const display = el("input", { name: "display", required: true, autocomplete: "off", placeholder: "what /v1/identities reports, e.g. “PM · familyworkspace”" });
+  const url = el("input", { name: "webhook_url", type: "password", autocomplete: "off", required: true, placeholder: "https://chat.googleapis.com/v1/spaces/…/messages?key=…&token=…" });
+  const urlErr = el("p", { class: "error small" });
+  const form = el("form", {},
+    el("ol", { class: "stepper" },
+      el("li", {}, el("h3", { text: "Pick an avatar, then create the webhook in Google Chat" }),
+        el("p", { class: "muted small", text: "The name and avatar of a webhook are fixed when it is created in Chat; the gateway cannot set them. Choose the icon first so you have its URL ready to paste." }),
+        picker,
+        el("ol", { class: "guide small" },
+          el("li", { text: "Open the Google Chat space this identity should post into." }),
+          el("li", { text: "Space name ▸ Apps & integrations ▸ Webhooks ▸ Add webhook." }),
+          el("li", { text: "Set the name; paste the avatar URL above into Avatar URL. Both are fixed at creation and cannot be changed later without a new webhook." }),
+          el("li", { text: "Save and copy the whole webhook URL." }))),
+      el("li", {}, el("h3", { text: "Name it here" }),
+        el("label", {}, "Identity name", name), nameHint, nameErr,
+        el("label", {}, "Display name", display),
+        el("p", { class: "muted small", text: "Tip: put the room in the display name (“PM · familyworkspace”) — the gateway knows rooms only by id, so this is how the board labels them." })),
+      el("li", {}, el("h3", { text: "Paste the webhook URL" }),
+        el("label", {}, "Webhook URL", url), urlErr,
+        el("p", { class: "muted small", text: "Stored in managed.env. Never shown again — not here, not in the registry, not in any log. The room id is derived from it. The avatar you picked is recorded on the identity." }))),
+    el("div", { class: "actions" }, ret ? el("button", { type: "button", text: "Back to new app without creating", on: { click: () => { location.hash = "#/new-app"; } } }) : null, el("button", { type: "submit", class: "primary", text: "Create identity" })));
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const n = name.value.trim(); if (!n || nameErr.textContent) { name.focus(); return; }
+    const m = /^https:\/\/chat\.googleapis\.com\/v1\/spaces\/([A-Za-z0-9_-]+)\/messages\?(?=.*\bkey=)(?=.*\btoken=)/.exec(url.value.trim());
+    if (!m) { urlErr.textContent = "Not a Google Chat incoming-webhook URL (https://chat.googleapis.com/v1/spaces/<id>/messages?key=…&token=…). Copy the whole URL from the space's webhook settings."; url.focus(); return; }
+    const space = "spaces/" + m[1];
+    state.identities[n] = { display: display.value.trim() || n, mode: "webhook", space, webhook_url_env: envName("GOOGLE_CHAT_WEBHOOK_URL__", n), env_resolved: true, secret_source: "managed", avatar: picker.value() };
+    url.value = "";
+    header(); if (collapsed) collapsed.add(roomKey(space));
+    if (ret === "new-app" && draft) draft.pendingIdentity = n;
+    crumb({ text: "New identity" }, { text: "created" });
+    view(el("div", { class: "card" }, el("h2", {}, avatarMark(picker.value(), 24), "Identity " + n + " created"),
+      el("p", {}, "Room ", el("a", { href: "#/room/" + roomKey(space), text: space }), ". Its webhook URL is in managed.env; avatar " + avatarWords(picker.value()) + MOCK + "."),
+      el("p", { class: "muted small", text: "Not granted to any app yet — nothing can send as it until an app holds it." }),
+      el("div", { class: "row" },
+        ret === "new-app" ? el("button", { type: "button", class: "primary", text: "Back to new app (pre-granted)", on: { click: () => { location.hash = "#/new-app"; } } }) : null,
+        el("button", { type: "button", class: ret ? "" : "primary", text: "Open identity", on: { click: () => { location.hash = "#/identity/" + n; } } }),
+        el("button", { type: "button", text: "Board", on: { click: () => { location.hash = "#/"; } } }))));
+  });
+  view(el("h2", { text: "New identity (Chat webhook)" }), ret ? el("p", { class: "muted small", text: "Launched from New app — your draft is kept and the new identity will be pre-checked when you return." }) : null, form);
+}
+
+// ---------------------------------------------------- replace webhook ---
+function replaceView(name) {
+  const i = state.identities[name]; if (!i) { identityView(name); return; }
+  setNav(null); crumb({ text: "Identity " + name, href: "#/identity/" + name }, { text: "Replace webhook" });
+  const hs = holders(name); const inboundHolders = hs.filter((a) => state.apps[a].allow_inbound);
+  const locker = appIds().find((a) => state.apps[a].inbound_locked && state.apps[a].identities.includes(name));
+  if (locker) { view(el("h2", { text: "Replace webhook for " + name }), el("div", { class: "callout", text: "Not a console action — " + name + " is held by inbound_locked app " + locker + ". Replace its webhook by editing managed.env/.env on the box, then Registry › Reload from disk." })); return; }
+  const url = el("input", { type: "password", autocomplete: "off", "aria-label": "New webhook URL", placeholder: "https://chat.googleapis.com/v1/spaces/…/messages?key=…&token=…" });
+  const urlErr = el("p", { class: "error small" });
+  const pretend = el("input", { type: "checkbox" });
+  const avatarLine = i.avatar ? el("li", {}, "Set the avatar again — paste ", el("code", { text: AVATARS.includes(i.avatar) ? avatarUrl(i.avatar) : i.avatar }), " into Avatar URL (the recorded ", avatarWords(i.avatar), ").") : el("li", { text: "Set the name and avatar again — they are fixed at creation. No avatar is recorded for this identity; pick one on the identity page if you want its URL kept." });
+  view(
+    el("h2", { text: "Replace webhook for " + name }),
+    el("ol", { class: "guide" },
+      el("li", { text: "Google Chat has no regenerate button: in the space, delete the old webhook." }),
+      el("li", { text: "Create a new one with the same name." }), avatarLine,
+      el("li", { text: "Copy the whole URL and paste it below. The old URL stops being used the moment you confirm." })),
+    el("div", { class: "card" }, el("h3", { text: "Consequences" }),
+      el("p", {}, hs.length ? ["Held by ", hs.map((a, k) => [k ? ", " : null, el("a", { href: "#/app/" + a, text: a })]), " — every one of them posts through the new webhook from now on."] : "Held by no app — nothing posts through this identity today."),
+      el("ul", { class: "small" },
+        el("li", { text: "Same room (" + roomLabel(i.space) + "): nothing else changes; a rotated webhook moves nothing." }),
+        el("li", {}, "Different room: " + (inboundHolders.length ? "inbound app" + (inboundHolders.length > 1 ? "s " : " ") + inboundHolders.join(", ") + " start" + (inboundHolders.length > 1 ? "" : "s") + " receiving that room's messages — you will be asked to type the identity name (rule #6)." : "no inbound app holds this identity, so nothing widens; the room id is updated."))),
+      i.space ? null : el("p", { class: "warn small", text: "No room is recorded for this identity today; replacing records one." })),
+    el("label", {}, "New webhook URL", url), urlErr,
+    el("label", { class: "muted small" }, pretend, " Mockup only: pretend the pasted URL is in a different room"),
+    el("div", { class: "actions" }, el("button", { type: "button", text: "Cancel", on: { click: () => { location.hash = "#/identity/" + name; } } }),
+      el("button", { type: "button", class: "primary", text: "Replace webhook", on: { click: async () => {
+        if (!/^https:\/\/chat\.googleapis\.com\/v1\/spaces\/[A-Za-z0-9_-]+\/messages\?/.test(url.value.trim())) { urlErr.textContent = "Not a Google Chat incoming-webhook URL. Copy the whole URL from the space's webhook settings."; url.focus(); return; }
+        if (pretend.checked && inboundHolders.length) {
+          const typed = await typedConfirm({ title: "Confirm: move " + name + " to another room", intro: "The server refused this replace until you confirm:", reasons: ["identity " + name + " is held by inbound app(s) " + inboundHolders.join(", ") + ": moving it to another space widens what they receive"], rule: RULE_6, expected: name, verb: "Replace webhook", tone: "warn" });
+          if (typed === null) { notify("Cancelled."); return; }
+        }
+        url.value = ""; notify("Webhook replaced for " + name + "." + MOCK); location.hash = "#/identity/" + name;
+      } } })));
+}
+
+// --------------------------------------------------------------- reveal ---
+function reveal() {
+  if (!revealData) { crumb({ text: "Key" }); view(el("div", { class: "card" }, el("h2", { text: "No key to show" }), el("p", { text: "A key is shown exactly once, at the moment it is minted. If you reloaded this page the key is gone — rotate again to get a new one." }), el("p", {}, el("a", { href: "#/", text: "Back to the board" })))); return; }
+  const r = revealData; setNav(null); crumb({ text: "App " + r.app_id, href: "#/app/" + r.app_id }, { text: "API key" });
+  const keyBox = el("input", { class: "secret", readonly: true, value: r.key, "aria-label": "API key, shown once" });
+  const select = () => { keyBox.focus(); keyBox.select(); notify("Key selected — press Ctrl+C (or ⌘C) to copy."); };
+  const secure = false; // the real page is plain HTTP on the LAN; the mockup shows that case
+  const curl = "printf 'url = \"%s\"\\nheader = \"Authorization: Bearer %s\"\\nheader = \"Content-Type: application/json\"\\ndata = \"%s\"\\n' \\\n  \"" + BASE + "/v1/notify\" \"$CHAT_GATEWAY_API_KEY\" '{\\\"severity\\\":\\\"info\\\",\\\"title\\\":\\\"hello\\\"}' \\\n  | curl --config -";
+  const py = "from chat_gateway.client import GatewayClient\nimport os\ngw = GatewayClient(\"" + BASE + "\", api_key=os.environ[\"CHAT_GATEWAY_API_KEY\"])\ngw.notify(\"info\", \"hello\")";
+  const mcp = JSON.stringify({ mcpServers: { "chat-gateway": { type: "http", url: BASE + "/mcp", headers: { Authorization: "Bearer ${CHAT_GATEWAY_API_KEY}" } } } }, null, 2);
+  const result = el("p", { role: "status", class: "small" });
+  view(
+    el("h2", { text: (r.created ? "App created · " : "") + "API key for " + r.app_id }),
+    el("div", { class: "callout warn", text: "This is the only time this key is shown. Put it in the consuming app's secret store now. Leave this page and it is gone; rotate again to get a new one." }),
+    el("div", { class: "card" },
+      el("label", {}, el("span", { class: "vh", text: "API key" }), keyBox),
+      el("div", { class: "row" },
+        el("button", { type: "button", class: "primary", text: "Select key", on: { click: select } }),
+        el("button", { type: "button", text: secure ? "Copy" : "Copy — selects on HTTP", title: "The clipboard API needs HTTPS; on this LAN page the key is selected for you instead.", on: { click: () => { if (secure && navigator.clipboard) navigator.clipboard.writeText(r.key).then(() => notify("Copied."), select); else select(); } } }),
+        el("span", { class: "muted small" }, "env var in the consumer: ", el("code", { text: "CHAT_GATEWAY_API_KEY" }), " · gateway URL ", el("code", { text: BASE }))),
+      r.shadows ? el("div", { class: "callout warn", text: "The OLD value of " + r.key_env + " is still in the read-only .env. It is inert now, but would revive if managed.env were lost — remove that line by hand." }) : null),
+    el("details", {}, el("summary", { text: "curl (key stays out of argv)" }), el("pre", { text: curl })),
+    el("details", {}, el("summary", { text: "Python" }), el("pre", { text: py })),
+    state.mcp_enabled ? el("details", {}, el("summary", { text: "MCP client config" }), el("pre", { text: mcp })) : null,
+    el("div", { class: "card" }, el("h3", { text: "Send test notification" }),
+      el("p", { class: "muted small", text: "Posts a fixed info message with this key and waits for the delivery log to say delivered or failed. 202 enqueued is not delivery." }),
+      el("button", { type: "button", text: "Send test", on: { click: () => fakeTest(result) } }), result),
+    el("div", { class: "actions" }, el("button", { type: "button", class: "primary", text: "Done — I have stored the key", on: { click: () => { revealData = null; location.hash = "#/app/" + r.app_id; } } })));
+  keyBox.focus();
+}
+function fakeTest(out) {
+  out.className = "small"; out.textContent = "Sending…";
+  setTimeout(() => { out.textContent = "Waiting… (enqueued)"; }, 600);
+  setTimeout(() => { out.className = "small ok"; out.textContent = "delivered · " + new Date().toISOString().slice(11, 19) + "Z · webhook HTTP 200" + MOCK; }, 2200);
+}
+
+// ------------------------------------------------------- states page ---
+function statesView() {
+  setNav(null); crumb({ text: "States reference (mockup)" });
+  const sk = el("div", { class: "matrix-wrap", "aria-busy": "true", style: "min-height:0" }, el("span", { class: "vh", text: "Loading registry…" }), el("table", { class: "matrix" }, el("tbody", {}, [0, 1, 2, 3].map(() => el("tr", {}, el("th", {}, el("div", { class: "skeleton", style: "width:60%" })), [0, 1, 2, 3, 4].map(() => el("td", {}, el("div", { class: "skeleton", style: "width:40%;margin:auto" }))))))));
+  view(
+    el("h2", { text: "States reference" }),
+    el("p", { class: "muted small", text: "Static renderings of the states the spec specifies, for the builder and for Polisher. Not reachable from the product nav." }),
+    el("h3", { text: "Loading" }), sk,
+    el("h3", { text: "Empty" }),
+    el("div", { class: "card" }, el("h2", { text: "Nothing registered yet." }), el("p", { text: "An app needs an identity to send as, so start there." }), el("div", { class: "row" }, el("button", { type: "button", class: "primary", text: "Create an identity" }), el("button", { type: "button", text: "Register an app" })), el("p", { class: "muted small", text: "Prefer the manual runbook? docs/registering-an-app.md" })),
+    el("h3", { text: "403 — not a console action (inline, at the control)" }),
+    el("div", { class: "callout", text: "Not a console action — aitrader is inbound_locked. Change its identities by editing registry.yaml on the box, then use Registry › Reload from disk. Still editable here: routes, display names." }),
+    el("h3", { text: "409 — the registry changed (panel above the form; edits kept)" }),
+    el("div", { class: "card" }, el("p", { class: "warn" }, el("strong", { text: "The registry changed since this page loaded." }), " Your edits are kept."),
+      el("div", { class: "row" }, el("button", { type: "button", class: "primary", text: "Refresh view" }), el("span", { class: "muted small", text: "pick up a change made from another tab or the console" })),
+      el("div", { class: "row" }, el("button", { type: "button", text: "Reload from disk" }), el("span", { class: "muted small", text: "pick up a hand edit to registry.yaml — validates the file, then swaps it live" })),
+      el("p", { class: "muted small", text: "Then compare and Save again. With a machine-readable category only the matching button is offered." })),
+    el("h3", { text: "Other 409s keep the server's words and add the recovery" }),
+    el("div", { class: "callout err", text: "identity 'pm-familyworkspace' is still granted to: agent-mcp, aiteam-harness, pmtrader — remove it from those apps first. Use “Remove grant…” beside each holder on the identity page." }),
+    el("div", { class: "callout err", text: "app 'job-hunter' has 2 unpolled inbound repl(ies) — poll or drain its inbox first, then delete." }),
+    el("div", { class: "callout err", text: "GOOGLE_CHAT_WEBHOOK_URL__PMTRADER is already used by identity 'pmtrader-alerts' — pick another id (the console derives the variable name from it)." }),
+    el("h3", { text: "428 — typed confirmation (native dialog)" }),
+    el("p", { class: "small" }, el("button", { type: "button", text: "Open the widening dialog", on: { click: () => typedConfirm({ title: "Confirm: widen inbound for job-hunter", intro: "The server refused this save until you confirm:", reasons: ["allow_inbound", "identity spaces added"], rule: RULE_6, expected: "job-hunter", verb: "Widen inbound", tone: "warn" }).then((t) => notify(t === null ? "Cancelled." : "Confirmed." + MOCK)) } }), " ",
+      el("button", { type: "button", class: "danger", text: "Open the delete dialog", on: { click: () => typedConfirm({ title: "Delete app pmtrader?", intro: "Its queued messages close as unroutable.", expected: "pmtrader", verb: "Delete app", tone: "danger" }).then((t) => notify(t === null ? "Cancelled." : "Confirmed." + MOCK)) } }), " ",
+      el("button", { type: "button", text: "Open the discard dialog", on: { click: () => discardConfirm("unsaved changes to pmtrader").then((d) => notify(d ? "Discarded." : "Kept editing.")) } })),
+    el("h3", { text: "422 — at the field" }),
+    el("label", {}, "Webhook URL", el("input", { type: "password", value: "https://example.com/hook", "aria-invalid": "true", readonly: true })),
+    el("p", { class: "error small", text: "Not a Google Chat incoming-webhook URL (https://chat.googleapis.com/v1/spaces/<id>/messages?key=…&token=…). Copy the whole URL from the space's webhook settings." }),
+    el("label", {}, "Avatar", el("input", { value: "http://example.com/icon.png", "aria-invalid": "true", readonly: true })),
+    el("p", { class: "error small", text: "avatar must be one of the bundled icon names or an https URL." }),
+    el("h3", { text: "Error on load" }),
+    el("div", { class: "card" }, el("h2", { text: "Could not load the registry view" }), el("p", { class: "error", text: "HTTP 503 — the admin key equals app 'agent-mcp''s API key — mint a separate admin key (hard rule #4)" }), el("button", { type: "button", class: "primary", text: "Retry" })),
+    el("h3", { text: "Notices" }),
+    el("p", { class: "small" }, el("button", { type: "button", text: "Status notice", on: { click: () => notify("Saved rotaryphone. Live now.") } }), " ", el("button", { type: "button", text: "Alert notice", on: { click: () => notify("Typed confirmation needed — widening inbound (allow_inbound) requires typing the app id to confirm. " + RULE_6, "alert") } })));
+}
+
+// --------------------------------------------------------------- router ---
+let currentHash = "";
+function render() {
+  const h = location.hash.replace(/^#\/?/, "");
+  const [path, qs] = h.split("?");
+  const params = new URLSearchParams(qs || "");
+  const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+  $("regmenu").removeAttribute("open");
+  header(); currentHash = location.hash;
+  if (!parts.length) return board();
+  switch (parts[0]) {
+    case "app": return appView(parts[1] || "", params);
+    case "identity": return parts[2] === "replace" ? replaceView(parts[1]) : identityView(parts[1] || "");
+    case "room": return roomView(parts[1] || "");
+    case "new-app": return newApp();
+    case "new-identity": return newIdentity(params);
+    case "reveal": return reveal();
+    case "states": return statesView();
+    default: crumb({ text: "not found" }); view(el("div", { class: "card" }, el("h2", { text: "No such view" }), el("p", {}, el("a", { href: "#/", text: "Back to the board" }))));
+  }
+}
+// Navigation guard: a dirty inspector or draft asks before the view changes. Back/Forward is
+// intercepted by restoring the current hash first and asking, so the view never changes
+// before the operator chooses.
+let restoring = false;
+async function route() {
+  if (restoring) { restoring = false; return; }
+  if (dirtyGuard && location.hash !== currentHash) {
+    const target = location.hash;
+    restoring = true; history.replaceState(null, "", currentHash);
+    const ok = await dirtyGuard();
+    if (!ok) { restoring = false; return; }
+    dirtyGuard = null; restoring = false; location.hash = target; return;
+  }
+  render();
+}
+window.addEventListener("hashchange", route);
+document.addEventListener("DOMContentLoaded", () => {
+  $("nav-board").addEventListener("click", () => { if (location.hash === "#/" || !location.hash) { leaveAllowed().then((ok) => { if (ok) board(); }); } else location.hash = "#/"; });
+  $("nav-new-app").addEventListener("click", () => { location.hash = "#/new-app"; });
+  $("nav-new-identity").addEventListener("click", () => { location.hash = "#/new-identity"; });
+  $("m-refresh").addEventListener("click", () => { $("regmenu").removeAttribute("open"); notify("View refreshed from the running gateway." + MOCK); render(); });
+  $("m-reload").addEventListener("click", () => { $("regmenu").removeAttribute("open"); notify("Reloaded registry.yaml from disk and swapped it live." + MOCK); render(); });
+  $("m-states").addEventListener("click", () => { location.hash = "#/states"; });
+  $("m-help").addEventListener("click", () => { $("regmenu").removeAttribute("open"); $("help").showModal(); });
+  $("filter").addEventListener("input", (ev) => { filterQ = ev.target.value; if (!location.hash.replace(/^#\/?/, "")) board(); else location.hash = "#/"; });
+  document.addEventListener("keydown", (ev) => {
+    const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+    if ($("confirm").open || $("help").open) return;
+    if (ev.key === "/" && !inField) { ev.preventDefault(); $("filter").focus(); }
+    else if (ev.key === "?" && !inField) { ev.preventDefault(); $("help").showModal(); }
+    else if (ev.key === "Escape" && !inField && location.hash.replace(/^#\/?/, "")) { if (!location.hash.includes("reveal")) location.hash = "#/"; }
+  });
+  document.addEventListener("click", (ev) => { const m = $("regmenu"); if (m.open && !m.contains(ev.target)) m.removeAttribute("open"); });
+  render();
+});
+</script>
+</body>
+</html>
