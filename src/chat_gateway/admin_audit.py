@@ -1,6 +1,12 @@
 """Append-only record of admin console writes (CG-90). Names only — the
 action, the app or identity id, and the FIELD NAMES changed. Never a value,
-never a URL (hard rule #2). Mode 0600, like every other audit trail here."""
+never a URL (hard rule #2). Mode 0600, like every other audit trail here.
+
+CG-91: every line also says WHAT AUTHENTICATED it (`auth`: "key" or "open") and
+WHERE IT CAME FROM (`client`, the peer address). Under the open posture the
+credential no longer names an actor, so the line records what it still knows:
+the posture in force and the peer. Both are a posture string and an address,
+never a value (hard rule #2)."""
 
 from __future__ import annotations
 
@@ -16,11 +22,13 @@ _O_BINARY = getattr(os, "O_BINARY", 0)
 
 
 class AdminAudit:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, auth: str = "key"):
         self._path = Path(path)
+        self.auth = auth
         self.write_errors = 0
 
-    def record(self, action: str, target: str, fields: list[str]) -> None:
+    def record(self, action: str, target: str, fields: list[str], *,
+               client: str | None = None) -> None:
         """Never raises (CG-90 fix round, M3). It runs AFTER the store applied
         the write, so the change is already live — and for a create or a rotate,
         the response it would abort is the ONLY copy of the minted key. Losing
@@ -31,7 +39,8 @@ class AdminAudit:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             line = json.dumps({"at": dt.datetime.now(dt.timezone.utc).isoformat(),
-                               "actor": "admin", "action": action, "target": target,
+                               "actor": "admin", "auth": self.auth, "client": client,
+                               "action": action, "target": target,
                                "fields": sorted(fields)}) + "\n"
             # 0600 at CREATE, never chmod'ed after — no window in which the
             # trail is readable by anyone else (CG-65's posture for audit files).

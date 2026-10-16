@@ -575,8 +575,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         }
 
     # -- apps ------------------------------------------------------------------
-    @router.post("/api/apps", status_code=201, dependencies=[Depends(require_admin)])
-    def create_app_entry(body: AppCreate):
+    @router.post("/api/apps", status_code=201)
+    def create_app_entry(body: AppCreate, client: str = Depends(require_admin)):
         check_id(body.app_id, "app")
         if body.app_id in registry.apps:
             raise refuse(409, f"app {body.app_id!r} already exists")
@@ -600,14 +600,14 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             apps[body.app_id] = m
 
         run(mutate, {key_env: key}, sha=body.registry_sha256)
-        audit.record("app_created", body.app_id, ["key_env", *fields])
+        audit.record("app_created", body.app_id, ["key_env", *fields], client=client)
         if widened:
-            audit.record("inbound_widened", body.app_id, widened)
+            audit.record("inbound_widened", body.app_id, widened, client=client)
         return {"app_id": body.app_id, "key_env": key_env, "key": key,
                 "shadows_env_file": key_env in secrets.hand_env_names}
 
-    @router.put("/api/apps/{app_id}", dependencies=[Depends(require_admin)])
-    def update_app_entry(app_id: str, body: AppFields):
+    @router.put("/api/apps/{app_id}")
+    def update_app_entry(app_id: str, body: AppFields, client: str = Depends(require_admin)):
         get_app(app_id)
         check_refs(body)
         fields: list[str] = []
@@ -632,13 +632,13 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             fields.extend(app_map(target, body, None))
 
         run(mutate, sha=body.registry_sha256)
-        audit.record("app_updated", app_id, fields)
+        audit.record("app_updated", app_id, fields, client=client)
         if widened:
-            audit.record("inbound_widened", app_id, widened)
+            audit.record("inbound_widened", app_id, widened, client=client)
         return {"app_id": app_id}
 
-    @router.post("/api/apps/{app_id}/rotate-key", dependencies=[Depends(require_admin)])
-    def rotate_key(app_id: str, body: _Guarded | None = None):
+    @router.post("/api/apps/{app_id}/rotate-key")
+    def rotate_key(app_id: str, body: _Guarded | None = None, client: str = Depends(require_admin)):
         app = get_app(app_id)
         managed_name(app.key_env)
         key = mint_key()
@@ -652,12 +652,12 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             _node(tree, "apps", app_id, "app")
 
         run(mutate, {app.key_env: key}, sha=body.registry_sha256 if body else None)
-        audit.record("key_rotated", app_id, [app.key_env])
+        audit.record("key_rotated", app_id, [app.key_env], client=client)
         return {"app_id": app_id, "key_env": app.key_env, "key": key,
                 "shadows_env_file": app.key_env in secrets.hand_env_names}
 
-    @router.post("/api/apps/{app_id}/delete", dependencies=[Depends(require_admin)])
-    def delete_app_entry(app_id: str, body: ConfirmApp):
+    @router.post("/api/apps/{app_id}/delete")
+    def delete_app_entry(app_id: str, body: ConfirmApp, client: str = Depends(require_admin)):
         app = get_app(app_id)
         if body.confirm_app_id != app_id:
             raise refuse(428, "deleting an app requires typing its id to confirm")
@@ -687,12 +687,12 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
 
         remove = {app.key_env: None} if secrets.source_of(app.key_env) == "managed" else None
         run(mutate, remove, sha=body.registry_sha256)
-        audit.record("app_deleted", app_id, [])
+        audit.record("app_deleted", app_id, [], client=client)
         return {"app_id": app_id}
 
     # -- identities ------------------------------------------------------------
-    @router.post("/api/identities", status_code=201, dependencies=[Depends(require_admin)])
-    def create_identity(body: IdentityCreate):
+    @router.post("/api/identities", status_code=201)
+    def create_identity(body: IdentityCreate, client: str = Depends(require_admin)):
         if not body.display.strip() or not body.webhook_url.strip():
             raise refuse(422, "name, display and webhook_url are all required")
         check_id(body.name, "identity")
@@ -719,7 +719,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             identities[body.name] = m
 
         run(mutate, {url_env: body.webhook_url.strip()}, sha=body.registry_sha256)
-        audit.record("identity_created", body.name, ["display", "webhook_url_env", "space"])
+        audit.record("identity_created", body.name, ["display", "webhook_url_env", "space"], client=client)
         return {"name": body.name, "webhook_url_env": url_env, "space": space}
 
     def get_identity(name: str):
@@ -728,8 +728,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             raise HTTPException(404, f"unknown identity {name!r}")
         return ident
 
-    @router.put("/api/identities/{name}", dependencies=[Depends(require_admin)])
-    def update_identity(name: str, body: DisplayIn):
+    @router.put("/api/identities/{name}")
+    def update_identity(name: str, body: DisplayIn, client: str = Depends(require_admin)):
         get_identity(name)
         if not body.display.strip():
             # `load_registry` would accept "" and render a blank sender name.
@@ -739,11 +739,11 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             _node(tree, "identities", name, "identity")["display"] = body.display
 
         run(mutate, sha=body.registry_sha256)
-        audit.record("identity_updated", name, ["display"])
+        audit.record("identity_updated", name, ["display"], client=client)
         return {"name": name}
 
-    @router.post("/api/identities/{name}/webhook", dependencies=[Depends(require_admin)])
-    def replace_webhook(name: str, body: WebhookIn):
+    @router.post("/api/identities/{name}/webhook")
+    def replace_webhook(name: str, body: WebhookIn, client: str = Depends(require_admin)):
         ident = get_identity(name)
         if ident.mode != "webhook" or not ident.webhook_url_env:
             raise refuse(409, f"identity {name!r} is not a webhook identity")
@@ -789,13 +789,13 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             node["space"] = space
 
         run(mutate, {ident.webhook_url_env: body.webhook_url.strip()}, sha=body.registry_sha256)
-        audit.record("webhook_replaced", name, [ident.webhook_url_env, "space"])
+        audit.record("webhook_replaced", name, [ident.webhook_url_env, "space"], client=client)
         for app_id in widened:
-            audit.record("inbound_widened", app_id, ["identity spaces added"])
+            audit.record("inbound_widened", app_id, ["identity spaces added"], client=client)
         return {"name": name, "space": space}
 
-    @router.post("/api/identities/{name}/delete", dependencies=[Depends(require_admin)])
-    def delete_identity(name: str, body: ConfirmIdentity):
+    @router.post("/api/identities/{name}/delete")
+    def delete_identity(name: str, body: ConfirmIdentity, client: str = Depends(require_admin)):
         ident = get_identity(name)
         if body.confirm_name != name:
             raise refuse(428, "deleting an identity requires typing its name to confirm")
@@ -811,17 +811,17 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         env = ident.webhook_url_env
         remove = {env: None} if env and secrets.source_of(env) == "managed" else None
         run(mutate, remove, sha=body.registry_sha256)
-        audit.record("identity_deleted", name, [])
+        audit.record("identity_deleted", name, [], client=client)
         return {"name": name}
 
     # -- reload ----------------------------------------------------------------
-    @router.post("/api/reload", dependencies=[Depends(require_admin)])
-    def reload():
+    @router.post("/api/reload")
+    def reload(client: str = Depends(require_admin)):
         try:
             store.reload()
         except StoreError as exc:
             raise HTTPException(exc.status, str(exc)) from exc
-        audit.record("reloaded_from_disk", "registry.yaml", [])
+        audit.record("reloaded_from_disk", "registry.yaml", [], client=client)
         return {"registry_sha256": store.sha256}
 
     return router

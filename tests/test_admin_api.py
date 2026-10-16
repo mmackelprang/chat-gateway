@@ -71,7 +71,7 @@ def _build(tmp_path, monkeypatch, adapter, auth="key"):
                              process_env_names=frozenset({"CHAT_GATEWAY_ADMIN_KEY"}),
                              environ=os.environ)
     wiring = AdminWiring(store=RegistryStore(p, holder, secrets), secrets=secrets,
-                         audit=AdminAudit(tmp_path / "state" / "admin_audit.jsonl"),
+                         audit=AdminAudit(tmp_path / "state" / "admin_audit.jsonl", auth=auth),
                          auth=auth)
     client = TestClient(create_app(holder, Inbox(), {"webhook": adapter}, admin=wiring))
     return client, holder, wiring
@@ -306,6 +306,10 @@ def test_create_app_mints_once_and_it_authenticates(gw):
     assert key not in client.get("/admin/api/state", headers=AUTH).text
     audit = (tmp / "state" / "admin_audit.jsonl").read_text(encoding="utf-8")
     assert "app_created" in audit and key not in audit
+    for raw in audit.splitlines():  # the new fields carry names, never a value
+        line = json.loads(raw)
+        assert key not in json.dumps(line)
+        assert line["auth"] == "key" and line["client"] == "testclient"
     written = (tmp / "registry.yaml").read_text(encoding="utf-8").split("newapp:")[1]
     assert "allow_inbound: false" in written  # hard rule #7: written, never defaulted
 
@@ -596,6 +600,32 @@ def test_managed_secrets_load_before_and_beat_the_hand_env_file(tmp_path, monkey
         assert admin.secrets.source_of("ADM_K1") == "managed"
     finally:
         os.environ.pop("ADM_K1", None)
+
+
+def test_audit_lines_carry_posture_and_peer(gw, gw_open, monkeypatch):
+    for fixture, posture in ((gw, "key"), (gw_open, "open")):
+        client, holder, wiring, tmp = fixture
+        # Both fixtures share one environment and gw_open's build removed the
+        # admin key: put it back for the key iteration, remove it for open.
+        if posture == "key":
+            monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+        else:
+            monkeypatch.delenv("CHAT_GATEWAY_ADMIN_KEY", raising=False)
+        headers = AUTH if posture == "key" else {}
+        assert client.post("/admin/api/reload", headers=headers, json={}).status_code == 200
+        line = json.loads((tmp / "state" / "admin_audit.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+        assert line["auth"] == posture and line["actor"] == "admin"
+        assert line["client"] == "testclient"
+        assert set(line) == {"at", "actor", "auth", "client", "action", "target", "fields"}
+
+
+def test_every_write_route_records_the_peer(gw):
+    client, holder, wiring, tmp = gw
+    _new_app(client)
+    client.post("/admin/api/apps/newapp/rotate-key", headers=AUTH, json={})
+    client.post("/admin/api/identities", headers=AUTH, json={"name": "i9", "display": "d", "webhook_url": HOOK})
+    for line in (tmp / "state" / "admin_audit.jsonl").read_text(encoding="utf-8").splitlines():
+        assert json.loads(line)["client"] == "testclient"
 
 
 # -- secret-exposure sweep ------------------------------------------------------
