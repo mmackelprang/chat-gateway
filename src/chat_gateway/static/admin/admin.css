@@ -26,7 +26,7 @@ td button { margin:0 .25rem .25rem 0; }
 .table-wrap table { min-width:640px; }
 .muted { color:var(--muted); }
 .warn { color:var(--warn); }
-.error { color:var(--err); }
+.error, .err { color:var(--err); }
 .ok { color:var(--ok); }
 .note { font-size:.9em; color:var(--muted); margin:.25rem 0; }
 .pill { display:inline-block; padding:0 .45rem; margin-right:.25rem; border-radius:999px; border:1px solid var(--line); font-size:.85em; }
@@ -59,12 +59,17 @@ kbd { font:inherit; font-size:.85em; padding:0 .35rem; border:1px solid var(--li
 .callout.err { border-color:var(--err); }
 /* grant matrix: bounded scroll region, sticky header rows and first column */
 .matrix-wrap { overflow:auto; max-width:100%; max-height:calc(100vh - 250px); min-height:260px; border:1px solid var(--line); border-radius:8px; background:var(--card); }
-table.matrix { border-collapse:separate; border-spacing:0; min-width:100%; margin:0; }
+/* --group-h is the ONE height of the group row: it is also the identity row's sticky `top`, so the two cannot drift */
+table.matrix { --group-h:3.6rem; border-collapse:separate; border-spacing:0; min-width:100%; margin:0; }
 table.matrix caption { text-align:left; padding:.5rem .75rem; color:var(--muted); font-size:.9em; caption-side:bottom; }
 table.matrix th, table.matrix td { padding:.45rem .6rem; border-bottom:1px solid var(--line); border-right:1px solid var(--line); vertical-align:top; text-align:left; }
 table.matrix thead th { position:sticky; z-index:3; background:var(--panel); font-weight:500; }
-table.matrix thead tr.groups th { top:0; height:2.75rem; white-space:nowrap; font-size:.85em; color:var(--muted); border-bottom:none; }
-table.matrix thead tr.idents th { top:2.75rem; min-width:132px; }
+table.matrix thead tr.groups th { top:0; height:var(--group-h); white-space:nowrap; font-size:.85em; color:var(--muted); border-bottom:none; padding-top:.3rem; padding-bottom:.3rem; }
+table.matrix thead tr.groups th.collapsed { padding-left:.45rem; padding-right:.45rem; }
+table.matrix thead tr.groups th.collapsed .pill { margin-right:0; }
+table.matrix thead tr.groups th.collapsed button.toggle { margin-right:.3rem; }
+table.matrix thead tr.groups th.collapsed .roomlink { display:inline-block; max-width:10ch; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; }
+table.matrix thead tr.idents th { top:var(--group-h); min-width:132px; }
 table.matrix thead tr.idents th.collapsed { min-width:96px; }
 table.matrix th:first-child, table.matrix td:first-child { position:sticky; left:0; background:var(--card); z-index:2; min-width:230px; border-right:2px solid var(--line); }
 table.matrix thead th:first-child { z-index:4; background:var(--panel); }

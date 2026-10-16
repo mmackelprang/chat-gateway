@@ -190,10 +190,11 @@ function routesTo(appId, name) { return Object.entries(state.apps[appId].routes)
 function routeRooms(a) {
   return new Set(Object.values(a.routes).map((n) => state.identities[n] && state.identities[n].space).filter(Boolean));
 }
+// `dot` is the .dot colour class (ok/err); `cls` the text colour class (ok/error).
 function keyState(a) {
-  if (!a.key_configured) return { cls: "err", text: "key missing" };
+  if (!a.key_configured) return { dot: "err", cls: "error", text: "key missing" };
   const src = a.key_source === "process" || a.key_source === "managed" ? " (" + a.key_source + ")" : "";
-  return { cls: "ok", text: "key ok" + src };
+  return { dot: "ok", cls: "ok", text: "key ok" + src };
 }
 function lastDelivery(a) { const r = a.recent_deliveries || []; return r.length ? r[r.length - 1] : null; }
 function relTime(iso) {
@@ -284,6 +285,10 @@ function gridKeydown(ev) {
     if (cur.dataset.href) navigate(cur.dataset.href);
     return;
   }
+  if (!["ArrowLeft", "ArrowRight", "Home", "End", "ArrowUp", "ArrowDown"].includes(ev.key)) return;
+  // Claimed before looking for a target: at an edge there is nowhere to go,
+  // and the page must not scroll under the grid instead.
+  ev.preventDefault();
   const cells = [...table.querySelectorAll("[data-grid]")];
   const at = (row, col) => cells.find((x) => x.dataset.grid === row + "," + col);
   const rowOf = (row) => cells.filter((x) => Number(x.dataset.grid.split(",")[0]) === row);
@@ -296,19 +301,14 @@ function gridKeydown(ev) {
       break;
     }
     case "ArrowUp":
-      if (r === 0) return;
       if (r === 1) target = rowOf(0).find((x) => { const [s, e] = (x.dataset.span || "0,0").split(",").map(Number); return c >= s && c <= e; });
-      else target = at(r - 1, c);
+      else if (r > 1) target = at(r - 1, c);
       break;
-    case "ArrowDown":
+    default: // ArrowDown
       if (r === 0) target = at(1, Number((cur.dataset.span || "0,0").split(",")[0]));
       else target = at(r + 1, c);
-      break;
-    default: return;
   }
-  if (!target) return;
-  ev.preventDefault();
-  setRovingStop(cells, target);
+  if (target) setRovingStop(cells, target);
 }
 // Mouse: a collapsed column (header or cell) expands on click; anything else
 // with a destination opens it. Links and the toggle button keep their own
@@ -334,7 +334,7 @@ function pills(a) {
 function statusStrip(appId, a) {
   const ks = keyState(a), last = lastDelivery(a), span = routeRooms(a).size;
   return el("div", { class: "status-strip" },
-    el("span", { class: ks.cls }, el("span", { class: "dot " + ks.cls }), ks.text),
+    el("span", { class: ks.cls }, el("span", { class: "dot " + ks.dot }), ks.text),
     last
       ? el("span", { class: last.status === "delivered" ? "" : "error", title: last.ts }, last.status + " " + relTime(last.ts))
       : el("span", { text: "no deliveries" }),
@@ -345,17 +345,27 @@ function statusStrip(appId, a) {
 function chips(sevs) { return sevs.length ? el("span", { class: "chips" }, sevs.map((s) => el("span", { class: "chip", text: s }))) : null; }
 
 // One <th scope="colgroup"> per room. The toggle button is tabindex -1: the
-// header is the single roving stop and Space toggles it; the button is for the mouse.
+// header is the single roving stop and Space toggles it; the button is for the
+// mouse. Collapsed, the header is two short lines (toggle + lock pill over a
+// truncated id + count) so that a collapsed room really is ONE NARROW column
+// (D5: seven rooms fit a laptop); the full id and holder are in titles and
+// visually-hidden text. The header itself expands on click/Enter when
+// collapsed (`data-collapsed`); the room link still opens the room inspector.
 function groupHeaderCell(g, gi) {
-  const collapsed = !expanded.has(g.space), locked = !!g.room.locked_by;
-  return el("th", { scope: "colgroup", colspan: String(collapsed ? 1 : g.ids.length), class: locked ? "locked" : null,
-    "data-grid": "0," + (gi + 1), "data-span": g.start + "," + g.end, "data-room": g.space, "data-href": hrefFor("room", roomSegment(g.space)), tabindex: "-1" },
-    el("button", { type: "button", class: "toggle", text: collapsed ? "expand" : "collapse", "aria-expanded": String(!collapsed), tabindex: "-1",
-      "aria-label": (collapsed ? "Expand" : "Collapse") + " room " + roomLabel(g.space), on: { click: (ev) => { ev.stopPropagation(); toggleRoom(g.space); } } }),
-    el("a", { href: hrefFor("room", roomSegment(g.space)), tabindex: "-1", text: roomLabel(g.space) }),
-    locked ? [" ", el("span", { class: "pill warn", text: "locked by " + g.room.locked_by })] : null,
-    collapsed ? el("span", { class: "muted", text: " · " + g.ids.length + (g.ids.length === 1 ? " identity" : " identities") }) : null,
-    !collapsed && !g.space ? el("span", { class: "muted", text: " — cannot route inbound; not covered by any lock" }) : null);
+  const collapsed = !expanded.has(g.space), locked = !!g.room.locked_by, n = g.ids.length;
+  const idents = n + (n === 1 ? " identity" : " identities");
+  return el("th", { scope: "colgroup", colspan: String(collapsed ? 1 : n), class: [locked ? "locked" : "", collapsed ? "collapsed" : ""].join(" ").trim() || null,
+    "data-grid": "0," + (gi + 1), "data-span": g.start + "," + g.end, "data-room": g.space, "data-collapsed": collapsed ? "1" : null,
+    "data-href": hrefFor("room", roomSegment(g.space)), tabindex: "-1" },
+    el("div", {},
+      el("button", { type: "button", class: "toggle", text: collapsed ? "expand" : "collapse", "aria-expanded": String(!collapsed), tabindex: "-1",
+        "aria-label": (collapsed ? "Expand" : "Collapse") + " room " + roomLabel(g.space), on: { click: (ev) => { ev.stopPropagation(); toggleRoom(g.space); } } }),
+      locked ? el("span", { class: "pill warn", title: "locked by " + g.room.locked_by }, collapsed ? "locked" : "locked by " + g.room.locked_by,
+        collapsed ? el("span", { class: "vh", text: " by " + g.room.locked_by }) : null) : null),
+    el("div", {},
+      el("a", { class: "roomlink", href: hrefFor("room", roomSegment(g.space)), tabindex: "-1", title: roomLabel(g.space), text: roomLabel(g.space) }),
+      collapsed ? el("span", { class: "muted", title: idents }, " ·" + n, el("span", { class: "vh", text: " " + idents })) : null,
+      !collapsed && !g.space ? el("span", { class: "muted", text: " — cannot route inbound; not covered by any lock" }) : null));
 }
 function identityHeaderCell(col, c) {
   const locked = !!col.g.room.locked_by;
@@ -432,7 +442,10 @@ function boardEmpty(kind, nApps, nIdents) {
     el("p", { class: "muted small", text: "Prefer the manual runbook? docs/registering-an-app.md" })));
 }
 // Loading: six skeleton rows, no spinner. Error: the status and the server's
-// words, then Retry; the sha and counts stay empty rather than stale.
+// words, then Retry; the sha and counts stay empty rather than stale. The card
+// is for a failed GET state AFTER the console is visible (Registry › Refresh
+// view, or re-entering the board with no state) — a failed first probe stays
+// CG-91's: the login section carries the message (controller ruling).
 function boardLoading() {
   return el("div", { class: "matrix-wrap", "aria-busy": "true" }, el("span", { class: "vh", text: "Loading registry…" }),
     el("table", { class: "matrix" }, el("tbody", {}, [0, 1, 2, 3, 4, 5].map(() => el("tr", {},
@@ -441,7 +454,20 @@ function boardLoading() {
 function boardError(e) {
   return el("div", { class: "card" },
     el("h2", { text: "Could not load the registry view (HTTP " + (e && e.status ? e.status : "?") + " — " + (e && e.message ? e.message : "no response") + ")" }),
-    el("p", {}, el("button", { type: "button", class: "primary", text: "Retry", on: { click: () => { loadError = null; probePosture(); } } })));
+    el("p", {}, el("button", { type: "button", class: "primary", text: "Retry", on: { click: reloadView } })));
+}
+// GET state again with the console visible. On a non-401 failure the view
+// becomes the error card and the header's sha and counts are cleared rather
+// than left describing a registry the page can no longer read.
+async function reloadView() {
+  try { await refresh(); loadError = null; render(); return true; }
+  catch (e) {
+    if (e.status === 401) { fail(e); return false; }
+    state = null; loadError = e;
+    $("sha").textContent = ""; $("counts").textContent = "";
+    render();
+    return false;
+  }
 }
 
 function board() {
@@ -1090,12 +1116,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const closeMenu = () => { $("registry-menu").open = false; };
   $("menu-refresh").addEventListener("click", async () => {
     closeMenu();
-    try { await refresh(); render(); notify("View refreshed."); } catch (e) { fail(e); }
+    if (await reloadView()) notify("View refreshed.");
   });
   $("menu-reload").addEventListener("click", async () => {
     closeMenu();
-    try { await api("POST", "/admin/api/reload", {}); await refresh(); render(); notify("Reloaded from disk."); }
-    catch (e) { fail(e); }
+    try { await api("POST", "/admin/api/reload", {}); } catch (e) { fail(e); return; } // a refused reload is a notice, the registry is unchanged
+    if (await reloadView()) notify("Reloaded from disk.");
   });
   $("menu-shortcuts").addEventListener("click", () => { closeMenu(); shortcutsDialog(); });
 });

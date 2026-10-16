@@ -398,8 +398,16 @@ def test_grid_keyboard_contract():
         assert key in fn, key
     assert "setRovingStop(cells, target)" in fn  # one stop: the moved-to cell gets tabindex 0
     assert "tabIndex = -1" in _fn(js, "function setRovingStop(") and "tabIndex = 0" in _fn(js, "function setRovingStop(")
+    # Up/Down between the group row and the identity row ride on the group's span;
+    # a collapsed column (header or cell) expands on Enter/click.
+    assert "dataset.span" in fn and "cur.dataset.collapsed" in fn
+    assert '"data-span": g.start + "," + g.end' in js and '"data-collapsed": collapsed ? "1" : null' in js
+    assert "cell.dataset.collapsed" in _fn(js, "function gridClick(")
+    # edges: the arrow is claimed before the target search, so the page never scrolls under the grid
+    assert fn.index("ev.preventDefault()") < fn.index("const cells = ")
     # after a toggle the matrix re-renders and focus returns to that room's header
     assert "focusRoomHeader(" in _fn(js, "function toggleRoom(")
+    assert 'x.dataset.grid.startsWith("0,")' in _fn(js, "function focusRoomHeader(")
 
 
 def test_board_states_are_worded_as_the_spec():
@@ -408,5 +416,8 @@ def test_board_states_are_worded_as_the_spec():
     assert "Nothing registered yet. An app needs an identity to send as, so start there." in js
     assert "identities, no apps. Nothing can send until an app is registered and granted one." in js
     assert "apps and nothing to send as. Every grant list is empty." in js
-    assert "Could not load the registry view (HTTP " in js and 'text: "Retry"' in js
+    assert "Could not load the registry view (HTTP " in js and 'text: "Retry", on: { click: reloadView }' in js
+    assert "reloadView()" in js[js.index('$("menu-refresh")'):]  # a failed Refresh view is the card, not a stale board
     assert 'class: "cards"' in js  # phone rendering of the same data
+    css = (STATIC / "admin.css").read_text(encoding="utf-8")
+    assert css.count("var(--group-h)") == 2 and "--group-h:" in css  # one height for the group row and the identity row's top
