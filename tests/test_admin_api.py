@@ -5,11 +5,12 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from chat_gateway.admin import AdminWiring, env_name, parse_webhook_space, widening
+from chat_gateway.admin import (AUTH_KEY, AUTH_OPEN, AdminWiring, admin_auth_posture,
+                                env_name, parse_webhook_space, widening)
 from chat_gateway.admin_audit import AdminAudit
 from chat_gateway.inbox import Inbox
 from chat_gateway.managed_secrets import ManagedSecrets
-from chat_gateway.registry import App, load_registry
+from chat_gateway.registry import App, RegistryError, load_registry
 from chat_gateway.registry_holder import RegistryHolder
 from chat_gateway.registry_store import RegistryStore
 from chat_gateway.service import create_app
@@ -122,6 +123,30 @@ def test_widening_cases():
     assert widening(old, N(allowed_users=["a@x", "b@x"])) == ["allowed_users added"]
     assert widening(old, N(callback_url="https://cb")) == ["callback_url"]
     assert widening(old, N(allow_inbound=False, allowed_users=[])) == []
+
+
+# -- posture ----------------------------------------------------------------
+def test_posture_defaults_to_key_when_absent_or_empty():
+    assert admin_auth_posture(None) == AUTH_KEY
+    assert admin_auth_posture("") == AUTH_KEY
+
+
+def test_posture_accepts_exactly_the_two_values():
+    assert admin_auth_posture("key") == AUTH_KEY
+    assert admin_auth_posture("open") == AUTH_OPEN
+
+
+@pytest.mark.parametrize("raw", ["Open", "OPEN", "KEY", "yes", "1", "true", " open"])
+def test_posture_is_never_coerced(raw):
+    with pytest.raises(RegistryError) as e:
+        admin_auth_posture(raw)
+    assert "GATEWAY_ADMIN_AUTH" in str(e.value) and "'key'" in str(e.value) and "'open'" in str(e.value)
+
+
+def test_wiring_defaults_to_key_and_reports_it(gw):
+    client, holder, wiring, tmp = gw
+    assert wiring.auth == AUTH_KEY
+    assert client.get("/healthz").json()["admin"]["auth"] == "key"
 
 
 # -- auth -------------------------------------------------------------------

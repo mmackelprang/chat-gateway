@@ -28,7 +28,7 @@ from .auth import mint_key
 from .delivery import DeliveryLog
 from .inbox import Inbox
 from .managed_secrets import ManagedSecrets
-from .registry import ADMIN_KEY_ENV, SEVERITIES, App
+from .registry import ADMIN_KEY_ENV, SEVERITIES, App, RegistryError
 from .registry_holder import RegistryHolder
 from .registry_store import RegistryStore, StoreError, category_for, flow_seq
 
@@ -38,9 +38,25 @@ ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _WEBHOOK_PATH = re.compile(r"^/v1/spaces/([A-Za-z0-9_-]+)/messages$")
 RATE_LIMIT_FAILURES = 5
 RATE_LIMIT_WINDOW_S = 60.0
+#: The console's auth posture (CG-91). Env-var NAME only (hard rule #2).
+AUTH_ENV = "GATEWAY_ADMIN_AUTH"
+AUTH_KEY = "key"
+AUTH_OPEN = "open"
 STATIC_DIR = Path(__file__).parent / "static" / "admin"
 RULE_6 = ("Inbound crosses to a consumer only by that consumer's explicit "
           "registry opt-in (hard rule #6).")
+
+
+def admin_auth_posture(raw: str | None) -> str:
+    """Parse `GATEWAY_ADMIN_AUTH`: absent or empty is `key`; only the two exact
+    values are accepted. Never coerced or lowercased — a typo such as `Open`
+    must refuse to boot rather than silently pick a posture (hard rule #7)."""
+    if raw is None or raw == "":
+        return AUTH_KEY
+    if raw in (AUTH_KEY, AUTH_OPEN):
+        return raw
+    raise RegistryError(f"{AUTH_ENV}={raw!r} is not one of 'key', 'open' "
+                        "(CG-91; absence means 'key')")
 
 
 def env_name(prefix: str, ident: str) -> str:
@@ -176,9 +192,10 @@ class AdminWiring:
     store: RegistryStore
     secrets: ManagedSecrets
     audit: AdminAudit
+    auth: str = AUTH_KEY
 
     def health(self) -> dict:
-        return {"enabled": True, "writes": self.store.writes,
+        return {"enabled": True, "auth": self.auth, "writes": self.store.writes,
                 "refused": self.store.refused,
                 # An authored CATEGORY, never a message: this lands on the
                 # unauthenticated /healthz (fix round I2, hard rule #2).
