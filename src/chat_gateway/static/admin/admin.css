@@ -72,6 +72,28 @@ table.matrix tbody td { text-align:center; }
 table.matrix tbody td.cell:hover, table.matrix tbody td.cell:focus-visible { background:var(--accent-soft); cursor:pointer; }
 table.matrix tbody tr.selected th, table.matrix tbody tr.selected td { box-shadow:inset 0 0 0 999px var(--accent-soft); }
 table.matrix tbody tr:last-child th, table.matrix tbody tr:last-child td { border-bottom:none; }
+table.matrix [data-grid]:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+table.matrix thead tr.groups th a { color:inherit; text-decoration:none; }
+table.matrix thead tr.idents th a, table.matrix tbody th a { color:var(--fg); font-weight:600; text-decoration:none; }
+table.matrix th a:hover { text-decoration:underline; }
+table.matrix thead tr.idents .disp { display:block; font-size:.82em; color:var(--muted); font-weight:400; }
+table.matrix tbody td .chips { display:block; margin-top:.15rem; }
+button.toggle { padding:0 .4rem; font-size:.8em; line-height:1.5; margin-right:.4rem; }
+.vh { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.small { font-size:.9em; }
+.status-strip { font-size:.85em; color:var(--muted); margin-top:.15rem; display:flex; flex-wrap:wrap; gap:.15rem .6rem; font-weight:400; }
+.matrix-tools { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin:0 0 .5rem; font-size:.9em; }
+.legend { display:flex; gap:1.25rem; flex-wrap:wrap; font-size:.88em; color:var(--muted); margin:.5rem 0 0; align-items:center; }
+.legend .sw { display:inline-block; width:1.1em; height:1.1em; vertical-align:-3px; margin-right:.3rem; border-radius:3px; }
+.legend .sw.locked { background:var(--locked-solid); border:1px solid var(--warn); }
+.skeleton { width:60%; margin:.3rem 0; }
+td .skeleton { width:40%; margin:.3rem auto; }
+/* phone cards */
+.appcard { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.75rem 1rem; margin:.6rem 0; }
+.appcard .chipsrow .room { display:block; font-size:.8em; color:var(--muted); margin-top:.3rem; }
+.appcard .chipsrow .room.locked { background:var(--locked-bg); display:inline-block; padding:0 .3rem; border-radius:3px; }
+.appcard .ichip { display:inline-block; border:1px solid var(--line); border-radius:999px; padding:0 .5rem; margin:.15rem .2rem 0 0; font-size:.88em; color:var(--fg); text-decoration:none; }
+.appcard .ichip small { color:var(--muted); }
 /* locked: opaque composed colour, so sticky cells do not show what scrolls beneath */
 .locked { background:var(--locked-bg); }
 table.matrix thead tr.groups th.locked, table.matrix thead tr.idents th.locked, table.matrix tbody td.locked { background:var(--locked-solid); color:var(--fg); }
@@ -95,7 +117,7 @@ dialog[data-tone=danger] h2 { color:var(--err); }
 /* phone: matrix collapses to app cards */
 .cards { display:none; }
 @media (max-width: 720px) {
-  .matrix-wrap { display:none; }
+  .matrix-wrap, .legend, .matrix-tools { display:none; }
   .cards { display:block; }
   .savebar button { flex:1; min-height:44px; }
   button { min-height:40px; }

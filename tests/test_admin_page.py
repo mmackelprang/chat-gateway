@@ -65,6 +65,9 @@ def test_the_admin_key_is_never_persisted_by_the_page():
     for api in ("localStorage", "sessionStorage", "document.cookie", "indexedDB"):
         assert api not in js
     assert "innerHTML" not in js  # all data rendered via textContent
+    # D5: the board's expanded-rooms set and the selected app are page variables
+    # (lost on reload by design), so the storage ban above covers them too.
+    assert "let expanded = new Set();" in js and "let selectedApp = null;" in js
 
 
 def test_api_responses_are_no_store(gw):
@@ -80,8 +83,18 @@ def test_avatar_gallery_is_a_link_and_nothing_is_loaded_cross_origin():
     assert f'AVATAR_GALLERY = "{gallery}"' in js
     assert 'el("a", { href: AVATAR_GALLERY, target: "_blank", rel: "noopener noreferrer"' in js
     assert not re.search(r"""\bsrc\s*[:=]\s*["'`]?https?:""", js)
-    assert 'el("img"' not in js and "new Image" not in js
+    assert "new Image" not in js
     assert not re.search(r"""fetch\(\s*["'`]https?:""", js)
+    # The only <img> the page builds is the bundled avatar, served same-origin
+    # (D6); the raw GitHub URL exists once, as the constant handed to the operator.
+    for m in re.finditer(r"""el\("img",\s*\{([^}]*)\}""", js):
+        assert 'src: "/admin/static/avatars/"' in m.group(1), m.group(0)
+    raw = "https://raw.githubusercontent.com/"
+    assert js.count(raw) == 1
+    assert f'AVATAR_PNG_PATTERN = "{raw}' in js
+    for line in js.splitlines():
+        if "https://" in line:
+            assert line.lstrip().startswith(("const AVATAR_GALLERY =", "const AVATAR_PNG_PATTERN =")), line
 
 
 def test_write_never_throws_after_the_mutation_succeeded():
@@ -328,3 +341,72 @@ def test_view_is_not_a_live_region_and_toast_rule_is_gone():
     assert "aria-live" not in _html()
     css = (STATIC / "admin.css").read_text(encoding="utf-8")
     assert "#toast" not in css and "kbd {" in css
+
+
+# --- CG-92 Task 7: the board — grant matrix, bounded region, collapsible rooms
+
+CAPTION = ("Which app may send as which identity, grouped by room. A column with two or more dots "
+           "is a shared identity; a collapsed room shows one column, and a dot there means the app "
+           "sends into that room.")
+
+
+def test_board_is_a_real_table_in_a_bounded_region():
+    js = _js()
+    fn = _fn(js, "function board(")
+    assert 'class: "matrix"' in js and 'class: "matrix-wrap"' in js
+    assert 'el("caption"' in js and CAPTION in js
+    assert 'scope: "colgroup"' in js and 'scope: "col"' in js and 'scope: "row"' in js
+    assert '"table-wrap"' not in fn  # the two old tables are gone
+    assert "state.rooms" in fn  # D2: the page never re-derives rooms
+
+
+def test_rooms_collapse_by_default_in_page_memory_only():
+    js = _js()
+    assert "let expanded = new Set();" in js and "let selectedApp = null;" in js
+    for name in ("function toggleRoom(", "function expandAll(", "function collapseAll(", "function expandRoomsOf("):
+        assert name in js, name
+    assert '"aria-expanded"' in js
+    assert '"any identity here"' in js
+    assert '"Expand all rooms"' in js and '"Collapse all rooms"' in js
+    assert '" rooms expanded · remembered for this session only"' in js
+    assert "Enter expands the room" in js
+    assert "cannot route inbound; not covered by any lock" in js
+    assert 'id: "expand-all"' in js and 'id: "collapse-all"' in js
+
+
+def test_avatar_mark_is_same_origin_or_a_dashed_circle():
+    js = _js()
+    fn = _fn(js, "function avatarMark(")
+    assert 'src: "/admin/static/avatars/"' in fn and 'alt: ""' in fn
+    assert "createElementNS" in fn and '"custom avatar URL"' in fn and '"no avatar recorded"' in fn
+    assert "state.avatars" in fn  # a bundled NAME, decided by the server's list, not by shape
+    assert "function relTime(" in js
+
+
+def test_filter_is_a_plain_substring_never_a_regexp():
+    js = _js()
+    fn = _fn(js, "function applyFilter(")
+    assert ".toLowerCase().includes(" in fn
+    assert "new RegExp(" not in js
+    assert '" apps · "' in fn and '" identities match "' in fn
+
+
+def test_grid_keyboard_contract():
+    js = _js()
+    fn = _fn(js, "function gridKeydown(")
+    for key in ('"ArrowLeft"', '"ArrowRight"', '"Home"', '"End"', '"ArrowUp"', '"ArrowDown"', '"Enter"', '" "'):
+        assert key in fn, key
+    assert "setRovingStop(cells, target)" in fn  # one stop: the moved-to cell gets tabindex 0
+    assert "tabIndex = -1" in _fn(js, "function setRovingStop(") and "tabIndex = 0" in _fn(js, "function setRovingStop(")
+    # after a toggle the matrix re-renders and focus returns to that room's header
+    assert "focusRoomHeader(" in _fn(js, "function toggleRoom(")
+
+
+def test_board_states_are_worded_as_the_spec():
+    js = _js()
+    assert '"aria-busy": "true"' in js and "Loading registry…" in js
+    assert "Nothing registered yet. An app needs an identity to send as, so start there." in js
+    assert "identities, no apps. Nothing can send until an app is registered and granted one." in js
+    assert "apps and nothing to send as. Every grant list is empty." in js
+    assert "Could not load the registry view (HTTP " in js and 'text: "Retry"' in js
+    assert 'class: "cards"' in js  # phone rendering of the same data

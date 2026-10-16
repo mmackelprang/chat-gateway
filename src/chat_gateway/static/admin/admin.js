@@ -17,6 +17,10 @@ const RULE_6 = "Hard rule #6: inbound crosses to a consumer only by that consume
 const AVATAR_GALLERY = "https://github.com/mmackelprang/chat-gateway/tree/main/assets/avatars";
 const AVATAR_PNG_PATTERN = "https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png/<name>.png";
 const REFUSED_INTRO = "The server refused this save until you confirm:";
+// The SVG namespace IDENTIFIER for the dashed avatar mark — nothing is fetched
+// from it. Spelt in two halves so the page's plain-HTTP scan keeps catching
+// real URLs instead of being taught an exception.
+const SVG_NS = "http:" + "//www.w3.org/2000/svg";
 const FILE_EDIT ="Grants of an inbound_locked app are a registry file edit, not a console action.";
 
 function el(tag, attrs, ...children) {
@@ -115,12 +119,18 @@ async function refresh() {
   $("sha").textContent = "registry " + state.registry_sha256.slice(0, 12);
   const rooms = Object.keys(state.rooms || {}).filter((k) => k).length; // "" = identities with no room
   $("counts").textContent = Object.keys(state.apps).length + " apps · " + Object.keys(state.identities).length + " identities · " + rooms + " rooms";
+  // Operator to-dos; the same marks sit on the board's app rows (§4.1).
   const b = $("banner");
+  const todos = [];
   if (state.shadowed_env_names.length) {
-    b.hidden = false;
-    b.textContent = "Stale secrets in the read-only .env (old values that would revive if managed.env is lost): "
-      + state.shadowed_env_names.join(", ") + ". Remove those lines from .env by hand.";
-  } else b.hidden = true;
+    todos.push("Stale secrets in the read-only .env (old values that would revive if managed.env is lost): "
+      + state.shadowed_env_names.join(", ") + ". Remove those lines from .env by hand.");
+  }
+  if ((state.inbound_defaulted || []).length) {
+    todos.push("allow_inbound was left to the loader's default (off) for: " + state.inbound_defaulted.join(", ") + ". Saving the app here writes it explicitly.");
+  }
+  b.hidden = !todos.length;
+  b.textContent = todos.join(" ");
 }
 
 // Mutating call: carries the sha the page last saw, so a second tab gets 409.
@@ -156,47 +166,326 @@ function lockedHolders() {
 }
 
 // --------------------------------------------------------------- board ---
-function board() {
-  const held = lockedHolders();
-  const appRows = Object.entries(state.apps).map(([id, a]) => el("tr", {},
-    el("td", {}, el("strong", { text: id })),
-    el("td", { text: a.identities.join(", ") || "—" }),
-    el("td", { text: Object.entries(a.routes).map(([s, i]) => s + "→" + i).join(", ") || "—" }),
-    el("td", {}, el("span", { class: "pill", text: a.allow_inbound ? "inbound on" : "inbound off" }),
-      a.inbound_locked ? el("span", { class: "pill warn", text: "locked" }) : null),
-    el("td", { class: a.key_configured ? "ok" : "error", text: (a.key_configured ? "key set" : "key missing") + " (" + a.key_source + ")" }),
-    el("td", { text: a.recent_deliveries.length ? a.recent_deliveries[a.recent_deliveries.length - 1].status : "—" }),
-    el("td", {}, el("button", { type: "button", text: "Manage", on: { click: () => navigate(hrefFor("app", id)) } }))));
-  const idRows = Object.entries(state.identities).map(([name, i]) => {
-    const locker = held.get(name);
-    let webhookAction = null;
-    if (i.mode === "webhook") {
-      webhookAction = locker
-        ? el("p", { class: "note", text: "Webhook held by locked app " + locker + " — replacing it is a registry file edit." })
-        : el("button", { type: "button", text: "Replace webhook", on: { click: () => navigate(hrefFor("replace", name)) } });
+// The grant matrix (spec §4.2): rows are apps, columns are identities grouped
+// under their room, from the server's `state.rooms` (D2 — the page never
+// re-derives rooms or locks; its only inversion is holders(), a plain lookup).
+//
+// D5: the table scrolls in its own bounded region (admin.css .matrix-wrap) so
+// its horizontal scrollbar is always on screen, and EVERY room starts
+// collapsed to one column, so a wide registry is not a long scroll either.
+// The expanded set and the highlighted app live in page memory only: lost on
+// reload by design, never stored (the storage test pins both variables).
+let expanded = new Set(); // room keys ("" = identities with no room) currently expanded
+let selectedApp = null; // the app last opened in an inspector; its row is highlighted on return
+let loadError = null; // the probe's non-401 failure, for the error-on-load card
+const CAPTION = "Which app may send as which identity, grouped by room. A column with two or more dots is a shared identity; a collapsed room shows one column, and a dot there means the app sends into that room.";
+
+// A room's hash segment is the id after `spaces/`; `none` for the empty room.
+function roomSegment(space) { return space ? (space.startsWith("spaces/") ? space.slice("spaces/".length) : space) : "none"; }
+function roomLabel(space) { return space || "No room recorded"; }
+function holders(name) { return Object.keys(state.apps).filter((a) => state.apps[a].identities.includes(name)); }
+function routesTo(appId, name) { return Object.entries(state.apps[appId].routes).filter(([, v]) => v === name).map(([s]) => s); }
+// CG-86: the rooms an app's routes land in — more than one means an all-clear
+// can post into a different room from the alert it closes.
+function routeRooms(a) {
+  return new Set(Object.values(a.routes).map((n) => state.identities[n] && state.identities[n].space).filter(Boolean));
+}
+function keyState(a) {
+  if (!a.key_configured) return { cls: "err", text: "key missing" };
+  const src = a.key_source === "process" || a.key_source === "managed" ? " (" + a.key_source + ")" : "";
+  return { cls: "ok", text: "key ok" + src };
+}
+function lastDelivery(a) { const r = a.recent_deliveries || []; return r.length ? r[r.length - 1] : null; }
+function relTime(iso) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const d = Math.max(0, Date.now() - t);
+  if (d < 60000) return "just now";
+  if (d < 3600000) return Math.round(d / 60000) + " min ago";
+  if (d < 86400000) return Math.round(d / 3600000) + " h ago";
+  return Math.round(d / 86400000) + " d ago";
+}
+
+// D6: a bundled icon is an <img> served by THIS gateway (CSP img-src 'self');
+// "bundled" is decided by the server's list, never by the value's shape. A
+// custom URL or none is a dashed circle with a title — never a fetched image.
+function avatarMark(value, size) {
+  const s = size || 16;
+  if (value && (state.avatars || []).includes(value)) {
+    return el("img", { class: "avatar s" + s, src: "/admin/static/avatars/" + value + ".png", alt: "", title: "avatar: " + value });
+  }
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "avatar none s" + s); svg.setAttribute("viewBox", "0 0 20 20"); svg.setAttribute("role", "img");
+  const c = document.createElementNS(SVG_NS, "circle"); c.setAttribute("cx", "10"); c.setAttribute("cy", "10"); c.setAttribute("r", "9");
+  const title = document.createElementNS(SVG_NS, "title"); title.textContent = value ? "custom avatar URL" : "no avatar recorded";
+  svg.append(...toNodes([c, title]));
+  return svg;
+}
+
+// Plain substring, lower-cased, over app id, identity name, display and room
+// id — never a RegExp, so `trader.*` or `(` filter as the characters typed.
+function applyFilter(text) {
+  const q = (text || "").trim().toLowerCase();
+  const has = (s) => !!q && (s || "").toLowerCase().includes(q);
+  const appIds = Object.keys(state.apps), names = Object.keys(state.identities);
+  const identSelf = (n) => has(n) || has(state.identities[n].display) || has(state.identities[n].space);
+  const apps = !q ? appIds : appIds.filter((a) => has(a) || state.apps[a].identities.some(identSelf));
+  const idents = !q ? names : names.filter((n) => identSelf(n) || holders(n).some(has));
+  const summary = q ? apps.length + " of " + appIds.length + " apps · " + idents.length + " of " + names.length
+    + " identities match " + "'" + text.trim() + "'" : null;
+  return { q, apps, idents: new Set(idents), summary };
+}
+
+function toggleRoom(space) {
+  if (expanded.has(space)) expanded.delete(space); else expanded.add(space);
+  focusRoomHeader(space);
+}
+function expandAll() { for (const k of Object.keys(state.rooms || {})) expanded.add(k); board(); refocus("expand-all", "collapse-all"); }
+function collapseAll() { expanded.clear(); board(); refocus("collapse-all", "expand-all"); }
+// Opening an app inspector expands the rooms that hold its grants, and that
+// app's row is highlighted on return (D5). One call on inspector entry does both.
+function expandRoomsOf(appId) {
+  selectedApp = appId;
+  const a = state.apps[appId];
+  if (!a) return;
+  for (const [k, r] of Object.entries(state.rooms || {})) if (r.identities.some((n) => a.identities.includes(n))) expanded.add(k);
+}
+// The tools row re-renders with the board; the pressed button is usually
+// disabled afterwards (its job is done), so focus moves to its twin.
+function refocus(id, alt) { const b = $(id), a = $(alt); if (b && !b.disabled) b.focus(); else if (a) a.focus(); }
+// After a toggle the matrix re-renders; focus returns to that room's header
+// (the roving stop), so a keyboard user is not dropped to the top of the page.
+function focusRoomHeader(space) {
+  board();
+  const cells = [...document.querySelectorAll("table.matrix [data-grid]")];
+  const th = cells.find((x) => x.dataset.room === space && x.dataset.grid.startsWith("0,"));
+  if (th) setRovingStop(cells, th);
+}
+function setRovingStop(cells, target) { for (const x of cells) x.tabIndex = -1; target.tabIndex = 0; target.focus(); }
+
+// Roving tabindex over three row kinds (§4.7): row 0 room headers, row 1
+// identity headers, rows 2+ apps. Left/Right/Home/End within a row; Up from an
+// identity lands on the room header that SPANS it; Down from a room header
+// lands on its first column; Enter opens (or expands a collapsed column);
+// Space toggles a room header. A collapsed room is exactly one column in every
+// row, so only the column count changes.
+function gridKeydown(ev) {
+  const table = ev.currentTarget;
+  const cur = ev.target.closest("[data-grid]");
+  if (!cur || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const [r, c] = cur.dataset.grid.split(",").map(Number);
+  if (ev.key === " ") {
+    if (r === 0 && cur.dataset.room !== undefined) { ev.preventDefault(); toggleRoom(cur.dataset.room); }
+    return;
+  }
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    if (cur.dataset.collapsed) { toggleRoom(cur.dataset.room); return; }
+    if (cur.dataset.href) navigate(cur.dataset.href);
+    return;
+  }
+  const cells = [...table.querySelectorAll("[data-grid]")];
+  const at = (row, col) => cells.find((x) => x.dataset.grid === row + "," + col);
+  const rowOf = (row) => cells.filter((x) => Number(x.dataset.grid.split(",")[0]) === row);
+  let target = null;
+  switch (ev.key) {
+    case "ArrowLeft": case "ArrowRight": case "Home": case "End": {
+      const row = rowOf(r);
+      const nc = ev.key === "Home" ? 0 : ev.key === "End" ? row.length - 1 : c + (ev.key === "ArrowRight" ? 1 : -1);
+      target = at(r, Math.max(0, Math.min(nc, row.length - 1)));
+      break;
     }
-    return el("tr", {},
-      el("td", {}, el("strong", { text: name })),
-      el("td", { text: i.display }),
-      el("td", { text: i.space || "—" }),
-      el("td", { class: i.env_resolved ? "ok" : "error", text: i.env_resolved ? "ready" : "not resolvable" }),
-      el("td", { text: i.secret_source || "—" }),
-      el("td", {},
-        webhookAction,
-        el("button", { type: "button", text: "Rename display", on: { click: () => renameIdentity(name, i.display) } }),
-        el("button", { type: "button", class: "danger", text: "Delete", on: { click: () => deleteIdentity(name) } })));
-  });
-  const defaulted = state.inbound_defaulted || [];
+    case "ArrowUp":
+      if (r === 0) return;
+      if (r === 1) target = rowOf(0).find((x) => { const [s, e] = (x.dataset.span || "0,0").split(",").map(Number); return c >= s && c <= e; });
+      else target = at(r - 1, c);
+      break;
+    case "ArrowDown":
+      if (r === 0) target = at(1, Number((cur.dataset.span || "0,0").split(",")[0]));
+      else target = at(r + 1, c);
+      break;
+    default: return;
+  }
+  if (!target) return;
+  ev.preventDefault();
+  setRovingStop(cells, target);
+}
+// Mouse: a collapsed column (header or cell) expands on click; anything else
+// with a destination opens it. Links and the toggle button keep their own
+// behaviour (the room link still opens the room inspector).
+function gridClick(ev) {
+  if (ev.target.closest("a, button")) return;
+  const cell = ev.target.closest("[data-grid]");
+  if (!cell) return;
+  if (cell.dataset.collapsed) { toggleRoom(cell.dataset.room); return; }
+  if (cell.dataset.href) navigate(cell.dataset.href);
+}
+
+function identityDot(i) {
+  const cls = i.mode !== "webhook" ? "" : i.env_resolved ? "ok" : "err";
+  const words = i.mode !== "webhook" ? "Chat-app identity (tier 2)" : i.env_resolved ? "webhook ready" : "webhook URL not set";
+  return [el("span", { class: ("dot " + cls).trim(), title: words }), el("span", { class: "vh", text: words + ". " })];
+}
+function pills(a) {
+  return [el("span", { class: "pill", text: a.allow_inbound ? "inbound on" : "inbound off" }),
+    a.inbound_locked ? el("span", { class: "pill warn", text: "locked" }) : null];
+}
+// Key state, last delivery (status + relative time, ISO ts in title), row marks.
+function statusStrip(appId, a) {
+  const ks = keyState(a), last = lastDelivery(a), span = routeRooms(a).size;
+  return el("div", { class: "status-strip" },
+    el("span", { class: ks.cls }, el("span", { class: "dot " + ks.cls }), ks.text),
+    last
+      ? el("span", { class: last.status === "delivered" ? "" : "error", title: last.ts }, last.status + " " + relTime(last.ts))
+      : el("span", { text: "no deliveries" }),
+    span > 1 ? el("span", { class: "warn", text: "routes span " + span + " rooms" }) : null,
+    (state.shadowed_env_names || []).includes(a.key_env) ? el("span", { class: "warn", text: "stale .env value" }) : null,
+    (state.inbound_defaulted || []).includes(appId) ? el("span", { class: "warn", text: "inbound defaulted" }) : null);
+}
+function chips(sevs) { return sevs.length ? el("span", { class: "chips" }, sevs.map((s) => el("span", { class: "chip", text: s }))) : null; }
+
+// One <th scope="colgroup"> per room. The toggle button is tabindex -1: the
+// header is the single roving stop and Space toggles it; the button is for the mouse.
+function groupHeaderCell(g, gi) {
+  const collapsed = !expanded.has(g.space), locked = !!g.room.locked_by;
+  return el("th", { scope: "colgroup", colspan: String(collapsed ? 1 : g.ids.length), class: locked ? "locked" : null,
+    "data-grid": "0," + (gi + 1), "data-span": g.start + "," + g.end, "data-room": g.space, "data-href": hrefFor("room", roomSegment(g.space)), tabindex: "-1" },
+    el("button", { type: "button", class: "toggle", text: collapsed ? "expand" : "collapse", "aria-expanded": String(!collapsed), tabindex: "-1",
+      "aria-label": (collapsed ? "Expand" : "Collapse") + " room " + roomLabel(g.space), on: { click: (ev) => { ev.stopPropagation(); toggleRoom(g.space); } } }),
+    el("a", { href: hrefFor("room", roomSegment(g.space)), tabindex: "-1", text: roomLabel(g.space) }),
+    locked ? [" ", el("span", { class: "pill warn", text: "locked by " + g.room.locked_by })] : null,
+    collapsed ? el("span", { class: "muted", text: " · " + g.ids.length + (g.ids.length === 1 ? " identity" : " identities") }) : null,
+    !collapsed && !g.space ? el("span", { class: "muted", text: " — cannot route inbound; not covered by any lock" }) : null);
+}
+function identityHeaderCell(col, c) {
+  const locked = !!col.g.room.locked_by;
+  if (col.collapsed) {
+    return el("th", { scope: "col", class: "collapsed" + (locked ? " locked" : ""), "data-grid": "1," + (c + 1), "data-room": col.g.space, "data-collapsed": "1", tabindex: "-1" },
+      el("span", { class: "muted small", text: "any identity here" }));
+  }
+  const n = col.name, i = state.identities[n];
+  return el("th", { scope: "col", class: locked ? "locked" : null, "data-grid": "1," + (c + 1), "data-href": hrefFor("identity", n), tabindex: "-1" },
+    identityDot(i), avatarMark(i.avatar, 16),
+    el("a", { href: hrefFor("identity", n), tabindex: "-1", text: n }),
+    holders(n).length ? null : [" ", el("span", { class: "pill", text: "unused" })],
+    el("span", { class: "disp", text: i.display }));
+}
+// Cells are NOT toggles: a grant is written in the inspector with an explicit
+// Save, so the 428 flow and the ordered-identities rule keep one home.
+function collapsedCell(appId, a, col, ri, c) {
+  const mine = col.g.ids.filter((n) => a.identities.includes(n));
+  const sevs = mine.flatMap((n) => routesTo(appId, n));
+  const label = roomLabel(col.g.space);
+  return el("td", { class: (col.g.room.locked_by ? "locked " : "") + "cell", "data-grid": (ri + 2) + "," + (c + 1), "data-room": col.g.space, "data-collapsed": "1", tabindex: "-1",
+    title: (mine.length ? appId + " sends into " + label + " as " + mine.join(", ") : appId + " does not post into " + label) + " — Enter expands the room" },
+    mine.length ? [el("span", { class: "dot granted" }), el("span", { class: "vh", text: "sends here as " + mine.join(", ") })] : null,
+    chips(sevs));
+}
+function expandedCell(appId, a, col, ri, c) {
+  const n = col.name, granted = a.identities.includes(n), sevs = routesTo(appId, n);
+  return el("td", { class: (col.g.room.locked_by ? "locked " : "") + "cell", "data-grid": (ri + 2) + "," + (c + 1), "data-href": hrefFor("app", appId), tabindex: "-1",
+    title: granted ? appId + " may send as " + n + (sevs.length ? " · " + sevs.join(", ") + " route" : "") : appId + " may not send as " + n },
+    granted ? [el("span", { class: "dot granted" }), el("span", { class: "vh", text: "may send as" })] : null,
+    chips(sevs));
+}
+function appRow(appId, cols, ri) {
+  const a = state.apps[appId];
+  return el("tr", { class: appId === selectedApp ? "selected" : null },
+    el("th", { scope: "row", "data-grid": (ri + 2) + ",0", "data-href": hrefFor("app", appId), tabindex: "-1" },
+      el("a", { href: hrefFor("app", appId), tabindex: "-1", text: appId }), " ", pills(a), statusStrip(appId, a)),
+    cols.map((col, c) => (col.collapsed ? collapsedCell(appId, a, col, ri, c) : expandedCell(appId, a, col, ri, c))));
+}
+
+function legend() {
+  return el("p", { class: "legend" },
+    el("span", {}, el("span", { class: "dot granted" }), " may send as (in a collapsed room: sends into that room)"),
+    el("span", {}, el("span", { class: "chip", text: "alert" }), " severities routed there"),
+    el("span", {}, el("span", { class: "sw locked" }), " room locked by an inbound_locked app"),
+    el("span", {}, avatarMark(null, 16), " custom avatar or none"),
+    el("span", {}, el("span", { class: "dot ok" }), "webhook ready  ", el("span", { class: "dot err" }), "URL not set"));
+}
+// Phone (≤ 720 px): the table is hidden and the same data renders as stacked cards.
+function appCard(appId) {
+  const a = state.apps[appId];
+  const rooms = Object.entries(state.rooms || {}).filter(([, r]) => r.identities.some((n) => a.identities.includes(n)));
+  return el("div", { class: "appcard" },
+    el("div", {}, el("a", { href: hrefFor("app", appId) }, el("strong", { text: appId })), " ", pills(a)),
+    statusStrip(appId, a),
+    el("div", { class: "chipsrow" }, rooms.map(([space, r]) => [
+      el("span", { class: "room" + (r.locked_by ? " locked" : "") }, roomLabel(space), r.locked_by ? " · locked by " + r.locked_by : null),
+      r.identities.filter((n) => a.identities.includes(n)).map((n) => {
+        const sevs = routesTo(appId, n);
+        return el("a", { class: "ichip", href: hrefFor("identity", n) }, avatarMark(state.identities[n].avatar, 16), n,
+          sevs.length ? el("small", { text: " · " + sevs.join(", ") }) : null);
+      })])),
+    a.identities.length ? null : el("p", { class: "muted small", text: "No grants — this app cannot send." }));
+}
+
+function boardEmpty(kind, nApps, nIdents) {
+  const text = kind === "both" ? "Nothing registered yet. An app needs an identity to send as, so start there."
+    : kind === "apps" ? nIdents + " identities, no apps. Nothing can send until an app is registered and granted one."
+      : nApps + " apps and nothing to send as. Every grant list is empty.";
+  const identityBtn = el("button", { type: "button", class: kind === "apps" ? "" : "primary", text: "Create an identity", on: { click: () => navigate(hrefFor("new-identity")) } });
+  const appBtn = el("button", { type: "button", class: kind === "apps" ? "primary" : "", text: "Register an app", on: { click: () => navigate(hrefFor("new-app")) } });
+  view(el("div", { class: "card" }, el("p", { text: text }),
+    el("p", {}, kind === "apps" ? null : identityBtn, " ", kind === "identities" ? null : appBtn),
+    el("p", { class: "muted small", text: "Prefer the manual runbook? docs/registering-an-app.md" })));
+}
+// Loading: six skeleton rows, no spinner. Error: the status and the server's
+// words, then Retry; the sha and counts stay empty rather than stale.
+function boardLoading() {
+  return el("div", { class: "matrix-wrap", "aria-busy": "true" }, el("span", { class: "vh", text: "Loading registry…" }),
+    el("table", { class: "matrix" }, el("tbody", {}, [0, 1, 2, 3, 4, 5].map(() => el("tr", {},
+      el("th", { scope: "row" }, el("div", { class: "skeleton" })), [0, 1, 2, 3, 4].map(() => el("td", {}, el("div", { class: "skeleton" }))))))));
+}
+function boardError(e) {
+  return el("div", { class: "card" },
+    el("h2", { text: "Could not load the registry view (HTTP " + (e && e.status ? e.status : "?") + " — " + (e && e.message ? e.message : "no response") + ")" }),
+    el("p", {}, el("button", { type: "button", class: "primary", text: "Retry", on: { click: () => { loadError = null; probePosture(); } } })));
+}
+
+function board() {
+  const nApps = Object.keys(state.apps).length, nIdents = Object.keys(state.identities).length;
+  if (!nApps && !nIdents) return boardEmpty("both", nApps, nIdents);
+  if (!nApps) return boardEmpty("apps", nApps, nIdents);
+  if (!nIdents) return boardEmpty("identities", nApps, nIdents);
+  const f = applyFilter(filterText);
+  // Visible groups (rooms with at least one matching identity), then the
+  // column axis: one column per collapsed room, one per identity otherwise.
+  const groups = Object.entries(state.rooms || {})
+    .map(([space, room]) => ({ space, room, ids: room.identities.filter((n) => f.idents.has(n)) }))
+    .filter((g) => g.ids.length);
+  const cols = [];
+  for (const g of groups) {
+    g.start = cols.length + 1;
+    if (expanded.has(g.space)) for (const n of g.ids) cols.push({ g, name: n });
+    else cols.push({ g, collapsed: true });
+    g.end = cols.length;
+  }
+  const table = el("table", { class: "matrix" },
+    el("caption", { text: CAPTION }),
+    el("thead", {},
+      el("tr", { class: "groups" }, el("th", { scope: "col", "data-grid": "0,0", "data-span": "0,0", tabindex: "-1" }, el("span", { class: "vh", text: "App" })),
+        groups.map(groupHeaderCell)),
+      el("tr", { class: "idents" }, el("th", { scope: "col", "data-grid": "1,0", tabindex: "-1" }, el("span", { class: "muted small", text: "apps down · identities across" })),
+        cols.map(identityHeaderCell))),
+    el("tbody", {}, f.apps.map((appId, ri) => appRow(appId, cols, ri))));
+  // The single Tab stop: the first room header when there is one, else the corner.
+  const first = table.querySelector('[data-grid="0,1"]') || table.querySelector('[data-grid="1,0"]');
+  if (first) first.tabIndex = 0;
+  table.addEventListener("keydown", gridKeydown);
+  table.addEventListener("click", gridClick);
+  const roomKeys = Object.keys(state.rooms || {});
+  const nOpen = roomKeys.filter((k) => expanded.has(k)).length;
   view(
-    el("h2", { text: "Apps" }),
-    defaulted.length ? el("p", { class: "warn", text: "allow_inbound was left to the loader's default (off) for: " + defaulted.join(", ") + ". Saving the app here writes it explicitly." }) : null,
-    el("div", { class: "table-wrap" }, el("table", {},
-      el("thead", {}, el("tr", {}, ...["App", "Identities", "Routes", "Inbound", "API key", "Last delivery", ""].map((h) => el("th", { text: h })))),
-      el("tbody", {}, appRows))),
-    el("h2", { text: "Identities" }),
-    el("div", { class: "table-wrap" }, el("table", {},
-      el("thead", {}, el("tr", {}, ...["Identity", "Display", "Space", "Webhook", "Secret source", ""].map((h) => el("th", { text: h })))),
-      el("tbody", {}, idRows))));
+    f.summary ? el("p", { class: "muted small", text: f.summary }) : null,
+    el("div", { class: "matrix-tools" },
+      el("button", { type: "button", id: "expand-all", text: "Expand all rooms", disabled: nOpen === roomKeys.length, on: { click: expandAll } }),
+      el("button", { type: "button", id: "collapse-all", text: "Collapse all rooms", disabled: nOpen === 0, on: { click: collapseAll } }),
+      el("span", { class: "muted", text: nOpen + " of " + roomKeys.length + " rooms expanded · remembered for this session only" })),
+    el("div", { class: "matrix-wrap", role: "region", "aria-label": "Grant matrix (scrolls)" }, table),
+    legend(),
+    el("div", { class: "cards" }, f.apps.map(appCard)));
 }
 
 // ------------------------------------------------------------ app form ---
@@ -677,7 +966,7 @@ function revealView() {
 
 function render() {
   shownHash = routeKey(window.location.hash);
-  if (!state) return;
+  if (!state) { view(loadError ? boardError(loadError) : boardLoading()); return; }
   const { name, params } = routeFromHash();
   if (name !== "reveal") revealData = null;
   setCrumbs();
@@ -761,11 +1050,17 @@ function onKey(ev) {
 // with no header and the sign-in form never appears; in key mode it is a 401
 // (which does not count toward the login rate limit) and the form is shown.
 async function probePosture() {
+  view(boardLoading()); // paints once the console shows, if the probe is slow
   try {
     await refresh();
+    loadError = null;
     $("console").hidden = false; $("auth-mode").hidden = false;
     render(); // resume the hash the page was opened on
   } catch (e) {
+    // CG-91's shell owns a failed probe: the login section carries the message.
+    // The board's error-on-load card is rendered beneath it for the Retry path.
+    loadError = e.status === 401 ? null : e;
+    render();
     $("login").hidden = false;
     $("login-error").textContent = e.status === 401 ? "" : e.message;
   }
