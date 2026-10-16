@@ -198,3 +198,96 @@ def test_css_defines_the_cg92_tokens_in_both_schemes():
     for needle in (".matrix-wrap", "dialog::backdrop", ".avatar.s40",
                    "@media (max-width: 720px)", "[hidden] { display:none !important; }"):
         assert needle in css, needle
+
+
+# --- CG-92 Task 6: shell, router, notices, dialog, refusal plumbing ----------
+
+def _js():
+    return (STATIC / "admin.js").read_text(encoding="utf-8")
+
+
+def _html():
+    return (STATIC / "index.html").read_text(encoding="utf-8")
+
+
+def _fn(js, head):
+    body = js[js.index(head):]
+    return body[:body.index("\n}\n")]
+
+
+def test_router_knows_the_eight_routes():
+    js = _js()
+    assert "function routeFromHash(" in js
+    fn = _fn(js, "function routeFromHash(")
+    for literal in ('"app"', '"identity"', '"room"', '"new-app"', '"new-identity"', '"replace"', '"reveal"', '"board"'):
+        assert literal in fn, literal
+    for name in ("function navigate(", "function render(", "function guardNavigation(",
+                 "function setDirty(", "function notFound(", "function revealView("):
+        assert name in js, name
+    assert "let dirty = false;" in js
+    assert 'addEventListener("hashchange"' in js
+
+
+def test_unknown_ids_route_to_not_found():
+    js = _js()
+    assert "state.apps[params.id] || notFound(" in js
+    assert "state.identities[params.id] || notFound(" in js
+    assert "function appInspector(" in js and "function identityInspector(" in js and "function roomInspector(" in js
+
+
+def test_typed_confirm_is_a_modal_dialog_with_a_gated_verb():
+    js = _js()
+    fn = _fn(js, "function typedConfirm(")
+    assert "showModal()" in fn
+    assert "verbBtn.disabled = " in fn and "expected" in fn
+    assert "resolve(null)" in fn or "? null" in fn or ": null" in fn
+    assert "focus()" in fn  # focus returns to the trigger
+    assert 'class: "card"' not in fn  # the card version is gone
+    for opt in ("title", "intro", "reasons", "expected", "verb", "tone"):
+        assert opt in js[js.index("function typedConfirm("):][:200], opt
+
+
+def test_in_page_wording_and_dialog_shell():
+    html = _html()
+    assert '<dialog id="confirm"' in html and '<dialog id="shortcuts"' in html
+    for ident in ("nav-board", "nav-new-app", "nav-new-identity", 'id="filter"', 'id="registry-menu"',
+                  "menu-refresh", "menu-reload", "menu-shortcuts", 'id="banners"', 'id="crumbs"',
+                  'id="view"', 'id="notices"', 'id="counts"'):
+        assert ident in html, ident
+    # CG-91 pieces are untouched
+    assert '<section id="login" hidden>' in html
+    assert 'id="auth-mode" class="pill warn" hidden>open · no sign-in<' in html
+    assert "<script>" not in html and "style=" not in html
+
+
+def test_notices_replace_the_toast():
+    js = _js()
+    assert "function notify(" in js
+    fn = _fn(js, "function notify(")
+    assert "6000" in fn and "alert" in fn and "status" in fn
+    assert 'role' in fn
+
+
+def test_api_attaches_category_and_reasons():
+    fn = _fn(_js(), "async function api(")
+    assert "e.category = data && data.category" in fn or "err.category = data && data.category" in fn
+    assert "reasons = data && data.reasons" in fn
+
+
+def test_explain_is_category_first():
+    fn = _fn(_js(), "function explain(")
+    assert fn.index("e.category") < fn.index("e.status")
+
+
+def test_inbound_confirm_passes_reasons_through():
+    fn = _fn(_js(), "async function withInboundConfirm(")
+    assert "reasons: e.reasons" in fn
+
+
+def test_probe_resumes_the_hash_and_keys_are_wired():
+    js = _js()
+    fn = _fn(js, "async function probePosture(")
+    assert "render()" in fn and "board()" not in fn
+    assert "function onKey(" in js
+    keys = _fn(js, "function onKey(")
+    assert '"/"' in keys and '"Escape"' in keys and '"?"' in keys

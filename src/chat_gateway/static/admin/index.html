@@ -8,7 +8,7 @@
 <script src="/admin/static/admin.js" defer></script>
 </head>
 <body>
-<header><h1>chat-gateway admin</h1><span id="sha" class="muted"></span><span id="auth-mode" class="pill warn" hidden>open · no sign-in</span></header>
+<header><h1>chat-gateway admin</h1><span id="sha" class="muted"></span><span id="counts" class="muted"></span><span id="auth-mode" class="pill warn" hidden>open · no sign-in</span></header>
 <main>
   <section id="login" hidden>
     <h2>Sign in</h2>
@@ -21,16 +21,29 @@
   </section>
 
   <section id="console" hidden>
-    <nav>
-      <button id="nav-board" type="button">Apps &amp; identities</button>
+    <nav aria-label="Console">
+      <button id="nav-board" type="button">Board</button>
       <button id="nav-new-app" type="button">New app</button>
       <button id="nav-new-identity" type="button">New identity</button>
-      <button id="nav-reload" type="button">Reload from disk</button>
+      <input id="filter" type="search" placeholder="Filter apps and identities  /" aria-label="Filter apps and identities" autocomplete="off">
+      <details id="registry-menu">
+        <summary>Registry</summary>
+        <div>
+          <button id="menu-refresh" type="button">Refresh view</button>
+          <p class="note">Re-read what the running gateway holds; picks up a change made from another tab.</p>
+          <button id="menu-reload" type="button">Reload from disk</button>
+          <p class="note">Validate registry.yaml as it is on disk and swap it live, after a hand edit.</p>
+          <button id="menu-shortcuts" type="button">Keyboard shortcuts</button>
+        </div>
+      </details>
     </nav>
-    <p id="banner" class="warn" hidden></p>
-    <p id="toast" role="status"></p>
-    <div id="view"></div>
+    <div id="banners"><p id="banner" class="warn" hidden></p></div>
+    <p id="crumbs" class="muted"></p>
+    <div id="view" aria-live="polite"></div>
   </section>
 </main>
+<div id="notices" class="notices"></div>
+<dialog id="confirm" aria-labelledby="confirm-title"></dialog>
+<dialog id="shortcuts" aria-labelledby="shortcuts-title"></dialog>
 </body>
 </html>

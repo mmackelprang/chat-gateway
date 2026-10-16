@@ -7,6 +7,8 @@
 
 let adminKey = "";
 let state = null;
+let revealData = null; // the one minted key, in memory only; gone when the route leaves #/reveal
+let filterText = ""; // the board filter (Task 7 reads it)
 const SEVERITIES = ["alert", "warning", "info"];
 const ID_PATTERN = "[a-z0-9][a-z0-9\\-]{0,62}"; // `-` escaped: valid under the v-flag pattern compiler
 const TERMINAL = ["delivered", "failed", "unroutable", "expired"];
@@ -36,7 +38,9 @@ function toNodes(children) {
   return out;
 }
 const $ = (id) => document.getElementById(id);
-function toast(msg, isError) { const t = $("toast"); t.textContent = msg || ""; t.className = isError ? "error" : "ok"; }
+// Kept as the one-line spelling every existing caller uses; an empty message
+// shows nothing (notices dismiss themselves or are dismissed by hand).
+function toast(msg, isError) { if (msg) notify(msg, { kind: isError ? "alert" : "status" }); }
 function view(...nodes) { $("view").replaceChildren(...toNodes(nodes)); }
 
 // FastAPI's `detail` is a string for an HTTPException and a list of
@@ -60,16 +64,31 @@ async function api(method, path, body, key) {
   if (!r.ok) {
     const err = new Error(detailText(data, r.status));
     err.status = r.status;
+    // Task 2: refusal bodies carry a category (which recovery applies) and
+    // sometimes reasons (the 428 dialog's bullets).
+    err.category = data && data.category;
+    err.reasons = data && data.reasons;
     throw err;
   }
   return data;
 }
 
-// One place that turns an API error into words for the operator.
+// One place that turns an API error into words for the operator. The category
+// (a fixed authored phrase from the server) picks the recovery first; the
+// status is the fallback when the body carried none.
 function explain(e) {
+  switch (e.category) {
+    case "refused: edited outside the console":
+      return e.message + " — registry.yaml was edited outside the console. Use Registry › Reload from disk, then try again.";
+    case "refused: unpolled inbound": return e.message + " — poll or drain its inbox first.";
+    case "refused: env name in use": return e.message + " — pick another id; the variable name is derived from it.";
+    case "refused: still granted": return e.message + " — remove the grant from each holder first.";
+    case "refused: secret in process env": return e.message + " — that value is set in the process environment; change it there.";
+    default: break;
+  }
   switch (e.status) {
-    case 403: return "File edit only — " + e.message;
-    case 409: return e.message + " — the registry changed or conflicts. Open “Apps & identities” to refresh, or “Reload from disk” if registry.yaml was edited by hand.";
+    case 403: return "Not a console action — " + e.message;
+    case 409: return e.message + " — the registry changed or conflicts. Use Registry › Refresh view, or Reload from disk if registry.yaml was edited by hand.";
     case 428: return "Typed confirmation needed — " + e.message;
     case 401: return "Signed out: the admin key was refused.";
     default: return e.message;
@@ -83,7 +102,8 @@ function fail(e) {
 function signOut(msg) {
   adminKey = ""; state = null;
   $("console").hidden = true; $("login").hidden = false;
-  $("sha").textContent = "";
+  revealData = null;
+  $("sha").textContent = ""; $("counts").textContent = "";
   $("auth-mode").hidden = true;
   view();
   $("login-error").textContent = msg || "";
@@ -92,6 +112,8 @@ function signOut(msg) {
 async function refresh() {
   state = await api("GET", "/admin/api/state");
   $("sha").textContent = "registry " + state.registry_sha256.slice(0, 12);
+  const rooms = Object.keys(state.rooms || {}).filter((k) => k).length; // "" = identities with no room
+  $("counts").textContent = Object.keys(state.apps).length + " apps · " + Object.keys(state.identities).length + " identities · " + rooms + " rooms";
   const b = $("banner");
   if (state.shadowed_env_names.length) {
     b.hidden = false;
@@ -116,7 +138,7 @@ async function write(method, path, body) {
     const b = $("banner");
     b.hidden = false;
     b.textContent = "The change was saved, but reloading the page's view failed (" + e.message
-      + "). The page may be stale — open “Apps & identities” to refresh before the next change.";
+      + "). The page may be stale — use Registry › Refresh view before the next change.";
   }
   return out;
 }
@@ -143,14 +165,14 @@ function board() {
       a.inbound_locked ? el("span", { class: "pill warn", text: "locked" }) : null),
     el("td", { class: a.key_configured ? "ok" : "error", text: (a.key_configured ? "key set" : "key missing") + " (" + a.key_source + ")" }),
     el("td", { text: a.recent_deliveries.length ? a.recent_deliveries[a.recent_deliveries.length - 1].status : "—" }),
-    el("td", {}, el("button", { type: "button", text: "Manage", on: { click: () => appDetail(id) } }))));
+    el("td", {}, el("button", { type: "button", text: "Manage", on: { click: () => navigate("#/app/" + encodeURIComponent(id)) } }))));
   const idRows = Object.entries(state.identities).map(([name, i]) => {
     const locker = held.get(name);
     let webhookAction = null;
     if (i.mode === "webhook") {
       webhookAction = locker
         ? el("p", { class: "note", text: "Webhook held by locked app " + locker + " — replacing it is a registry file edit." })
-        : el("button", { type: "button", text: "Replace webhook", on: { click: () => replaceWebhook(name) } });
+        : el("button", { type: "button", text: "Replace webhook", on: { click: () => navigate("#/identity/" + encodeURIComponent(name) + "/replace") } });
     }
     return el("tr", {},
       el("td", {}, el("strong", { text: name })),
@@ -251,26 +273,94 @@ async function withInboundConfirm(appId, send) {
     if (e.status !== 428) throw e;
     // The server's 428 detail already quotes rule #6; add it only if it does not.
     const msg = /hard rule #6/i.test(e.message) ? e.message : e.message + "\n\n" + RULE_6;
-    const typed = await typedConfirm(msg, appId);
+    const typed = await typedConfirm({ title: "Confirm: widen inbound for " + appId, intro: msg, reasons: e.reasons,
+      expected: appId, verb: "Widen inbound", tone: "warn" });
     if (typed === null) throw new Error("cancelled");
     return await send(typed);
   }
 }
 
-function typedConfirm(message, expected) {
+// ------------------------------------------------------------- dialog ---
+// Resolves with the dialog's returnValue once it closes, then hands focus back
+// to whatever opened it. Escape closes natively with returnValue "" (= cancel).
+function dialogClosed(dlg, trigger) {
   return new Promise((resolve) => {
-    const input = el("input", { "aria-label": "Type " + expected + " to confirm", autocomplete: "off" });
-    const card = el("div", { class: "card", role: "dialog" },
-      el("p", { class: "warn", text: message }),
-      el("label", {}, "Type ", el("strong", { text: expected }), " to confirm", input),
-      el("button", { type: "button", class: "primary", text: "Confirm", on: { click: () => { card.remove(); resolve(input.value); } } }), " ",
-      el("button", { type: "button", text: "Cancel", on: { click: () => { card.remove(); resolve(null); } } }));
-    $("view").prepend(...toNodes([card]));
-    input.focus();
+    dlg.addEventListener("close", () => {
+      resolve(dlg.returnValue);
+      if (trigger && trigger.isConnected && trigger.focus) trigger.focus();
+    }, { once: true });
   });
 }
 
-function appDetail(appId) {
+// Typed confirmation: the verb button stays disabled until the text equals
+// `expected`, so a mismatch cannot be submitted. Resolves the typed text, or
+// null on Cancel/Escape.
+function typedConfirm({ title, intro, reasons, expected, verb, tone }) {
+  const dlg = $("confirm");
+  if (dlg.open) dlg.close();
+  const trigger = document.activeElement;
+  const input = el("input", { id: "confirm-input", autocomplete: "off", "aria-label": "Type " + expected + " to confirm" });
+  const verbBtn = el("button", { type: "button", class: tone === "danger" ? "danger" : "primary", text: verb, disabled: true });
+  const cancelBtn = el("button", { type: "button", text: "Cancel" });
+  const sync = () => { verbBtn.disabled = input.value !== expected; };
+  input.addEventListener("input", sync);
+  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); if (!verbBtn.disabled) dlg.close("ok"); } });
+  verbBtn.addEventListener("click", () => { if (!verbBtn.disabled) dlg.close("ok"); });
+  cancelBtn.addEventListener("click", () => dlg.close(""));
+  dlg.setAttribute("data-tone", tone || "warn");
+  dlg.returnValue = "";
+  dlg.replaceChildren(...toNodes([
+    el("h2", { id: "confirm-title", text: title }),
+    intro ? el("p", { text: intro }) : null,
+    reasons && reasons.length ? el("ul", {}, reasons.map((r) => el("li", { text: r }))) : null,
+    el("label", {}, "Type ", el("strong", { text: expected }), " to confirm", input),
+    el("p", {}, verbBtn, " ", cancelBtn)]));
+  const closed = dialogClosed(dlg, trigger);
+  dlg.showModal();
+  input.focus();
+  return closed.then((v) => (v === "ok" ? input.value : null));
+}
+
+// One-shot "Discard …?" dialog for the unsaved new-app draft and a dirty
+// inspector. Escape keeps editing. Resolves true only on Discard.
+function discardConfirm(what) {
+  const dlg = $("confirm");
+  if (dlg.open) dlg.close();
+  const trigger = document.activeElement;
+  const keep = el("button", { type: "button", class: "primary", text: "Keep editing" });
+  const discard = el("button", { type: "button", class: "danger", text: "Discard" });
+  keep.addEventListener("click", () => dlg.close(""));
+  discard.addEventListener("click", () => dlg.close("discard"));
+  dlg.setAttribute("data-tone", "warn");
+  dlg.returnValue = "";
+  dlg.replaceChildren(...toNodes([
+    el("h2", { id: "confirm-title", text: "Discard " + what + "?" }),
+    el("p", { class: "muted", text: "Escape keeps editing." }),
+    el("p", {}, discard, " ", keep)]));
+  const closed = dialogClosed(dlg, trigger);
+  dlg.showModal();
+  keep.focus();
+  return closed.then((v) => v === "discard");
+}
+
+function shortcutsDialog() {
+  const dlg = $("shortcuts");
+  if (dlg.open) return;
+  const trigger = document.activeElement;
+  const close = el("button", { type: "button", class: "primary", text: "Close" });
+  close.addEventListener("click", () => dlg.close(""));
+  const row = (k, t) => el("li", {}, el("kbd", { text: k }), " " + t);
+  dlg.replaceChildren(...toNodes([
+    el("h2", { id: "shortcuts-title", text: "Keyboard shortcuts" }),
+    el("ul", {}, row("/", "filter apps and identities"), row("Escape", "back to the board; cancels a dialog"), row("?", "this list")),
+    el("p", { class: "muted", text: "Nothing here writes: there are no single-letter verbs." }),
+    el("p", {}, close)]));
+  dialogClosed(dlg, trigger);
+  dlg.showModal();
+  close.focus();
+}
+
+function appInspector(appId) {
   const a = state.apps[appId];
   const form = el("form", {}, appFields(a), el("button", { type: "submit", class: "primary", text: "Save" }));
   form.addEventListener("submit", async (ev) => {
@@ -278,7 +368,7 @@ function appDetail(appId) {
     try {
       await withInboundConfirm(appId, (c) => write("PUT", "/admin/api/apps/" + encodeURIComponent(appId), Object.assign(readAppFields(form, a), { confirm_app_id: c })));
       toast("Saved " + appId + ". Live now.");
-      board();
+      setDirty(false); navigate("#/");
     } catch (e) { fail(e); }
   });
   view(el("h2", { text: "App " + appId }),
@@ -288,10 +378,10 @@ function appDetail(appId) {
       el("h3", { text: "Rotate API key" }),
       el("p", { text: "The current key stops working the moment you confirm. Update the consuming app right after." }),
       el("button", { type: "button", text: "Rotate key", on: { click: async () => {
-        const typed = await typedConfirm("Rotate the API key for " + appId + "? The old key dies immediately.", appId);
+        const typed = await typedConfirm({ title: "Rotate the API key for " + appId + "?", intro: "The old key dies immediately. Update the consuming app right after.",
+          expected: appId, verb: "Rotate key", tone: "danger" });
         if (typed === null) return;
-        if (typed !== appId) { toast("Typed id did not match — key not rotated.", true); return; }
-        try { const r = await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/rotate-key", {}); reveal(r); }
+        try { const r = await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/rotate-key", {}); showKey(r); }
         catch (e) { fail(e); }
       } } })),
     el("div", { class: "card" },
@@ -299,9 +389,10 @@ function appDetail(appId) {
       a.inbound_locked
         ? el("p", { class: "note", text: "This app is inbound_locked: deleting it is a registry file edit, not a console action." })
         : el("button", { type: "button", class: "danger", text: "Delete " + appId, on: { click: async () => {
-          const typed = await typedConfirm("Delete app " + appId + "? Its queued messages close as unroutable.", appId);
+          const typed = await typedConfirm({ title: "Delete app " + appId + "?", intro: "Its queued messages close as unroutable.",
+            expected: appId, verb: "Delete app", tone: "danger" });
           if (typed === null) return;
-          try { await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/delete", { confirm_app_id: typed }); toast("Deleted " + appId); board(); }
+          try { await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/delete", { confirm_app_id: typed }); toast("Deleted " + appId); setDirty(false); navigate("#/"); }
           catch (e) { fail(e); }
         } } })));
 }
@@ -316,7 +407,7 @@ function newApp() {
   const form = el("form", {},
     el("fieldset", {}, el("legend", { text: "1 · App id" }), el("label", {}, "App id", idInput), envHint),
     el("p", {}, "2 · Need a new Chat space identity first? ",
-      el("button", { type: "button", text: "Create an identity", on: { click: newIdentity } })),
+      el("button", { type: "button", text: "Create an identity", on: { click: () => navigate("#/new-identity") } })),
     el("p", { class: "muted", text: "3 and 4 · identities, routes and inbound:" }),
     appFields(blank),
     el("button", { type: "submit", class: "primary", text: "Create app and mint key" }));
@@ -325,7 +416,7 @@ function newApp() {
     const appId = idInput.value.trim();
     try {
       const r = await withInboundConfirm(appId, (c) => write("POST", "/admin/api/apps", Object.assign(readAppFields(form, blank), { app_id: appId, confirm_app_id: c })));
-      reveal(r);
+      showKey(r);
     } catch (e) { fail(e); }
   });
   view(el("h2", { text: "New app" }), form);
@@ -352,7 +443,7 @@ function newIdentity() {
     try {
       const r = await write("POST", "/admin/api/identities", { name: f("name").trim(), display: f("display").trim(), webhook_url: f("webhook_url") });
       toast("Identity " + r.name + " created in " + r.space + ".");
-      newApp();
+      navigate("#/new-app");
     } catch (e) { fail(e); }
   });
   view(el("h2", { text: "New identity (Chat webhook)" }), form);
@@ -375,11 +466,12 @@ function replaceWebhook(name) {
         catch (e) {
           if (e.status !== 428) throw e;
           const msg = /hard rule #6/i.test(e.message) ? e.message : e.message + "\n\n" + RULE_6;
-          const typed = await typedConfirm(msg, name);
+          const typed = await typedConfirm({ title: "Confirm: replace the webhook for " + name, intro: msg, reasons: e.reasons,
+            expected: name, verb: "Replace webhook", tone: "warn" });
           if (typed === null) throw new Error("cancelled");
           await send(typed);
         }
-        input.value = ""; toast("Webhook replaced."); board();
+        input.value = ""; toast("Webhook replaced."); navigate("#/");
       }
       catch (e) { fail(e); }
     } } }));
@@ -389,15 +481,15 @@ function renameIdentity(name, current) {
   const input = el("input", { value: current, "aria-label": "Display name", autocomplete: "off" });
   view(el("h2", { text: "Display name for " + name }), el("label", {}, "Display name", input),
     el("button", { type: "button", class: "primary", text: "Save", on: { click: async () => {
-      try { await write("PUT", "/admin/api/identities/" + encodeURIComponent(name), { display: input.value.trim() }); toast("Saved display name for " + name + "."); board(); }
+      try { await write("PUT", "/admin/api/identities/" + encodeURIComponent(name), { display: input.value.trim() }); toast("Saved display name for " + name + "."); navigate("#/"); }
       catch (e) { fail(e); }
     } } }));
 }
 
 async function deleteIdentity(name) {
-  const typed = await typedConfirm("Delete identity " + name + "?", name);
+  const typed = await typedConfirm({ title: "Delete identity " + name + "?", intro: "", expected: name, verb: "Delete identity", tone: "danger" });
   if (typed === null) return;
-  try { await write("POST", "/admin/api/identities/" + encodeURIComponent(name) + "/delete", { confirm_name: typed }); toast("Deleted " + name); board(); }
+  try { await write("POST", "/admin/api/identities/" + encodeURIComponent(name) + "/delete", { confirm_name: typed }); toast("Deleted " + name); navigate("#/"); }
   catch (e) { fail(e); }
 }
 
@@ -441,7 +533,7 @@ function reveal(r) {
     el("p", { class: "muted", text: "202 enqueued is not delivery — this waits for the delivery log to say delivered or failed." }),
     el("button", { type: "button", class: "primary", text: "Send test", on: { click: () => testSend(key, result) } }),
     result,
-    el("p", {}, el("button", { type: "button", text: "Done", on: { click: board } })));
+    el("p", {}, el("button", { type: "button", text: "Done", on: { click: () => navigate("#/") } })));
 }
 
 async function testSend(key, out) {
@@ -465,6 +557,174 @@ async function testSend(key, out) {
   } catch (e) { out.className = "error"; out.textContent = e.message; }
 }
 
+// --------------------------------------------------------------- router ---
+// Routes live in the URL hash (nothing is stored). `#/reveal` is in-memory
+// only: reloading it lands on the "No key to show" card.
+let dirty = false; // set by an inspector with unsaved edits (Task 8)
+let shownHash = "#/";
+let ignoreHashChange = false;
+function setDirty(v) { dirty = !!v; }
+
+function routeFromHash() {
+  const raw = (window.location.hash || "#/").replace(/^#/, "");
+  const path = raw.split("?")[0];
+  const seg = path.split("/").filter(Boolean).map((x) => { try { return decodeURIComponent(x); } catch (_) { return x; } });
+  if (!seg.length) return { name: "board", params: {} };
+  if (seg[0] === "app" && seg.length === 2) return { name: "app", params: { id: seg[1] } };
+  if (seg[0] === "identity" && seg.length === 2) return { name: "identity", params: { id: seg[1] } };
+  if (seg[0] === "identity" && seg.length === 3 && seg[2] === "replace") return { name: "replace", params: { id: seg[1] } };
+  if (seg[0] === "room" && seg.length === 2) return { name: "room", params: { id: seg[1] } };
+  if (seg[0] === "new-app" && seg.length === 1) return { name: "new-app", params: {} };
+  if (seg[0] === "new-identity" && seg.length === 1) return { name: "new-identity", params: {} };
+  if (seg[0] === "reveal" && seg.length === 1) return { name: "reveal", params: {} };
+  return { name: "notfound", params: { kind: "view", id: path } };
+}
+
+// Runs `fn` now when the page is clean; otherwise asks once and runs it only
+// if the operator chooses Discard.
+function guardNavigation(fn) {
+  if (!dirty) { fn(); return Promise.resolve(true); }
+  return discardConfirm("unsaved changes").then((ok) => { if (ok) { setDirty(false); fn(); } return ok; });
+}
+function navigate(hash) {
+  return guardNavigation(() => { if (window.location.hash === hash) render(); else window.location.hash = hash; });
+}
+
+function setCrumbs(...parts) {
+  const nodes = [];
+  parts.forEach((p, i) => {
+    if (i) nodes.push(" › ");
+    nodes.push(p.href ? el("a", { href: p.href, text: p.text }) : p.text);
+  });
+  $("crumbs").replaceChildren(...toNodes(nodes));
+}
+function setNav(name) {
+  for (const [id, n] of [["nav-board", "board"], ["nav-new-app", "new-app"], ["nav-new-identity", "new-identity"]]) {
+    if (n === name) $(id).setAttribute("aria-current", "page"); else $(id).removeAttribute("aria-current");
+  }
+}
+
+function notFound(kind, id) {
+  setNav(null); setCrumbs({ text: "Unknown " + kind });
+  view(el("div", { class: "card" }, el("h2", { text: "No " + kind + " “" + id + "”" }),
+    el("p", {}, el("a", { href: "#/", text: "Back to the board" }))));
+  return null;
+}
+
+// Placeholders for Tasks 9 and 10: enough to reach the existing actions.
+function identityInspector(name) {
+  const i = state.identities[name];
+  const held = lockedHolders();
+  view(el("h2", { text: "Identity " + name }),
+    el("p", { class: "muted", text: i.display + " · " + (i.space || "no room") }),
+    el("p", {},
+      i.mode === "webhook" && !held.get(name) ? el("button", { type: "button", text: "Replace webhook", on: { click: () => navigate("#/identity/" + encodeURIComponent(name) + "/replace") } }) : null,
+      el("button", { type: "button", text: "Rename display", on: { click: () => renameIdentity(name, i.display) } }),
+      el("button", { type: "button", class: "danger", text: "Delete", on: { click: () => deleteIdentity(name) } })));
+}
+function roomInspector(key, room) {
+  view(el("h2", { text: "Room " + (key || "none") }),
+    el("p", { text: "Identities: " + (room.identities.join(", ") || "—") }),
+    el("p", { text: "Apps that post here: " + (room.posting_apps.join(", ") || "—") }),
+    el("p", { text: "Apps receiving inbound: " + (room.inbound_apps.join(", ") || "—") }));
+}
+
+// Called by every flow that mints a key: hold it in memory, go to #/reveal.
+function showKey(r) { revealData = r; navigate("#/reveal"); }
+function revealView() {
+  setNav(null);
+  if (!revealData) {
+    setCrumbs({ text: "Key" });
+    view(el("div", { class: "card" }, el("h2", { text: "No key to show" }),
+      el("p", { text: "A key is shown exactly once, at the moment it is minted. If you reloaded this page the key is gone — rotate again to get a new one." }),
+      el("p", {}, el("a", { href: "#/", text: "Back to the board" }))));
+    return;
+  }
+  setCrumbs({ text: "App " + revealData.app_id, href: "#/app/" + encodeURIComponent(revealData.app_id) }, { text: "API key" });
+  reveal(revealData);
+}
+
+function render() {
+  shownHash = window.location.hash || "#/";
+  if (!state) return;
+  const { name, params } = routeFromHash();
+  if (name !== "reveal") revealData = null;
+  setCrumbs();
+  switch (name) {
+    case "board": setNav("board"); board(); break;
+    case "app": {
+      const a = state.apps[params.id] || notFound("app", params.id);
+      if (a) { setNav(null); setCrumbs({ text: "App " + params.id }); appInspector(params.id); }
+      break;
+    }
+    case "identity": {
+      const i = state.identities[params.id] || notFound("identity", params.id);
+      if (i) { setNav(null); setCrumbs({ text: "Identity " + params.id }); identityInspector(params.id); }
+      break;
+    }
+    case "replace": {
+      const i = state.identities[params.id] || notFound("identity", params.id);
+      if (i) {
+        setNav(null);
+        setCrumbs({ text: "Identity " + params.id, href: "#/identity/" + encodeURIComponent(params.id) }, { text: "Replace webhook" });
+        replaceWebhook(params.id);
+      }
+      break;
+    }
+    case "room": {
+      const key = params.id === "none" ? "" : "spaces/" + params.id;
+      const r = (state.rooms || {})[key] || notFound("room", params.id);
+      if (r) { setNav(null); setCrumbs({ text: "Room " + params.id }); roomInspector(key, r); }
+      break;
+    }
+    case "new-app": setNav("new-app"); setCrumbs({ text: "New app" }); newApp(); break;
+    case "new-identity": setNav("new-identity"); setCrumbs({ text: "New identity" }); newIdentity(); break;
+    case "reveal": revealView(); break;
+    default: notFound(params.kind, params.id);
+  }
+}
+
+// Back/Forward while dirty: the hash has already moved, so put it back, ask,
+// and only on Discard go where the operator was headed.
+window.addEventListener("hashchange", () => {
+  if (ignoreHashChange) { ignoreHashChange = false; return; }
+  const target = window.location.hash || "#/";
+  if (target === shownHash) return;
+  if (!dirty || !state) { render(); return; }
+  ignoreHashChange = true;
+  window.location.hash = shownHash;
+  discardConfirm("unsaved changes").then((ok) => { if (ok) { setDirty(false); window.location.hash = target; } });
+});
+
+// --------------------------------------------------------------- notices ---
+// Successes are role="status" and dismiss themselves after 6 s; refusals are
+// role="alert" and stay until dismissed. Refusals also render at the control.
+function notify(msg, opts) {
+  const kind = opts && opts.kind === "alert" ? "alert" : "status";
+  const dismiss = el("button", { type: "button", "aria-label": "Dismiss", text: "×" });
+  const n = el("div", { class: "notice " + kind, role: kind }, el("p", { text: msg }), dismiss);
+  dismiss.addEventListener("click", () => n.remove());
+  $("notices").append(...toNodes([n]));
+  if (kind === "status") setTimeout(() => n.remove(), 6000);
+  return n;
+}
+
+// -------------------------------------------------------------- keyboard ---
+function onKey(ev) {
+  if (document.querySelector("dialog[open]")) return; // dialogs own Escape (cancel) natively
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const t = ev.target;
+  const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
+  if (ev.key === "Escape") {
+    if (routeFromHash().name === "reveal") return; // the key's only way out is Done
+    if (!$("console").hidden) { ev.preventDefault(); navigate("#/"); }
+  } else if (ev.key === "/" && !typing && !$("console").hidden) {
+    ev.preventDefault(); guardNavigation(() => $("filter").focus());
+  } else if (ev.key === "?" && !typing && !$("console").hidden) {
+    ev.preventDefault(); shortcutsDialog();
+  }
+}
+
 // --------------------------------------------------------------- boot ---
 // Ask the API before asking the human: in open mode the state call answers
 // with no header and the sign-in form never appears; in key mode it is a 401
@@ -473,7 +733,7 @@ async function probePosture() {
   try {
     await refresh();
     $("console").hidden = false; $("auth-mode").hidden = false;
-    board();
+    render(); // resume the hash the page was opened on
   } catch (e) {
     $("login").hidden = false;
     $("login-error").textContent = e.status === 401 ? "" : e.message;
@@ -490,16 +750,26 @@ document.addEventListener("DOMContentLoaded", () => {
       await refresh();
       $("login-error").textContent = "";
       $("login").hidden = true; $("console").hidden = false;
-      board();
+      render();
     } catch (e) { adminKey = ""; $("login-error").textContent = e.message; }
   });
-  $("nav-board").addEventListener("click", async () => {
-    try { await refresh(); toast(""); board(); } catch (e) { fail(e); }
+  document.addEventListener("keydown", onKey);
+  $("nav-board").addEventListener("click", () => navigate("#/"));
+  $("nav-new-app").addEventListener("click", () => navigate("#/new-app"));
+  $("nav-new-identity").addEventListener("click", () => navigate("#/new-identity"));
+  $("filter").addEventListener("input", () => {
+    filterText = $("filter").value;
+    if (routeFromHash().name !== "board") navigate("#/"); else render();
   });
-  $("nav-new-app").addEventListener("click", () => { toast(""); newApp(); });
-  $("nav-new-identity").addEventListener("click", () => { toast(""); newIdentity(); });
-  $("nav-reload").addEventListener("click", async () => {
-    try { await api("POST", "/admin/api/reload", {}); await refresh(); board(); toast("Reloaded from disk."); }
+  const closeMenu = () => { $("registry-menu").open = false; };
+  $("menu-refresh").addEventListener("click", async () => {
+    closeMenu();
+    try { await refresh(); render(); notify("View refreshed."); } catch (e) { fail(e); }
+  });
+  $("menu-reload").addEventListener("click", async () => {
+    closeMenu();
+    try { await api("POST", "/admin/api/reload", {}); await refresh(); render(); notify("Reloaded from disk."); }
     catch (e) { fail(e); }
   });
+  $("menu-shortcuts").addEventListener("click", () => { closeMenu(); shortcutsDialog(); });
 });
