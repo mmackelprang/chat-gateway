@@ -161,8 +161,16 @@ def test_page_probes_before_showing_the_login():
     fn = fn[:fn.index("\n}\n")]
     assert "await refresh()" in fn and 'e.status === 401' in fn
     # a 401 shows the login silently; any other failure shows its message
-    assert '$("login-error").textContent = ""' in fn or "login-error" in fn
+    assert 'e.status === 401 ? "" : e.message' in fn
     assert 'document.addEventListener("DOMContentLoaded"' in js and "probePosture()" in js
+
+
+def test_hidden_attribute_beats_display_classes():
+    """UAT 2026-10-16 found the `open \u00b7 no sign-in` pill visible in key mode:
+    `.pill` sets `display`, which outranks the UA `[hidden]{display:none}` rule, so
+    neither the markup's `hidden` nor `signOut`'s `.hidden = true` hid it."""
+    css = (STATIC / "admin.css").read_text(encoding="utf-8")
+    assert "[hidden] { display:none !important; }" in css
 
 
 def test_api_sends_no_authorization_header_without_a_key():

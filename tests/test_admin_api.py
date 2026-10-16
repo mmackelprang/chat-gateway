@@ -138,6 +138,13 @@ def test_widening_cases():
 
 
 # -- posture ----------------------------------------------------------------
+def test_wiring_and_audit_default_to_key_posture(tmp_path):
+    """CG-88 lesson: pin the dataclass/constructor defaults themselves, not just the
+    loader that passes the value explicitly on every path."""
+    assert AdminWiring.__dataclass_fields__["auth"].default == AUTH_KEY == "key"
+    assert AdminAudit(tmp_path / "a.jsonl").auth == "key"
+
+
 def test_posture_defaults_to_key_when_absent_or_empty():
     assert admin_auth_posture(None) == AUTH_KEY
     assert admin_auth_posture("") == AUTH_KEY

@@ -56,7 +56,7 @@ with the threat model stated above.
 | `GATEWAY_ADMIN_AUTH` | `key` — today's bearer check · `open` — no credential | `key` |
 
 - **Absence is `key`** (hard rule #7: a security-relevant value defaults to the
-  safe answer). **Any other written value refuses to boot** — `RegistryError`,
+  safe answer). **Any other written value refuses to boot** (⚠ *Annotated 2026-10-16 (final review): absent or empty is `key`; any other value refuses to boot — the code deliberately maps an EMPTY value to `key`, plan Review Focus #2*) — `RegistryError`,
   exit 2, naming the variable and the two accepted values — rather than being
   coerced (rule #7's second half). `GATEWAY_ENABLE_ADMIN` keeps its existing
   `== "1"` test; this spec does not change it.

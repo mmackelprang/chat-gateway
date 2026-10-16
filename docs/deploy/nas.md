@@ -526,9 +526,9 @@ This subsection is only what an operator must do and must not get wrong.
 
 | Name | Where | Why there |
 |---|---|---|
-| `GATEWAY_ENABLE_ADMIN` | §5's compose `environment:` — **not** `.env` | ⚠ It is read **before** the hand-written env file loads (`__main__.py:52`, `:82-86`). **Set in `.env` it is silently ignored and the console stays off** — no error, `/healthz` just says `admin.enabled: false`. Not a credential, so the compose is the right home anyway. ⚠ *Corrected 2026-10-15 (CG-90 final review I3):* this row said *"because whether `managed.env` loads at all depends on it"*. It no longer does — `managed.env` loads whenever the file **exists** (`__main__.py:71`); see *Turning the console off* below. |
-| `GATEWAY_ADMIN_AUTH` | §5's compose `environment:` — **not** `.env` | CG-91. Read from the process env **before** the env files load, like its sibling. **Set in `.env` it is silently ignored and the console stays in `key` mode** (the safe direction; `/healthz` says `admin.auth: "key"`). `open` means **anything that can reach the port can use the console** — the accepted cost is stated in spec `2026-10-16-admin-open-mode-design.md` §2. In `open` mode `CHAT_GATEWAY_ADMIN_KEY` is unread. Any value other than `key` or `open` refuses to boot. |
-| `CHAT_GATEWAY_ADMIN_KEY` | the hand-written `.env`, over stdin exactly as above | A secret. Mint it with `python3 -m chat_gateway mint-key`. With the flag on and this unset, boot raises `RegistryError` and exits 2 (`__main__.py:138-141`) — fail closed, the `GATEWAY_ENABLE_PUBSUB` posture. **Changing it needs a restart**; the console does not manage its own key. |
+| `GATEWAY_ENABLE_ADMIN` | §5's compose `environment:` — **not** `.env` | ⚠ It is read **before** the hand-written env file loads (`__main__.py:52`, `:85-89`). **Set in `.env` it is silently ignored and the console stays off** — no error, `/healthz` just says `admin.enabled: false`. Not a credential, so the compose is the right home anyway. ⚠ *Corrected 2026-10-15 (CG-90 final review I3):* this row said *"because whether `managed.env` loads at all depends on it"*. It no longer does — `managed.env` loads whenever the file **exists** (`__main__.py:74`); see *Turning the console off* below. |
+| `GATEWAY_ADMIN_AUTH` | §5's compose `environment:` — **not** `.env` | CG-91. Read from the process env **before** the env files load, like its sibling. **Set in `.env` it is silently ignored and the console stays in `key` mode** (the safe direction; `/healthz` says `admin.auth: "key"`). `open` means **anything that can reach the port can use the console** — the accepted cost is stated in spec `2026-10-16-admin-open-mode-design.md` §2. In `open` mode `CHAT_GATEWAY_ADMIN_KEY` is unread. Absent or empty is `key`; any other value refuses to boot. |
+| `CHAT_GATEWAY_ADMIN_KEY` | the hand-written `.env`, over stdin exactly as above | A secret. Mint it with `python3 -m chat_gateway mint-key`. With the flag on, `GATEWAY_ADMIN_AUTH` at `key`, and this unset, boot raises `RegistryError` and exits 2 (`__main__.py:143-146`) — fail closed, the `GATEWAY_ENABLE_PUBSUB` posture. **Changing it needs a restart**; the console does not manage its own key. |
 
 ⚠ **The admin key must not equal any tenant's key.** `load_registry` refuses an
 app whose `key_env` *is* `CHAT_GATEWAY_ADMIN_KEY`; the same **value** under a
@@ -552,8 +552,8 @@ name set there (`admin.py:322-325`).
 ⚠ **`CHAT_GATEWAY_STATE_DIR` must be in the compose `environment:` when the
 console is on** — added 2026-10-15 (CG-90 final review I4). `managed.env` is
 located before the hand-written `.env` loads, so its directory comes from the
-**process** environment (`__main__.py:60`); everything else in the state dir is
-located after (`:126`), as it was before CG-90. If the `.env` is what sets or
+**process** environment (`__main__.py:63`); everything else in the state dir is
+located after (`:129`), as it was before CG-90. If the `.env` is what sets or
 moves `CHAT_GATEWAY_STATE_DIR`, the two disagree and an armed console refuses
 to boot — `config error: … CHAT_GATEWAY_STATE_DIR …`, exit 2 (`:147-153`) —
 rather than keep its secrets in one directory and its audit and queues in
@@ -569,7 +569,7 @@ failure, not a console that 500s on its first save.
 
 **Turning the console off KEEPS its keys** — added 2026-10-15 (CG-90 final
 review I3). `managed.env` loads at every boot where the file **exists**,
-whatever `GATEWAY_ENABLE_ADMIN` says (`__main__.py:71`; the boot line reads
+whatever `GATEWAY_ENABLE_ADMIN` says (`__main__.py:74`; the boot line reads
 *"admin: loaded N managed secret(s) (console off; managed.env still
 applies)"*). It used to load only with the console on, so switching the
 console off silently revived the hand `.env`'s older value of every key the
@@ -592,7 +592,7 @@ this at rotation time, and `/healthz` reports `admin.shadowed_env_names`
 (names only) until the operator removes the stale line by hand.
 ⚠ **And restarts — corrected 2026-10-15 (CG-90 review).** The paragraph above is
 spec §4's wording verbatim, and it is short of the code: which names the `.env`
-sets is read **once, at boot** (`__main__.py:90-91`), so removing the line does
+sets is read **once, at boot** (`__main__.py:93-94`), so removing the line does
 not clear the name from `/healthz` or the page until the gateway restarts.
 
 **Two more rows for the homelab `SECRETS.template.md`** (above, *Register the
