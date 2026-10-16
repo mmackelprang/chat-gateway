@@ -1529,7 +1529,7 @@ order: the lock was on the box before the console could exist.
 | rollback point | running image `41c3c3b264369bb6…` tagged **`chat-gateway:rollback-20261015`** (the 2026-09-10 habit, repeated) |
 | `docker build -t chat-gateway:local .` | **`sha256:48f7d36ac2cdbeb9de9d958eaad00d0f0fc7dbd200b043b5475fc70ed17b5707`** |
 | image probed in a throwaway `--network none` container | `ruamel.yaml` 0.19.1 imports; `static/admin/` holds all three files; the box's registry loads through the NEW image's loader |
-| compose via `sudo midclt call -j app.update` | exactly two deltas, computed from the live `app.config`: `GATEWAY_ENABLE_ADMIN: "1"` added, `config` mount `:ro` dropped. Everything else byte-equal (port stays `192.168.86.47:8085:8085`). → **Update completed** |
+| compose via `sudo midclt call -j app.update` | exactly two deltas, computed from the live `app.config`: `GATEWAY_ENABLE_ADMIN: "1"` added, `config` mount `:ro` dropped. Everything else byte-equal (port stays `<LAN-IP>:8085:8085`). → **Update completed** |
 | container after | `running`, `RestartCount: 0`, `StartedAt 2026-10-15T21:13:26.648968373Z`, image `48f7d36a…` |
 
 **Boot lines:** `admin: loaded 0 managed secret(s)` (no file yet — correct), `env:
