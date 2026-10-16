@@ -333,8 +333,8 @@ class IdentityCreate(_Guarded):
 
 class IdentityUpdate(_Guarded):
     # Absent = unchanged, for both. `display == ""` is refused; `avatar == ""`
-    # clears it. Neither defaults to a value, so an absent field never reaches
-    # pydantic's input echo (hard rule #2 — the avatar may be a URL).
+    # clears it. No field is required, so pydantic never builds a missing-field
+    # 422 that echoes the request body (hard rule #2 — the avatar may be a URL).
     display: str | None = None
     avatar: str | None = None
 
@@ -796,7 +796,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         audit.record("identity_created", body.name,
                      ["display", *(["avatar"] if avatar else []), "webhook_url_env", "space"],
                      client=client)
-        return {"name": body.name, "webhook_url_env": url_env, "space": space}
+        return {"name": body.name, "webhook_url_env": url_env, "space": space,
+                "avatar": avatar}
 
     def get_identity(name: str):
         ident = registry.identities.get(name)
@@ -808,7 +809,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
     def update_identity(name: str, body: IdentityUpdate, client: str = Depends(require_admin)):
         get_identity(name)
         if body.display is None and body.avatar is None:
-            raise refuse(422, "display is required")
+            raise refuse(422, "nothing to change: send display and/or avatar")
         if body.display is not None and not body.display.strip():
             # `load_registry` would accept "" and render a blank sender name.
             raise refuse(422, "display is required")

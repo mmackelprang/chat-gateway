@@ -1452,7 +1452,7 @@ def test_avatars_create_with_a_bundled_name_shows_in_state(gw):
     from chat_gateway.registry import AVATAR_NAMES
     client, holder, wiring, tmp = gw
     r = _new_identity(client, avatar="phone")
-    assert r.status_code == 201
+    assert r.status_code == 201 and r.json()["avatar"] == "phone"
     st = client.get("/admin/api/state", headers=AUTH).json()
     assert st["identities"]["av1"]["avatar"] == "phone"
     assert st["identities"]["i1"]["avatar"] is None
@@ -1506,7 +1506,9 @@ def test_avatars_put_blank_display_still_422_and_empty_body_is_422(gw):
     client, *_ = gw
     r = client.put("/admin/api/identities/i1", headers=AUTH, json={"display": ""})
     assert r.status_code == 422 and "display is required" in r.text
-    assert client.put("/admin/api/identities/i1", headers=AUTH, json={}).status_code == 422
+    r = client.put("/admin/api/identities/i1", headers=AUTH, json={})
+    assert r.status_code == 422 and "nothing to change" in r.text
+    assert "display is required" not in r.text
 
 
 def test_avatars_put_raw_base_url_is_stored_as_the_bundled_name(gw):
