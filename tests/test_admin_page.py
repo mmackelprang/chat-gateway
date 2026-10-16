@@ -370,6 +370,10 @@ def test_rooms_collapse_by_default_in_page_memory_only():
     assert '"Expand all rooms"' in js and '"Collapse all rooms"' in js
     assert '" rooms expanded · remembered for this session only"' in js
     assert "Enter expands the room" in js
+    # a collapsed group header shows the id WITHOUT `spaces/`; the full id stays in the title and the expanded header
+    fn = _fn(js, "function groupHeaderCell(")
+    assert 'const shortLabel = g.space ? roomSegment(g.space) : "no room";' in fn
+    assert 'title: roomLabel(g.space), text: collapsed ? shortLabel : roomLabel(g.space)' in fn
     assert "cannot route inbound; not covered by any lock" in js
     assert 'id: "expand-all"' in js and 'id: "collapse-all"' in js
 

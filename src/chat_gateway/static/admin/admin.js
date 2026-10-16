@@ -354,6 +354,10 @@ function chips(sevs) { return sevs.length ? el("span", { class: "chips" }, sevs.
 function groupHeaderCell(g, gi) {
   const collapsed = !expanded.has(g.space), locked = !!g.room.locked_by, n = g.ids.length;
   const idents = n + (n === 1 ? " identity" : " identities");
+  // Collapsed, the label is the id WITHOUT `spaces/` — the segment is the
+  // distinguishing part (controller ruling); the full id stays in the title,
+  // the link target and the expanded header.
+  const shortLabel = g.space ? roomSegment(g.space) : "no room";
   return el("th", { scope: "colgroup", colspan: String(collapsed ? 1 : n), class: [locked ? "locked" : "", collapsed ? "collapsed" : ""].join(" ").trim() || null,
     "data-grid": "0," + (gi + 1), "data-span": g.start + "," + g.end, "data-room": g.space, "data-collapsed": collapsed ? "1" : null,
     "data-href": hrefFor("room", roomSegment(g.space)), tabindex: "-1" },
@@ -363,7 +367,7 @@ function groupHeaderCell(g, gi) {
       locked ? el("span", { class: "pill warn", title: "locked by " + g.room.locked_by }, collapsed ? "locked" : "locked by " + g.room.locked_by,
         collapsed ? el("span", { class: "vh", text: " by " + g.room.locked_by }) : null) : null),
     el("div", {},
-      el("a", { class: "roomlink", href: hrefFor("room", roomSegment(g.space)), tabindex: "-1", title: roomLabel(g.space), text: roomLabel(g.space) }),
+      el("a", { class: "roomlink", href: hrefFor("room", roomSegment(g.space)), tabindex: "-1", title: roomLabel(g.space), text: collapsed ? shortLabel : roomLabel(g.space) }),
       collapsed ? el("span", { class: "muted", title: idents }, " ·" + n, el("span", { class: "vh", text: " " + idents })) : null,
       !collapsed && !g.space ? el("span", { class: "muted", text: " — cannot route inbound; not covered by any lock" }) : null));
 }

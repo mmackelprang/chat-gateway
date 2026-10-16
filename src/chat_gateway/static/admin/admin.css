@@ -68,7 +68,7 @@ table.matrix thead tr.groups th { top:0; height:var(--group-h); white-space:nowr
 table.matrix thead tr.groups th.collapsed { padding-left:.45rem; padding-right:.45rem; }
 table.matrix thead tr.groups th.collapsed .pill { margin-right:0; }
 table.matrix thead tr.groups th.collapsed button.toggle { margin-right:.3rem; }
-table.matrix thead tr.groups th.collapsed .roomlink { display:inline-block; max-width:10ch; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; }
+table.matrix thead tr.groups th.collapsed .roomlink { display:inline-block; max-width:12ch; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; }
 table.matrix thead tr.idents th { top:var(--group-h); min-width:132px; }
 table.matrix thead tr.idents th.collapsed { min-width:96px; }
 table.matrix th:first-child, table.matrix td:first-child { position:sticky; left:0; background:var(--card); z-index:2; min-width:230px; border-right:2px solid var(--line); }
