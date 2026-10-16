@@ -549,6 +549,41 @@ def _boot_env(tmp_path, monkeypatch):
     monkeypatch.setenv("GATEWAY_ENABLE_ADMIN", "1")
     for k in ("CHAT_GATEWAY_ENV_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "GATEWAY_ENABLE_PUBSUB"):
         monkeypatch.delenv(k, raising=False)
+    # A developer's shell must not leak a posture into the suite.
+    monkeypatch.delenv("GATEWAY_ADMIN_AUTH", raising=False)
+
+
+def test_open_mode_boots_without_an_admin_key_and_warns(tmp_path, monkeypatch, capsys):
+    from chat_gateway.__main__ import build_runtime
+    _boot_env(tmp_path, monkeypatch)
+    monkeypatch.delenv("CHAT_GATEWAY_ADMIN_KEY", raising=False)
+    monkeypatch.setenv("GATEWAY_ADMIN_AUTH", "open")
+    admin = build_runtime()[6]
+    assert admin.auth == "open" and admin.audit.auth == "open"
+    assert "admin: WARNING — GATEWAY_ADMIN_AUTH=open" in capsys.readouterr().err
+
+
+def test_posture_in_the_env_file_is_ignored(tmp_path, monkeypatch):
+    from chat_gateway.__main__ import build_runtime
+    _boot_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    monkeypatch.delenv("GATEWAY_ADMIN_AUTH", raising=False)
+    hand = tmp_path / "hand.env"
+    hand.write_text("GATEWAY_ADMIN_AUTH=open\n", encoding="utf-8")
+    monkeypatch.setenv("CHAT_GATEWAY_ENV_FILE", str(hand))
+    try:
+        assert build_runtime()[6].auth == "key"
+    finally:
+        os.environ.pop("GATEWAY_ADMIN_AUTH", None)
+
+
+def test_unknown_posture_is_a_config_error(tmp_path, monkeypatch, capsys):
+    from chat_gateway.__main__ import main
+    _boot_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    monkeypatch.setenv("GATEWAY_ADMIN_AUTH", "yes")
+    assert main(["check"]) == 2
+    assert "GATEWAY_ADMIN_AUTH" in capsys.readouterr().err
 
 
 def test_admin_enabled_without_key_is_a_config_error(tmp_path, monkeypatch, capsys):

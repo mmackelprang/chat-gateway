@@ -50,6 +50,9 @@ def build_runtime():
     # a name in here beats every file at every boot, so the console must refuse
     # to manage it rather than write a value that would be ignored.
     admin_enabled = os.environ.get("GATEWAY_ENABLE_ADMIN", "0") == "1"
+    # The posture is read from the PROCESS env BY DESIGN (spec §3): a file that
+    # can open the console must be the captured one, so no env file is consulted.
+    admin_auth_raw = os.environ.get("GATEWAY_ADMIN_AUTH")
     process_env_names = frozenset(os.environ)
     # managed.env has to be found BEFORE the hand-written env file loads, so
     # its directory is resolved from the PROCESS env here. That is the only
@@ -127,15 +130,17 @@ def build_runtime():
 
     admin = None
     if admin_enabled:
-        from .admin import AdminWiring
+        from .admin import AUTH_KEY, AUTH_OPEN, AdminWiring, admin_auth_posture
         from .admin_audit import AdminAudit
         from .registry import ADMIN_KEY_ENV
         from .registry_store import RegistryStore
 
+        # ONE parse; both the wiring and the audit receive this value.
+        posture = admin_auth_posture(admin_auth_raw)
         # Fail closed at boot, the GATEWAY_ENABLE_PUBSUB posture: an armed
         # console with no key would 401 every request, which reads as "wrong
         # key" to the operator rather than "never configured".
-        if not os.environ.get(ADMIN_KEY_ENV):
+        if posture == AUTH_KEY and not os.environ.get(ADMIN_KEY_ENV):
             raise RegistryError(
                 f"GATEWAY_ENABLE_ADMIN=1 needs {ADMIN_KEY_ENV} (mint one with "
                 "`python -m chat_gateway mint-key`; docs/deploy/nas.md)")
@@ -150,6 +155,10 @@ def build_runtime():
                 f"process environment and {state_dir!r} after CHAT_GATEWAY_ENV_FILE loaded; "
                 "managed.env is read before that file, so set CHAT_GATEWAY_STATE_DIR in the "
                 "process environment (the compose document) instead")
+        if posture == AUTH_OPEN:
+            print("admin: WARNING — GATEWAY_ADMIN_AUTH=open: /admin checks no credential; "
+                  "anything that can reach the port can use the console.",
+                  file=sys.stderr, flush=True)
         store = RegistryStore(Path(os.environ.get("CHAT_GATEWAY_REGISTRY",
                                                   "config/registry.yaml")),
                               registry, managed)
@@ -157,7 +166,8 @@ def build_runtime():
         admin = AdminWiring(
             store=store,
             secrets=managed,
-            audit=AdminAudit(Path(state_dir) / "admin_audit.jsonl"))
+            audit=AdminAudit(Path(state_dir) / "admin_audit.jsonl", auth=posture),
+            auth=posture)
     # ONE home for each of these two paths, deliberately: the Inbox WRITES the
     # audit dir and the quarantine dir, and the RetentionSweeper below is
     # constructed against both — one to sweep, one to refuse to sweep. Written
