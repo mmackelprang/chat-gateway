@@ -653,7 +653,7 @@ Offline pytest in the CG-88 style, then UAT with the tester agent.
 - **No storage for board state (D5):** the collapsed-rooms set and selected
   app are page variables; the storage-reference test above covers them.
 - **Suite count** measured on the branch at merge time and written here, not
-  copied from `CLAUDE.md`: _to be filled by the builder_.
+  copied from `CLAUDE.md`: **792 passed, 0 skipped** (2026-10-16, WSL venv, Python 3.13, measured at the end of the build).
 
 **UAT** (tester agent, browser mode, against `python scripts/admin_uat_server.py`
 on `http://127.0.0.1:8099/admin`, whose fixture registry should be extended to

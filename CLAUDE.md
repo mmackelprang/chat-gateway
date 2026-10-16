@@ -104,7 +104,7 @@ opt-in admin console (CG-90): `admin` (the `/admin` router), `admin_audit`,
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
 `python` is 3.13.7) — offline. Windows dev box: 680 passed, 7 skipped
-(2026-10-15); WSL venv, Python 3.13: 788 passed, 0 skipped (2026-10-16, CG-92) —
+(2026-10-15); WSL venv, Python 3.13: 792 passed, 0 skipped (2026-10-16, CG-92) —
 different machines, not a delta.
 
 ## Current status (2026-07-31)
