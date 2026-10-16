@@ -24,6 +24,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SVG_DIR = HERE / "svg"
 PNG_DIR = HERE / "png"
+# CG-92: the same PNGs also ship inside the package, so the admin page renders
+# them same-origin. PNG_DIR stays the published home (its raw URLs must not move);
+# tests/test_avatars.py fails if the two ever differ.
+PKG_PNG_DIR = HERE.parents[1] / "src" / "chat_gateway" / "static" / "admin" / "avatars"
 RAW_BASE = "https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png"
 WHITE, DARK = "#FFFFFF", "#202124"
 
@@ -150,12 +154,14 @@ def main() -> None:
 
     SVG_DIR.mkdir(exist_ok=True)
     PNG_DIR.mkdir(exist_ok=True)
+    PKG_PNG_DIR.mkdir(parents=True, exist_ok=True)
     for name in ICONS:
         svg = svg_for(name)
         (SVG_DIR / f"{name}.svg").write_text(svg, encoding="utf-8", newline="\n")
         doc = fitz.open(stream=svg.encode("utf-8"), filetype="svg")
         pix = doc[0].get_pixmap(alpha=True)  # 256×256 at the SVG's native size
         pix.save(str(PNG_DIR / f"{name}.png"))
+        pix.save(str(PKG_PNG_DIR / f"{name}.png"))
         doc.close()
 
     cols, cell, pad = 5, 160, 24
@@ -206,6 +212,10 @@ def main() -> None:
         "It rewrites `svg/`, `png/`, `preview.png` and this README. It needs PyMuPDF",
         "and Pillow, which are build-time tools only. Keep glyphs within about 70px of",
         "the centre, because Chat crops avatars to a circle.",
+        "",
+        "The PNGs are written to a second place too, `src/chat_gateway/static/admin/avatars/`,",
+        "so the admin console can show them same-origin. `png/` stays the published home",
+        "(the URLs above must not move); `tests/test_avatars.py` fails if the two differ.",
         "",
     ]
     (HERE / "README.md").write_text("\n".join(lines), encoding="utf-8", newline="\n")

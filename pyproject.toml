@@ -28,7 +28,7 @@ dev = ["pytest>=8"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-chat_gateway = ["static/admin/*"]
+chat_gateway = ["static/admin/*", "static/admin/avatars/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
