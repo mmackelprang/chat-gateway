@@ -412,6 +412,11 @@ send as. Every grant list is empty."* An identity with no holders carries an
 **Error on load.** Full view: *"Could not load the registry view (HTTP 503 —
 …)"* → **Retry**; sha and counts stay empty rather than stale.
 
+⚠ *Controller note 2026-10-16 (CG-92): the initial probe's non-401 failure keeps
+CG-91's behaviour (login section with the message, a pinned invariant). The
+full-view error card with Retry applies to failures after the console is
+visible (Refresh view, board re-entry).*
+
 ### 4.7 Keyboard, screen reader, touch
 
 - Tab order: nav → filter → matrix tools (expand/collapse all) → matrix (one

@@ -164,6 +164,10 @@ whether it does today.
 
 ## 6. The page
 
+⚠ *Annotated 2026-10-16 (CG-92): the page's shape below is superseded by
+`2026-10-16-admin-console-ux-design.md`; left standing as the record of what
+CG-90 shipped.*
+
 All `/admin/api/*` calls carry `Authorization: Bearer <admin key>` from page
 memory. The key is never put in `localStorage`, `sessionStorage` or a cookie, so
 a reload asks again; that also means no CSRF surface.

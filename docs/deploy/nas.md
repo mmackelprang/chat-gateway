@@ -514,6 +514,11 @@ Writing those rows is a homelab-repo change — see §9.
 
 ### The admin console (CG-90)
 
+⚠ *Annotated 2026-10-16 (CG-92): CG-92 redrew the console's UI and added an
+optional `avatar:` to identities in `registry.yaml`. Nothing about mounts, flags
+or secrets changed. Rollout is a rebuild and redeploy; record the run in §10
+when it happens.*
+
 Added 2026-10-15. ~~**Nothing below has run on the box** — §10 gains an entry when
 it does, and not before.~~ ✅ **ENABLED ON THE BOX 2026-10-15** — §10, *Run
 2026-10-15*. The struck sentence was true for a few hours. The design, its decisions and the residual risk of the

@@ -1,5 +1,7 @@
 # Admin console — a management surface for many apps sharing identities
 
+> *2026-10-16 (CG-92): the decided design is `docs/superpowers/specs/2026-10-16-admin-console-ux-design.md`; this handoff is the earlier exploration.*
+
 **Task:** CG-91 · **Date:** 2026-10-16 · **Author:** Designer agent
 **Scope:** the `/admin` console shell and views *after* sign-in. The login screen is
 being decided separately and is not designed here.

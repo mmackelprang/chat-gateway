@@ -14,7 +14,10 @@ an entry per real tenant — neither `pmtrader` (2026-09-01) nor `rotaryphone`
 
 Since CG-90 the gateway can do steps 2–5 itself at **`/admin`** (LAN port; admin key, or none under
 `GATEWAY_ADMIN_AUTH=open`, CG-91 — see `docs/deploy/nas.md`, the CG-90
-subsection of §6). The four decisions in §1
+subsection of §6). Since CG-92 the console opens on a board: apps down the side,
+identities across the top grouped by room, one cell per grant. Selecting an app,
+an identity or a room opens its inspector (grants, webhook, avatar, and the
+consequences of a change before Save). The four decisions in §1
 are still yours; the console asks them as a form, mints the key and shows it
 **once**, writes the registry and `managed.env`, and applies the change without a
 redeploy. Step 6's live send is its *Send test* button. Step 7 — handing the key
@@ -93,7 +96,7 @@ config file.
 
 | Decision | What it costs to get wrong |
 |---|---|
-| **Identity / space** | A new space needs a Google Chat webhook, and **a webhook is created in the Chat UI by a person** — nothing in this repo can mint one. The identity's `display` name and avatar are fixed **at webhook creation**, not by the registry (`adapters/webhook.py:3-7`), so a rename means a new webhook. The avatar can be any PNG URL from the repo's gallery, [`assets/avatars/`](https://github.com/mmackelprang/chat-gateway/tree/main/assets/avatars) (PR #80), as its raw URL — `https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png/<name>.png`; the console's webhook guide links the gallery too (`static/admin/admin.js:14-15`). Reusing an existing identity is legal (two apps may list one) and fixes attribution, but leaves both tenants' traffic in one room. |
+| **Identity / space** | A new space needs a Google Chat webhook, and **a webhook is created in the Chat UI by a person** — nothing in this repo can mint one. The identity's `display` name and avatar are fixed **at webhook creation**, not by the registry (`adapters/webhook.py:3-7`), so a rename means a new webhook. The console's avatar picker is the primary way to choose an icon (the optional `avatar:` field, CG-92); for a gateway without the console the avatar can be any PNG URL from the repo's gallery, [`assets/avatars/`](https://github.com/mmackelprang/chat-gateway/tree/main/assets/avatars) (PR #80), as its raw URL — `https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png/<name>.png`; the console's webhook guide links the gallery too (`static/admin/admin.js:14-15`). Reusing an existing identity is legal (two apps may list one) and fixes attribution, but leaves both tenants' traffic in one room. |
 | **`routes:` per severity** | Omitting a route is a **loud** failure at two different times: `/v1/notify` returns **503** (`registry.py:241-245` → `service.py:332-334`) and registering a *new* heartbeat `check_id` with no `alert` route returns **422** (`service.py:519-529`). `routes: {default: <identity>}` covers every severity. ⚠️ Severity picks the **space**, not just the loudness (CG-86) — split routes put an all-clear in a different room from the alert it closes. |
 | **`allow_inbound`** | Hard rule #6. **Write it explicitly**, unquoted. Since CG-88 the default is `false`, but a written value is what a reader can diff between the three registry copies, and the loader reports every app that left the decision to it (`inbound_defaulted`, on `/healthz` and in `check`). ⚠️ `allow_inbound: "false"` — quoted — was truthy before CG-88 and granted exactly what it spelled a refusal of; the loader now refuses a non-boolean rather than coercing. |
 | **Env-var name** | Convention: the app id, uppercased, hyphens → underscores. `job-hunter` → `CHAT_GATEWAY_API_KEY__JOB_HUNTER`; `rotaryphone` → `CHAT_GATEWAY_API_KEY__ROTARYPHONE`. |
