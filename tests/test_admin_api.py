@@ -1434,3 +1434,92 @@ def test_refusal_bodies_401_and_429_carry_no_category(gw):
         bodies.append(r.json())
     assert 401 in codes and 429 in codes
     assert all("category" not in b and "reasons" not in b for b in bodies)
+
+
+# -- avatars ---------------------------------------------------------------
+def _audit_lines(tmp):
+    return [json.loads(x) for x in
+            (tmp / "state" / "admin_audit.jsonl").read_text(encoding="utf-8").splitlines()]
+
+
+def _new_identity(client, **over):
+    body = {"name": "av1", "display": "Av One", "webhook_url": HOOK}
+    body.update(over)
+    return client.post("/admin/api/identities", headers=AUTH, json=body)
+
+
+def test_avatars_create_with_a_bundled_name_shows_in_state(gw):
+    from chat_gateway.registry import AVATAR_NAMES
+    client, holder, wiring, tmp = gw
+    r = _new_identity(client, avatar="phone")
+    assert r.status_code == 201
+    st = client.get("/admin/api/state", headers=AUTH).json()
+    assert st["identities"]["av1"]["avatar"] == "phone"
+    assert st["identities"]["i1"]["avatar"] is None
+    assert st["avatars"] == list(AVATAR_NAMES)
+    assert "avatar" in _audit_lines(tmp)[-1]["fields"]
+
+
+def test_avatars_create_without_one_writes_no_key_and_audits_no_field(gw):
+    client, holder, wiring, tmp = gw
+    assert _new_identity(client).status_code == 201
+    assert "avatar" not in (tmp / "registry.yaml").read_text(encoding="utf-8")
+    assert "avatar" not in _audit_lines(tmp)[-1]["fields"]
+
+
+def test_avatars_create_with_a_bad_value_is_422_naming_the_field_not_the_value(gw):
+    client, *_ = gw
+    for bad in ("Phone", "http://leak.example/secret.png"):
+        r = _new_identity(client, avatar=bad)
+        assert r.status_code == 422
+        assert "avatar" in r.text and bad not in r.text and "leak.example" not in r.text
+
+
+def test_avatars_put_url_is_stored_and_display_unchanged(gw):
+    client, holder, wiring, tmp = gw
+    url = "https://x.example/a.png"
+    assert client.put("/admin/api/identities/i1", headers=AUTH, json={"avatar": url}).status_code == 200
+    st = client.get("/admin/api/state", headers=AUTH).json()["identities"]["i1"]
+    assert st["avatar"] == url and st["display"] == "d1"
+    assert _audit_lines(tmp)[-1]["fields"] == ["avatar"]
+
+
+def test_avatars_put_empty_clears_it(gw):
+    client, *_ = gw
+    client.put("/admin/api/identities/i1", headers=AUTH, json={"avatar": "alert"})
+    r = client.put("/admin/api/identities/i1", headers=AUTH, json={"avatar": ""})
+    assert r.status_code == 200
+    assert client.get("/admin/api/state", headers=AUTH).json()["identities"]["i1"]["avatar"] is None
+
+
+def test_avatars_put_display_alone_leaves_avatar_alone(gw):
+    client, holder, wiring, tmp = gw
+    client.put("/admin/api/identities/i1", headers=AUTH, json={"avatar": "alert"})
+    r = client.put("/admin/api/identities/i1", headers=AUTH, json={"display": "New"})
+    assert r.status_code == 200
+    st = client.get("/admin/api/state", headers=AUTH).json()["identities"]["i1"]
+    assert st["avatar"] == "alert" and st["display"] == "New"
+    assert _audit_lines(tmp)[-1]["fields"] == ["display"]
+
+
+def test_avatars_put_blank_display_still_422_and_empty_body_is_422(gw):
+    client, *_ = gw
+    r = client.put("/admin/api/identities/i1", headers=AUTH, json={"display": ""})
+    assert r.status_code == 422 and "display is required" in r.text
+    assert client.put("/admin/api/identities/i1", headers=AUTH, json={}).status_code == 422
+
+
+def test_avatars_put_raw_base_url_is_stored_as_the_bundled_name(gw):
+    from chat_gateway.registry import AVATAR_RAW_BASE
+    client, *_ = gw
+    r = client.put("/admin/api/identities/i1", headers=AUTH,
+                   json={"avatar": AVATAR_RAW_BASE + "alert.png"})
+    assert r.status_code == 200
+    assert client.get("/admin/api/state", headers=AUTH).json()["identities"]["i1"]["avatar"] == "alert"
+
+
+def test_avatars_put_bad_value_is_422_without_echo(gw):
+    client, *_ = gw
+    r = client.put("/admin/api/identities/i1", headers=AUTH,
+                   json={"avatar": "ftp://leak.example/x.png"})
+    assert r.status_code == 422 and "avatar" in r.text and "leak.example" not in r.text

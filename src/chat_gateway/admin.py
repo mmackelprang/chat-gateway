@@ -28,7 +28,8 @@ from .auth import mint_key
 from .delivery import DeliveryLog
 from .inbox import Inbox
 from .managed_secrets import ManagedSecrets
-from .registry import ADMIN_KEY_ENV, SEVERITIES, App, RegistryError
+from .registry import (ADMIN_KEY_ENV, AVATAR_DIR, AVATAR_NAMES, SEVERITIES, App, RegistryError,
+                       normalize_avatar)
 from .registry_holder import RegistryHolder
 from .registry_store import RegistryStore, StoreError, category_for, flow_seq
 
@@ -327,10 +328,15 @@ class IdentityCreate(_Guarded):
     name: str = ""
     display: str = ""
     webhook_url: str = ""
+    avatar: str = ""        # "" = none; validated by `normalize_avatar` (hard rule #7)
 
 
-class DisplayIn(_Guarded):
-    display: str = ""
+class IdentityUpdate(_Guarded):
+    # Absent = unchanged, for both. `display == ""` is refused; `avatar == ""`
+    # clears it. Neither defaults to a value, so an absent field never reaches
+    # pydantic's input echo (hard rule #2 — the avatar may be a URL).
+    display: str | None = None
+    avatar: str | None = None
 
 
 class WebhookIn(_Guarded):
@@ -409,6 +415,12 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         category = category or category_for(status)
         store.note_refusal(category)
         return AdminRefusal(status, message, category)
+
+    def check_avatar(raw: str) -> str | None:
+        try:
+            return normalize_avatar(raw)
+        except ValueError as exc:  # the message names the rule, never the value
+            raise refuse(422, "avatar must be a bundled icon name or an https URL") from exc
 
     def run(mutate, secret_changes=None, *, sha=None):
         try:
@@ -588,6 +600,14 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         return FileResponse(STATIC_DIR / name, media_type=static_files[name],
                             headers=page_headers)
 
+    @router.get("/static/avatars/{name}.png", include_in_schema=False)
+    def avatar_icon(name: str):
+        # Matched against the packaged set, never joined onto a path.
+        if name not in AVATAR_NAMES:
+            raise HTTPException(404, "not found")
+        return FileResponse(AVATAR_DIR / f"{name}.png", media_type="image/png",
+                            headers=page_headers)
+
     # -- read ------------------------------------------------------------------
     @router.get("/api/state", dependencies=[Depends(require_admin)])
     def state():
@@ -610,13 +630,14 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             },
             "identities": {
                 i.name: {
-                    "display": i.display, "mode": i.mode, "space": i.space,
-                    "webhook_url_env": i.webhook_url_env, "env_resolved": i.env_resolved(),
+                    "display": i.display, "avatar": i.avatar, "mode": i.mode,
+                    "space": i.space, "webhook_url_env": i.webhook_url_env, "env_resolved": i.env_resolved(),
                     "secret_source": (secrets.source_of(i.webhook_url_env)
                                       if i.webhook_url_env else None),
                 } for i in sorted(reg.identities.values(), key=lambda i: i.name)
             },
             "rooms": rooms_for(reg),
+            "avatars": list(AVATAR_NAMES),
             "shadowed_env_names": secrets.shadowed(),
             "inbound_defaulted": list(reg.inbound_defaulted),
             # The reveal panel offers an MCP client config only when /mcp is
@@ -752,6 +773,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             space = parse_webhook_space(body.webhook_url)
         except ValueError as exc:
             raise refuse(422, str(exc)) from exc
+        avatar = check_avatar(body.avatar) if body.avatar else None
         url_env = env_name(WEBHOOK_PREFIX, body.name)
         managed_name(url_env)
 
@@ -762,6 +784,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             claim_env_name(url_env)
             m = CommentedMap()
             m["display"] = body.display
+            if avatar:
+                m["avatar"] = avatar
             m["channel"] = "google_chat"
             m["mode"] = "webhook"
             m["webhook_url_env"] = url_env
@@ -769,7 +793,9 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             identities[body.name] = m
 
         run(mutate, {url_env: body.webhook_url.strip()}, sha=body.registry_sha256)
-        audit.record("identity_created", body.name, ["display", "webhook_url_env", "space"], client=client)
+        audit.record("identity_created", body.name,
+                     ["display", *(["avatar"] if avatar else []), "webhook_url_env", "space"],
+                     client=client)
         return {"name": body.name, "webhook_url_env": url_env, "space": space}
 
     def get_identity(name: str):
@@ -779,17 +805,32 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         return ident
 
     @router.put("/api/identities/{name}")
-    def update_identity(name: str, body: DisplayIn, client: str = Depends(require_admin)):
+    def update_identity(name: str, body: IdentityUpdate, client: str = Depends(require_admin)):
         get_identity(name)
-        if not body.display.strip():
+        if body.display is None and body.avatar is None:
+            raise refuse(422, "display is required")
+        if body.display is not None and not body.display.strip():
             # `load_registry` would accept "" and render a blank sender name.
             raise refuse(422, "display is required")
+        avatar = check_avatar(body.avatar) if body.avatar else None
+        fields: list[str] = []
+        if body.display is not None:
+            fields.append("display")
+        if body.avatar is not None:
+            fields.append("avatar")
 
         def mutate(tree):
-            _node(tree, "identities", name, "identity")["display"] = body.display
+            node = _node(tree, "identities", name, "identity")
+            if body.display is not None:
+                node["display"] = body.display
+            if body.avatar is not None:
+                if avatar:
+                    node["avatar"] = avatar
+                else:
+                    node.pop("avatar", None)
 
         run(mutate, sha=body.registry_sha256)
-        audit.record("identity_updated", name, ["display"], client=client)
+        audit.record("identity_updated", name, fields, client=client)
         return {"name": name}
 
     @router.post("/api/identities/{name}/webhook")

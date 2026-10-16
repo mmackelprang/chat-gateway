@@ -179,3 +179,13 @@ def test_api_sends_no_authorization_header_without_a_key():
     fn = fn[:fn.index("\n}\n")]
     assert 'Authorization: "Bearer " +' not in fn
     assert 'if (k) headers.Authorization = "Bearer " + k;' in fn
+
+
+def test_avatar_route_serves_bundled_icons_and_nothing_else(gw):
+    client, *_ = gw
+    r = client.get("/admin/static/avatars/alert.png")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert r.headers["Content-Security-Policy"]
+    assert client.get("/admin/static/avatars/nope.png").status_code == 404
+    assert client.get("/admin/static/avatars/..%2Fadmin.py").status_code == 404
+    assert client.get("/admin/static/avatars/..%2F..%2Fregistry.py.png").status_code == 404
