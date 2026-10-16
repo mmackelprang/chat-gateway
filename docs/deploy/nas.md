@@ -263,7 +263,8 @@ construction rather than by trusting someone else's redactor.
     "CHAT_GATEWAY_INBOX_DIR": "/data/inbox",
     "GATEWAY_ENABLE_PUBSUB": "1",
     "GATEWAY_ENABLE_MCP": "1",
-    "GATEWAY_ENABLE_ADMIN": "1"
+    "GATEWAY_ENABLE_ADMIN": "1",
+    "GATEWAY_ADMIN_AUTH": "open"
   },
   "image": "chat-gateway:local",
   "mem_limit": "512m",
@@ -278,6 +279,8 @@ construction rather than by trusting someone else's redactor.
     "/mnt/datapool/apps/chat-gateway/inbox-data:/data/inbox"
   ]}}}
 ```
+
+`GATEWAY_ADMIN_AUTH: "open"` is the **target** (CG-91, spec `2026-10-16-admin-open-mode-design.md` §7), not what is on the box: merging this file changes nothing there until the rollout below is run.
 
 ⚠ **Nothing nests, and that is the correction.** An earlier draft of this block
 **could not have booted.** It mounted the config *directory* at `/config` while
@@ -516,11 +519,12 @@ admin key have one home:
 [`docs/superpowers/specs/2026-10-15-admin-console-design.md`](../superpowers/specs/2026-10-15-admin-console-design.md).
 This subsection is only what an operator must do and must not get wrong.
 
-**Two env-var NAMES, and they go in DIFFERENT places:**
+**Env-var NAMES, and they go in DIFFERENT places** (a third row, `GATEWAY_ADMIN_AUTH`, was added by CG-91):
 
 | Name | Where | Why there |
 |---|---|---|
 | `GATEWAY_ENABLE_ADMIN` | §5's compose `environment:` — **not** `.env` | ⚠ It is read **before** the hand-written env file loads (`__main__.py:52`, `:82-86`). **Set in `.env` it is silently ignored and the console stays off** — no error, `/healthz` just says `admin.enabled: false`. Not a credential, so the compose is the right home anyway. ⚠ *Corrected 2026-10-15 (CG-90 final review I3):* this row said *"because whether `managed.env` loads at all depends on it"*. It no longer does — `managed.env` loads whenever the file **exists** (`__main__.py:71`); see *Turning the console off* below. |
+| `GATEWAY_ADMIN_AUTH` | §5's compose `environment:` — **not** `.env` | CG-91. Read from the process env **before** the env files load, like its sibling. **Set in `.env` it is silently ignored and the console stays in `key` mode** (the safe direction; `/healthz` says `admin.auth: "key"`). `open` means **anything that can reach the port can use the console** — the accepted cost is stated in spec `2026-10-16-admin-open-mode-design.md` §2. In `open` mode `CHAT_GATEWAY_ADMIN_KEY` is unread. Any value other than `key` or `open` refuses to boot. |
 | `CHAT_GATEWAY_ADMIN_KEY` | the hand-written `.env`, over stdin exactly as above | A secret. Mint it with `python3 -m chat_gateway mint-key`. With the flag on and this unset, boot raises `RegistryError` and exits 2 (`__main__.py:138-141`) — fail closed, the `GATEWAY_ENABLE_PUBSUB` posture. **Changing it needs a restart**; the console does not manage its own key. |
 
 ⚠ **The admin key must not equal any tenant's key.** `load_registry` refuses an
@@ -627,6 +631,14 @@ identity `aitrader` holds has `space:` written** in the box's registry.
    `GATEWAY_ENABLE_ADMIN: "1"` to the compose, redeploy.
 5. Verify `/healthz` shows `admin.enabled: true`, then open `/admin`.
 6. Record the run in §10.
+
+**Open-mode steps (CG-91, spec `2026-10-16-admin-open-mode-design.md` §7), after the above:**
+
+1. Add `GATEWAY_ADMIN_AUTH: "open"` to the compose `environment:` beside `GATEWAY_ENABLE_ADMIN`; rebuild (§4) and redeploy.
+2. Verify `/healthz` shows `admin.auth: "open"`, then open `/admin`: the console renders with no sign-in and the `open · no sign-in` pill.
+3. **Check the attribution claim on the box:** click *Reload from disk* (a harmless write) and read the new `admin_audit.jsonl` line. It must carry `auth: "open"` and a `client` that is the browser's `<LAN-IP>`. If `client` is the Docker bridge gateway instead, the port publish is not preserving the peer: record that here and in §10, because the spec's "audit trail" mitigation is then weaker than written.
+4. Optionally remove `CHAT_GATEWAY_ADMIN_KEY` from the box `.env`. Harmless if left: unread in `open` mode.
+5. Record the run in §10.
 
 ---
 

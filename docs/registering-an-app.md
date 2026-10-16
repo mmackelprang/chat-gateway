@@ -12,8 +12,8 @@ an entry per real tenant — neither `pmtrader` (2026-09-01) nor `rotaryphone`
 
 ## The console, if it is enabled
 
-Since CG-90 the gateway can do steps 2–5 itself at **`/admin`** (LAN port, admin
-key — `docs/deploy/nas.md`, the CG-90 subsection of §6). The four decisions in §1
+Since CG-90 the gateway can do steps 2–5 itself at **`/admin`** (LAN port; admin key, or none under
+`GATEWAY_ADMIN_AUTH=open` — CG-91 — `docs/deploy/nas.md`, the CG-90 subsection of §6). The four decisions in §1
 are still yours; the console asks them as a form, mints the key and shows it
 **once**, writes the registry and `managed.env`, and applies the change without a
 redeploy. Step 6's live send is its *Send test* button. Step 7 — handing the key
