@@ -189,3 +189,12 @@ def test_avatar_route_serves_bundled_icons_and_nothing_else(gw):
     assert client.get("/admin/static/avatars/nope.png").status_code == 404
     assert client.get("/admin/static/avatars/..%2Fadmin.py").status_code == 404
     assert client.get("/admin/static/avatars/..%2F..%2Fregistry.py.png").status_code == 404
+
+
+def test_css_defines_the_cg92_tokens_in_both_schemes():
+    css = (STATIC / "admin.css").read_text(encoding="utf-8")
+    for token in ("--panel:", "--locked-bg:", "--accent-soft:"):
+        assert css.count(token) == 2, f"{token} must be defined in light and dark"
+    for needle in (".matrix-wrap", "dialog::backdrop", ".avatar.s40",
+                   "@media (max-width: 720px)", "[hidden] { display:none !important; }"):
+        assert needle in css, needle
