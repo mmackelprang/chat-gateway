@@ -316,7 +316,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
     router = APIRouter(prefix="/admin")
 
     def require_admin(request: Request, response: Response,
-                      authorization: str | None = Header(default=None)) -> None:
+                      authorization: str | None = Header(default=None)) -> str:
         # no-store on every admin answer: two of them carry a freshly minted
         # key, and a cached copy of that response is a second home for it.
         response.headers["Cache-Control"] = "no-store"
@@ -327,6 +327,10 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             wiring.cross_origin_refused += 1
             raise HTTPException(403, reason)
         host = request.client.host if request.client else "?"
+        if wiring.auth == AUTH_OPEN:
+            # Operator-chosen posture: no credential is read, so there is
+            # nothing to rate-limit and no key to compare with a tenant's.
+            return host
         limiter.check(host)
         # Read per request, not at mount: rotating the admin key is an env
         # change plus restart today, and an unset key must refuse EVERYTHING
@@ -339,7 +343,11 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         # on a non-ASCII str, and Starlette decodes headers as latin-1 — so one
         # non-ASCII byte in the header was a 500 the limiter never counted, an
         # unthrottled probe. As bytes it is an ordinary, counted 401.
-        if not expected or not presented or not hmac.compare_digest(presented, expected):
+        if not presented:
+            # No credential at all is the page's own probe on load, not a guess:
+            # it must not eat the failed-login budget a real operator needs.
+            raise HTTPException(401, "admin key required", headers={"WWW-Authenticate": "Bearer"})
+        if not expected or not hmac.compare_digest(presented, expected):
             limiter.fail(host)
             raise HTTPException(401, "admin key required", headers={"WWW-Authenticate": "Bearer"})
         # Hard rule #4: two credentials, never one. `load_registry` already
@@ -350,6 +358,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             if v and hmac.compare_digest(v, expected):
                 raise HTTPException(503, f"the admin key equals app {app.app_id!r}'s API key — "
                                          "mint a separate admin key (hard rule #4)")
+        return host
 
     def refuse(status: int, message: str, category: str | None = None) -> HTTPException:
         # The store counts it and keeps the CATEGORY only (I2); the message goes

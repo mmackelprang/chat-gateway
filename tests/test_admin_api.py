@@ -56,8 +56,12 @@ class RecordingAdapter:
         return {"status": "delivered"}
 
 
-def _build(tmp_path, monkeypatch, adapter):
-    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+def _build(tmp_path, monkeypatch, adapter, auth="key"):
+    if auth == "key":
+        monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    else:
+        # Open posture reads no credential: prove it by not providing one.
+        monkeypatch.delenv("CHAT_GATEWAY_ADMIN_KEY", raising=False)
     monkeypatch.setenv("ADM_K1", "cgk_tenant_one")
     monkeypatch.setenv("ADM_W1", "https://x.example/hook")
     p = tmp_path / "registry.yaml"
@@ -67,7 +71,8 @@ def _build(tmp_path, monkeypatch, adapter):
                              process_env_names=frozenset({"CHAT_GATEWAY_ADMIN_KEY"}),
                              environ=os.environ)
     wiring = AdminWiring(store=RegistryStore(p, holder, secrets), secrets=secrets,
-                         audit=AdminAudit(tmp_path / "state" / "admin_audit.jsonl"))
+                         audit=AdminAudit(tmp_path / "state" / "admin_audit.jsonl"),
+                         auth=auth)
     client = TestClient(create_app(holder, Inbox(), {"webhook": adapter}, admin=wiring))
     return client, holder, wiring
 
@@ -81,6 +86,13 @@ def _clean_minted_env():
 @pytest.fixture()
 def gw(tmp_path, monkeypatch):
     client, holder, wiring = _build(tmp_path, monkeypatch, object())
+    yield client, holder, wiring, tmp_path
+    _clean_minted_env()
+
+
+@pytest.fixture()
+def gw_open(tmp_path, monkeypatch):
+    client, holder, wiring = _build(tmp_path, monkeypatch, object(), auth="open")
     yield client, holder, wiring, tmp_path
     _clean_minted_env()
 
@@ -202,6 +214,37 @@ def test_guard_runs_before_the_limiter_and_is_not_a_failed_login(gw):
     assert client.get("/admin/api/state", headers=AUTH).status_code == 429
     assert client.get("/admin/api/state", headers=foreign).status_code == 403
     assert client.get("/admin/api/state", headers=bad).status_code == 429
+
+
+# -- open mode --------------------------------------------------------------
+def test_open_mode_needs_no_credential(gw_open):
+    client, *_ = gw_open
+    assert client.get("/admin/api/state").status_code == 200
+    assert client.get("/admin/api/state", headers={"Authorization": "Bearer wrong"}).status_code == 200
+    assert client.get("/healthz").json()["admin"]["auth"] == "open"
+
+
+def test_open_mode_skips_the_limiter_and_the_tenant_key_equality_check(gw_open, monkeypatch):
+    client, *_ = gw_open
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", "cgk_tenant_one")  # equals ADM_K1
+    codes = [client.get("/admin/api/state", headers={"Authorization": "Bearer wrong"}).status_code
+             for _ in range(7)]
+    assert codes == [200] * 7
+
+
+def test_open_mode_keeps_the_guards(gw_open):
+    client, *_ = gw_open
+    assert client.get("/admin/api/state", headers={"Origin": "http://evil.example"}).status_code == 403
+    r = client.post("/admin/api/apps/a1/delete", json={"confirm_app_id": "nope"})
+    assert r.status_code == 428
+    r = client.post("/admin/api/apps/locked/delete", json={"confirm_app_id": "locked"})
+    assert r.status_code == 403
+
+
+def test_key_mode_header_less_requests_do_not_burn_the_limiter(gw):
+    client, *_ = gw
+    assert [client.get("/admin/api/state").status_code for _ in range(6)] == [401] * 6
+    assert client.get("/admin/api/state", headers=AUTH).status_code == 200
 
 
 # -- auth -------------------------------------------------------------------
