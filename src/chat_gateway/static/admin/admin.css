@@ -37,7 +37,7 @@ code { word-break:break-all; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:1rem; margin:1rem 0; }
 .card p { white-space:pre-line; }
 ol.guide li { margin:.25rem 0; }
-#toast:empty { display:none; }
+kbd { font:inherit; font-size:.85em; padding:0 .35rem; border:1px solid var(--line); border-radius:4px; background:var(--panel); }
 
 /* selection themed on the accent */
 ::selection { background:var(--accent); color:var(--bg); }

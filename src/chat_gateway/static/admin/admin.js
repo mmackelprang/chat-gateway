@@ -16,6 +16,7 @@ const RULE_6 = "Hard rule #6: inbound crosses to a consumer only by that consume
 // A LINK only: the page never loads an image from GitHub (CSP img-src 'self').
 const AVATAR_GALLERY = "https://github.com/mmackelprang/chat-gateway/tree/main/assets/avatars";
 const AVATAR_PNG_PATTERN = "https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png/<name>.png";
+const REFUSED_INTRO = "The server refused this save until you confirm:";
 const FILE_EDIT ="Grants of an inbound_locked app are a registry file edit, not a console action.";
 
 function el(tag, attrs, ...children) {
@@ -102,7 +103,7 @@ function fail(e) {
 function signOut(msg) {
   adminKey = ""; state = null;
   $("console").hidden = true; $("login").hidden = false;
-  revealData = null;
+  revealData = null; setDirty(false);
   $("sha").textContent = ""; $("counts").textContent = "";
   $("auth-mode").hidden = true;
   view();
@@ -165,14 +166,14 @@ function board() {
       a.inbound_locked ? el("span", { class: "pill warn", text: "locked" }) : null),
     el("td", { class: a.key_configured ? "ok" : "error", text: (a.key_configured ? "key set" : "key missing") + " (" + a.key_source + ")" }),
     el("td", { text: a.recent_deliveries.length ? a.recent_deliveries[a.recent_deliveries.length - 1].status : "—" }),
-    el("td", {}, el("button", { type: "button", text: "Manage", on: { click: () => navigate("#/app/" + encodeURIComponent(id)) } }))));
+    el("td", {}, el("button", { type: "button", text: "Manage", on: { click: () => navigate(hrefFor("app", id)) } }))));
   const idRows = Object.entries(state.identities).map(([name, i]) => {
     const locker = held.get(name);
     let webhookAction = null;
     if (i.mode === "webhook") {
       webhookAction = locker
         ? el("p", { class: "note", text: "Webhook held by locked app " + locker + " — replacing it is a registry file edit." })
-        : el("button", { type: "button", text: "Replace webhook", on: { click: () => navigate("#/identity/" + encodeURIComponent(name) + "/replace") } });
+        : el("button", { type: "button", text: "Replace webhook", on: { click: () => navigate(hrefFor("replace", name)) } });
     }
     return el("tr", {},
       el("td", {}, el("strong", { text: name })),
@@ -273,8 +274,10 @@ async function withInboundConfirm(appId, send) {
     if (e.status !== 428) throw e;
     // The server's 428 detail already quotes rule #6; add it only if it does not.
     const msg = /hard rule #6/i.test(e.message) ? e.message : e.message + "\n\n" + RULE_6;
-    const typed = await typedConfirm({ title: "Confirm: widen inbound for " + appId, intro: msg, reasons: e.reasons,
-      expected: appId, verb: "Widen inbound", tone: "warn" });
+    const has = !!(e.reasons && e.reasons.length); // bullets cover the detail; do not print both
+    const typed = await typedConfirm({ title: "Confirm: widen inbound for " + appId,
+      intro: has ? REFUSED_INTRO : msg, reasons: e.reasons,
+      note: has && !/hard rule #6/i.test(e.message) ? RULE_6 : null, expected: appId, verb: "Widen inbound", tone: "warn" });
     if (typed === null) throw new Error("cancelled");
     return await send(typed);
   }
@@ -295,7 +298,7 @@ function dialogClosed(dlg, trigger) {
 // Typed confirmation: the verb button stays disabled until the text equals
 // `expected`, so a mismatch cannot be submitted. Resolves the typed text, or
 // null on Cancel/Escape.
-function typedConfirm({ title, intro, reasons, expected, verb, tone }) {
+function typedConfirm({ title, intro, reasons, note, expected, verb, tone }) {
   const dlg = $("confirm");
   if (dlg.open) dlg.close();
   const trigger = document.activeElement;
@@ -313,6 +316,7 @@ function typedConfirm({ title, intro, reasons, expected, verb, tone }) {
     el("h2", { id: "confirm-title", text: title }),
     intro ? el("p", { text: intro }) : null,
     reasons && reasons.length ? el("ul", {}, reasons.map((r) => el("li", { text: r }))) : null,
+    note ? el("p", { class: "muted", text: note }) : null,
     el("label", {}, "Type ", el("strong", { text: expected }), " to confirm", input),
     el("p", {}, verbBtn, " ", cancelBtn)]));
   const closed = dialogClosed(dlg, trigger);
@@ -368,7 +372,7 @@ function appInspector(appId) {
     try {
       await withInboundConfirm(appId, (c) => write("PUT", "/admin/api/apps/" + encodeURIComponent(appId), Object.assign(readAppFields(form, a), { confirm_app_id: c })));
       toast("Saved " + appId + ". Live now.");
-      setDirty(false); navigate("#/");
+      setDirty(false); navigate(hrefFor("board"));
     } catch (e) { fail(e); }
   });
   view(el("h2", { text: "App " + appId }),
@@ -392,7 +396,7 @@ function appInspector(appId) {
           const typed = await typedConfirm({ title: "Delete app " + appId + "?", intro: "Its queued messages close as unroutable.",
             expected: appId, verb: "Delete app", tone: "danger" });
           if (typed === null) return;
-          try { await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/delete", { confirm_app_id: typed }); toast("Deleted " + appId); setDirty(false); navigate("#/"); }
+          try { await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/delete", { confirm_app_id: typed }); toast("Deleted " + appId); setDirty(false); navigate(hrefFor("board")); }
           catch (e) { fail(e); }
         } } })));
 }
@@ -407,7 +411,7 @@ function newApp() {
   const form = el("form", {},
     el("fieldset", {}, el("legend", { text: "1 · App id" }), el("label", {}, "App id", idInput), envHint),
     el("p", {}, "2 · Need a new Chat space identity first? ",
-      el("button", { type: "button", text: "Create an identity", on: { click: () => navigate("#/new-identity") } })),
+      el("button", { type: "button", text: "Create an identity", on: { click: () => navigate(hrefFor("new-identity")) } })),
     el("p", { class: "muted", text: "3 and 4 · identities, routes and inbound:" }),
     appFields(blank),
     el("button", { type: "submit", class: "primary", text: "Create app and mint key" }));
@@ -443,7 +447,7 @@ function newIdentity() {
     try {
       const r = await write("POST", "/admin/api/identities", { name: f("name").trim(), display: f("display").trim(), webhook_url: f("webhook_url") });
       toast("Identity " + r.name + " created in " + r.space + ".");
-      navigate("#/new-app");
+      navigate(hrefFor("new-app"));
     } catch (e) { fail(e); }
   });
   view(el("h2", { text: "New identity (Chat webhook)" }), form);
@@ -466,12 +470,14 @@ function replaceWebhook(name) {
         catch (e) {
           if (e.status !== 428) throw e;
           const msg = /hard rule #6/i.test(e.message) ? e.message : e.message + "\n\n" + RULE_6;
-          const typed = await typedConfirm({ title: "Confirm: replace the webhook for " + name, intro: msg, reasons: e.reasons,
-            expected: name, verb: "Replace webhook", tone: "warn" });
+          const has = !!(e.reasons && e.reasons.length);
+          const typed = await typedConfirm({ title: "Confirm: replace the webhook for " + name,
+            intro: has ? REFUSED_INTRO : msg, reasons: e.reasons,
+            note: has && !/hard rule #6/i.test(e.message) ? RULE_6 : null, expected: name, verb: "Replace webhook", tone: "warn" });
           if (typed === null) throw new Error("cancelled");
           await send(typed);
         }
-        input.value = ""; toast("Webhook replaced."); navigate("#/");
+        input.value = ""; toast("Webhook replaced."); navigate(hrefFor("board"));
       }
       catch (e) { fail(e); }
     } } }));
@@ -481,7 +487,7 @@ function renameIdentity(name, current) {
   const input = el("input", { value: current, "aria-label": "Display name", autocomplete: "off" });
   view(el("h2", { text: "Display name for " + name }), el("label", {}, "Display name", input),
     el("button", { type: "button", class: "primary", text: "Save", on: { click: async () => {
-      try { await write("PUT", "/admin/api/identities/" + encodeURIComponent(name), { display: input.value.trim() }); toast("Saved display name for " + name + "."); navigate("#/"); }
+      try { await write("PUT", "/admin/api/identities/" + encodeURIComponent(name), { display: input.value.trim() }); toast("Saved display name for " + name + "."); navigate(hrefFor("board")); }
       catch (e) { fail(e); }
     } } }));
 }
@@ -489,7 +495,7 @@ function renameIdentity(name, current) {
 async function deleteIdentity(name) {
   const typed = await typedConfirm({ title: "Delete identity " + name + "?", intro: "", expected: name, verb: "Delete identity", tone: "danger" });
   if (typed === null) return;
-  try { await write("POST", "/admin/api/identities/" + encodeURIComponent(name) + "/delete", { confirm_name: typed }); toast("Deleted " + name); navigate("#/"); }
+  try { await write("POST", "/admin/api/identities/" + encodeURIComponent(name) + "/delete", { confirm_name: typed }); toast("Deleted " + name); navigate(hrefFor("board")); }
   catch (e) { fail(e); }
 }
 
@@ -533,7 +539,7 @@ function reveal(r) {
     el("p", { class: "muted", text: "202 enqueued is not delivery — this waits for the delivery log to say delivered or failed." }),
     el("button", { type: "button", class: "primary", text: "Send test", on: { click: () => testSend(key, result) } }),
     result,
-    el("p", {}, el("button", { type: "button", text: "Done", on: { click: () => navigate("#/") } })));
+    el("p", {}, el("button", { type: "button", text: "Done", on: { click: () => navigate(hrefFor("board")) } })));
 }
 
 async function testSend(key, out) {
@@ -565,8 +571,27 @@ let shownHash = "#/";
 let ignoreHashChange = false;
 function setDirty(v) { dirty = !!v; }
 
+// The ONE normalisation of "which route is this": a page opened with no hash
+// is the board. render(), navigate() and the hashchange handler all use it.
+function routeKey(hash) { return hash || "#/"; }
+// The ONE builder of route hashes; ids are encoded here and decoded in routeFromHash.
+function hrefFor(name, id) {
+  const e = encodeURIComponent(id == null ? "" : id);
+  switch (name) {
+    case "board": return "#/";
+    case "app": return "#/app/" + e;
+    case "identity": return "#/identity/" + e;
+    case "replace": return "#/identity/" + e + "/replace";
+    case "room": return "#/room/" + e;
+    case "new-app": return "#/new-app";
+    case "new-identity": return "#/new-identity";
+    case "reveal": return "#/reveal";
+    default: return "#/";
+  }
+}
+
 function routeFromHash() {
-  const raw = (window.location.hash || "#/").replace(/^#/, "");
+  const raw = routeKey(window.location.hash).replace(/^#/, "");
   const path = raw.split("?")[0];
   const seg = path.split("/").filter(Boolean).map((x) => { try { return decodeURIComponent(x); } catch (_) { return x; } });
   if (!seg.length) return { name: "board", params: {} };
@@ -587,7 +612,7 @@ function guardNavigation(fn) {
   return discardConfirm("unsaved changes").then((ok) => { if (ok) { setDirty(false); fn(); } return ok; });
 }
 function navigate(hash) {
-  return guardNavigation(() => { if (window.location.hash === hash) render(); else window.location.hash = hash; });
+  return guardNavigation(() => { if (routeKey(window.location.hash) === routeKey(hash)) render(); else window.location.hash = hash; });
 }
 
 function setCrumbs(...parts) {
@@ -598,8 +623,9 @@ function setCrumbs(...parts) {
   });
   $("crumbs").replaceChildren(...toNodes(nodes));
 }
+const NAV_ROUTES = [["nav-board", "board"], ["nav-new-app", "new-app"], ["nav-new-identity", "new-identity"]];
 function setNav(name) {
-  for (const [id, n] of [["nav-board", "board"], ["nav-new-app", "new-app"], ["nav-new-identity", "new-identity"]]) {
+  for (const [id, n] of NAV_ROUTES) {
     if (n === name) $(id).setAttribute("aria-current", "page"); else $(id).removeAttribute("aria-current");
   }
 }
@@ -607,7 +633,7 @@ function setNav(name) {
 function notFound(kind, id) {
   setNav(null); setCrumbs({ text: "Unknown " + kind });
   view(el("div", { class: "card" }, el("h2", { text: "No " + kind + " “" + id + "”" }),
-    el("p", {}, el("a", { href: "#/", text: "Back to the board" }))));
+    el("p", {}, el("a", { href: hrefFor("board"), text: "Back to the board" }))));
   return null;
 }
 
@@ -618,7 +644,7 @@ function identityInspector(name) {
   view(el("h2", { text: "Identity " + name }),
     el("p", { class: "muted", text: i.display + " · " + (i.space || "no room") }),
     el("p", {},
-      i.mode === "webhook" && !held.get(name) ? el("button", { type: "button", text: "Replace webhook", on: { click: () => navigate("#/identity/" + encodeURIComponent(name) + "/replace") } }) : null,
+      i.mode === "webhook" && !held.get(name) ? el("button", { type: "button", text: "Replace webhook", on: { click: () => navigate(hrefFor("replace", name)) } }) : null,
       el("button", { type: "button", text: "Rename display", on: { click: () => renameIdentity(name, i.display) } }),
       el("button", { type: "button", class: "danger", text: "Delete", on: { click: () => deleteIdentity(name) } })));
 }
@@ -630,22 +656,27 @@ function roomInspector(key, room) {
 }
 
 // Called by every flow that mints a key: hold it in memory, go to #/reveal.
-function showKey(r) { revealData = r; navigate("#/reveal"); }
+// The server has already minted the key: edits are moot and the reveal must
+// never be blocked by the discard guard, so this bypasses guardNavigation.
+function showKey(r) {
+  revealData = r; setDirty(false);
+  if (routeKey(window.location.hash) === hrefFor("reveal")) render(); else window.location.hash = hrefFor("reveal");
+}
 function revealView() {
   setNav(null);
   if (!revealData) {
     setCrumbs({ text: "Key" });
     view(el("div", { class: "card" }, el("h2", { text: "No key to show" }),
       el("p", { text: "A key is shown exactly once, at the moment it is minted. If you reloaded this page the key is gone — rotate again to get a new one." }),
-      el("p", {}, el("a", { href: "#/", text: "Back to the board" }))));
+      el("p", {}, el("a", { href: hrefFor("board"), text: "Back to the board" }))));
     return;
   }
-  setCrumbs({ text: "App " + revealData.app_id, href: "#/app/" + encodeURIComponent(revealData.app_id) }, { text: "API key" });
+  setCrumbs({ text: "App " + revealData.app_id, href: hrefFor("app", revealData.app_id) }, { text: "API key" });
   reveal(revealData);
 }
 
 function render() {
-  shownHash = window.location.hash || "#/";
+  shownHash = routeKey(window.location.hash);
   if (!state) return;
   const { name, params } = routeFromHash();
   if (name !== "reveal") revealData = null;
@@ -653,27 +684,27 @@ function render() {
   switch (name) {
     case "board": setNav("board"); board(); break;
     case "app": {
-      const a = state.apps[params.id] || notFound("app", params.id);
+      const a = (Object.hasOwn(state.apps, params.id) && state.apps[params.id]) || notFound("app", params.id);
       if (a) { setNav(null); setCrumbs({ text: "App " + params.id }); appInspector(params.id); }
       break;
     }
     case "identity": {
-      const i = state.identities[params.id] || notFound("identity", params.id);
+      const i = (Object.hasOwn(state.identities, params.id) && state.identities[params.id]) || notFound("identity", params.id);
       if (i) { setNav(null); setCrumbs({ text: "Identity " + params.id }); identityInspector(params.id); }
       break;
     }
     case "replace": {
-      const i = state.identities[params.id] || notFound("identity", params.id);
+      const i = (Object.hasOwn(state.identities, params.id) && state.identities[params.id]) || notFound("identity", params.id);
       if (i) {
         setNav(null);
-        setCrumbs({ text: "Identity " + params.id, href: "#/identity/" + encodeURIComponent(params.id) }, { text: "Replace webhook" });
+        setCrumbs({ text: "Identity " + params.id, href: hrefFor("identity", params.id) }, { text: "Replace webhook" });
         replaceWebhook(params.id);
       }
       break;
     }
     case "room": {
       const key = params.id === "none" ? "" : "spaces/" + params.id;
-      const r = (state.rooms || {})[key] || notFound("room", params.id);
+      const r = (Object.hasOwn(state.rooms || {}, key) && state.rooms[key]) || notFound("room", params.id);
       if (r) { setNav(null); setCrumbs({ text: "Room " + params.id }); roomInspector(key, r); }
       break;
     }
@@ -688,7 +719,7 @@ function render() {
 // and only on Discard go where the operator was headed.
 window.addEventListener("hashchange", () => {
   if (ignoreHashChange) { ignoreHashChange = false; return; }
-  const target = window.location.hash || "#/";
+  const target = routeKey(window.location.hash);
   if (target === shownHash) return;
   if (!dirty || !state) { render(); return; }
   ignoreHashChange = true;
@@ -717,7 +748,7 @@ function onKey(ev) {
   const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
   if (ev.key === "Escape") {
     if (routeFromHash().name === "reveal") return; // the key's only way out is Done
-    if (!$("console").hidden) { ev.preventDefault(); navigate("#/"); }
+    if (!$("console").hidden) { ev.preventDefault(); navigate(hrefFor("board")); }
   } else if (ev.key === "/" && !typing && !$("console").hidden) {
     ev.preventDefault(); guardNavigation(() => $("filter").focus());
   } else if (ev.key === "?" && !typing && !$("console").hidden) {
@@ -754,12 +785,12 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (e) { adminKey = ""; $("login-error").textContent = e.message; }
   });
   document.addEventListener("keydown", onKey);
-  $("nav-board").addEventListener("click", () => navigate("#/"));
-  $("nav-new-app").addEventListener("click", () => navigate("#/new-app"));
-  $("nav-new-identity").addEventListener("click", () => navigate("#/new-identity"));
+  $("nav-board").addEventListener("click", () => navigate(hrefFor("board")));
+  $("nav-new-app").addEventListener("click", () => navigate(hrefFor("new-app")));
+  $("nav-new-identity").addEventListener("click", () => navigate(hrefFor("new-identity")));
   $("filter").addEventListener("input", () => {
     filterText = $("filter").value;
-    if (routeFromHash().name !== "board") navigate("#/"); else render();
+    if (routeFromHash().name !== "board") navigate(hrefFor("board")); else render();
   });
   const closeMenu = () => { $("registry-menu").open = false; };
   $("menu-refresh").addEventListener("click", async () => {

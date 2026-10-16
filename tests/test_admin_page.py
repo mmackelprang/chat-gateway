@@ -230,8 +230,9 @@ def test_router_knows_the_eight_routes():
 
 def test_unknown_ids_route_to_not_found():
     js = _js()
-    assert "state.apps[params.id] || notFound(" in js
-    assert "state.identities[params.id] || notFound(" in js
+    assert "state.apps[params.id]) || notFound(" in js
+    assert "state.identities[params.id]) || notFound(" in js
+    assert "Object.hasOwn(state.apps, params.id)" in js and "Object.hasOwn(state.identities, params.id)" in js
     assert "function appInspector(" in js and "function identityInspector(" in js and "function roomInspector(" in js
 
 
@@ -240,8 +241,8 @@ def test_typed_confirm_is_a_modal_dialog_with_a_gated_verb():
     fn = _fn(js, "function typedConfirm(")
     assert "showModal()" in fn
     assert "verbBtn.disabled = " in fn and "expected" in fn
-    assert "resolve(null)" in fn or "? null" in fn or ": null" in fn
-    assert "focus()" in fn  # focus returns to the trigger
+    assert 'v === "ok" ? input.value : null' in fn
+    assert "trigger.focus()" in js[js.index("function dialogClosed("):js.index("function typedConfirm(")]
     assert 'class: "card"' not in fn  # the card version is gone
     for opt in ("title", "intro", "reasons", "expected", "verb", "tone"):
         assert opt in js[js.index("function typedConfirm("):][:200], opt
@@ -291,3 +292,39 @@ def test_probe_resumes_the_hash_and_keys_are_wired():
     assert "function onKey(" in js
     keys = _fn(js, "function onKey(")
     assert '"/"' in keys and '"Escape"' in keys and '"?"' in keys
+
+
+def test_route_key_is_the_single_normalisation():
+    js = _js()
+    assert 'function routeKey(hash) { return hash || "#/"; }' in js
+    assert "shownHash = routeKey(window.location.hash)" in js
+    assert "const target = routeKey(window.location.hash)" in js
+    nav = _fn(js, "function navigate(")
+    assert "routeKey(window.location.hash) === routeKey(hash)) render()" in nav
+
+
+def test_hrefFor_is_the_only_route_builder():
+    js = _js()
+    assert "function hrefFor(name, id)" in js
+    outside = js.replace(_fn(js, "function hrefFor("), "")
+    assert '"#/app/"' not in outside and '"#/identity/"' not in outside and '"#/room/"' not in outside
+
+
+def test_show_key_bypasses_the_guard_and_sign_out_clears_dirty():
+    js = _js()
+    sk = _fn(js, "function showKey(")
+    assert "setDirty(false)" in sk and "navigate(" not in sk and "guardNavigation" not in sk
+    assert "setDirty(false)" in _fn(js, "function signOut(")
+
+
+def test_dialog_copy_prefers_reasons_over_detail():
+    js = _js()
+    assert 'REFUSED_INTRO = "The server refused this save until you confirm:"' in js
+    assert "intro: has ? REFUSED_INTRO : msg" in _fn(js, "async function withInboundConfirm(")
+    assert "intro: has ? REFUSED_INTRO : msg" in _fn(js, "function replaceWebhook(")
+
+
+def test_view_is_not_a_live_region_and_toast_rule_is_gone():
+    assert "aria-live" not in _html()
+    css = (STATIC / "admin.css").read_text(encoding="utf-8")
+    assert "#toast" not in css and "kbd {" in css
