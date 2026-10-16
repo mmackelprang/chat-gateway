@@ -102,6 +102,20 @@ def parse_webhook_space(url: str) -> str:
     return f"spaces/{m.group(1)}"
 
 
+class AdminRefusal(HTTPException):
+    """An HTTPException that carries sibling keys beside `detail`: FastAPI's own
+    class has nowhere to put them. `service._admin_refusal_handler` renders
+    `{"detail", "category"}` and `"reasons"` only when non-empty. `category` is
+    a fixed authored phrase (never interpolated); `reasons` names ids and
+    widening kinds only."""
+
+    def __init__(self, status_code: int, detail: str, category: str,
+                 reasons: list[str] | None = None):
+        super().__init__(status_code, detail)
+        self.category = category
+        self.reasons = reasons
+
+
 def widening(old: App | None, new, spaces: dict[str, str] | None = None) -> list[str]:
     """Which parts of `new` widen inbound relative to `old` (spec §6.4).
 
@@ -389,17 +403,19 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
                                          "mint a separate admin key (hard rule #4)")
         return host
 
-    def refuse(status: int, message: str, category: str | None = None) -> HTTPException:
+    def refuse(status: int, message: str, category: str | None = None) -> AdminRefusal:
         # The store counts it and keeps the CATEGORY only (I2); the message goes
         # to the authenticated caller and nowhere else.
-        store.note_refusal(category or category_for(status))
-        return HTTPException(status, message)
+        category = category or category_for(status)
+        store.note_refusal(category)
+        return AdminRefusal(status, message, category)
 
     def run(mutate, secret_changes=None, *, sha=None):
         try:
             return store.apply(mutate, secrets=secret_changes, expect_sha256=sha)
         except StoreError as exc:
-            raise HTTPException(exc.status, str(exc)) from exc
+            raise AdminRefusal(exc.status, str(exc), exc.category or category_for(exc.status),
+                               exc.reasons) from exc
         except ValueError as exc:  # ManagedSecrets value refusal — names only
             raise refuse(422, str(exc), "refused: secret value") from exc
 
@@ -411,7 +427,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
     def managed_name(name: str) -> None:
         if secrets.blocked(name):
             raise refuse(409, f"{name} is set in the gateway's process environment, which "
-                              "overrides managed.env at boot — change it there, not here")
+                              "overrides managed.env at boot — change it there, not here",
+                         "refused: secret in process env")
 
     def claim_env_name(name: str) -> None:
         """Refuse a DERIVED env-var name somebody already uses (CG-90 final
@@ -480,7 +497,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
                                   "console action. " + RULE_6)
         if body.confirm_app_id != app_id:
             raise StoreError(428, f"widening inbound ({', '.join(reasons)}) requires typing "
-                                  f"the app id to confirm. {RULE_6}")
+                                  f"the app id to confirm. {RULE_6}",
+                             reasons=list(reasons))
         return reasons
 
     def guard_locked_spaces(after: tuple[dict, dict], touched: set[str]) -> None:
@@ -816,7 +834,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
                     raise StoreError(428, f"identity {name!r} is held by inbound app(s) "
                                           f"{', '.join(movers)}: moving it to another space "
                                           "widens what they receive — type the identity name "
-                                          f"to confirm. {RULE_6}")
+                                          f"to confirm. {RULE_6}", reasons=movers)
                 widened.extend(movers)
             node["space"] = space
 
@@ -834,7 +852,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         users = sorted(a.app_id for a in registry.apps.values() if name in a.identities)
         if users:
             raise refuse(409, f"identity {name!r} is still granted to: {', '.join(users)} — "
-                              "remove it from those apps first")
+                              "remove it from those apps first",
+                         "refused: still granted")
 
         def mutate(tree):
             _node(tree, "identities", name, "identity")
@@ -852,7 +871,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         try:
             store.reload()
         except StoreError as exc:
-            raise HTTPException(exc.status, str(exc)) from exc
+            raise AdminRefusal(exc.status, str(exc), exc.category or category_for(exc.status),
+                               exc.reasons) from exc
         audit.record("reloaded_from_disk", "registry.yaml", [], client=client)
         return {"registry_sha256": store.sha256}
 

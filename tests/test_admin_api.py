@@ -1373,3 +1373,64 @@ def test_inbox_pending_is_zero_without_an_inbox_and_counts_with_one(tmp_path, mo
     apps = client.get("/admin/api/state", headers=AUTH).json()["apps"]
     assert apps["a1"]["inbox_pending"] == inbox.pending_counts()["a1"] == 1
     assert apps["a2"]["inbox_pending"] == 0
+
+
+# -- refusal bodies: a fixed category beside detail, reasons only when a list ---
+def test_refusal_bodies_still_granted_has_a_category_and_no_reasons(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/identities/i1/delete", headers=AUTH, json={"confirm_name": "i1"})
+    assert r.status_code == 409
+    body = r.json()
+    assert body["category"] == "refused: still granted"
+    assert "a1" in body["detail"] and "reasons" not in body
+    # (g) /healthz publishes the same authored category and nothing else.
+    assert client.get("/healthz").json()["admin"]["last_write_error"] == "refused: still granted"
+
+
+def test_refusal_bodies_widening_428_lists_its_reasons(gw):
+    client, *_ = gw
+    r = _new_app(client, allow_inbound=True)
+    assert r.status_code == 428
+    body = r.json()
+    assert body["category"] == "refused: confirmation required"
+    assert body["reasons"] == ["allow_inbound"]
+
+
+def test_refusal_bodies_webhook_move_428_lists_the_moving_apps(fin):
+    client, *_ = fin
+    r = client.post("/admin/api/identities/mine/webhook", headers=AUTH,
+                    json={"webhook_url": HOOK_ELSEWHERE})
+    assert r.status_code == 428
+    body = r.json()
+    assert body["category"] == "refused: confirmation required"
+    assert body["reasons"] == ["consumer"]
+
+
+def test_refusal_bodies_a_typed_confirmation_428_has_no_reasons_key(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/apps/a1/delete", headers=AUTH, json={"confirm_app_id": "nope"})
+    assert r.status_code == 428
+    assert r.json()["category"] == "refused: confirmation required"
+    assert "reasons" not in r.json()
+
+
+def test_refusal_bodies_out_of_band_409_has_the_stores_own_category(gw):
+    client, holder, wiring, tmp = gw
+    p = tmp / "registry.yaml"
+    p.write_text(p.read_text(encoding="utf-8") + "# hand edit\n", encoding="utf-8")
+    r = _new_app(client)
+    assert r.status_code == 409
+    assert r.json()["category"] == "refused: edited outside the console"
+    assert r.json()["category"] != "refused: still granted"
+
+
+def test_refusal_bodies_401_and_429_carry_no_category(gw):
+    client, *_ = gw
+    bad = {"Authorization": "Bearer wrong"}
+    codes, bodies = [], []
+    for _ in range(7):
+        r = client.get("/admin/api/state", headers=bad)
+        codes.append(r.status_code)
+        bodies.append(r.json())
+    assert 401 in codes and 429 in codes
+    assert all("category" not in b and "reasons" not in b for b in bodies)

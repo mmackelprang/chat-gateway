@@ -918,3 +918,32 @@ def test_describe_exception_is_the_only_discriminator_left_in_the_subscriber():
             scopes.append(getattr(_enclosing_scope(node), "name", "<module>"))
 
     assert scopes == ["_run", "_run"], scopes      # the one ternary, and only it
+
+
+# -- admin refusal categories (CG-92 S2) ------------------------------------------
+def test_every_admin_refusal_category_is_a_fixed_known_literal():
+    """Each `refuse(` call and each `StoreError(` in admin.py with a 403/409/
+    422/428 status resolves to a category in CATEGORIES, and none is an
+    f-string: a category reaches the unauthenticated /healthz (hard rule #2)."""
+    from chat_gateway.registry_store import CATEGORIES, category_for
+
+    seen = 0
+    for node in ast.walk(_tree(SRC / "admin.py")):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in {"refuse", "StoreError"} and node.args):
+            continue
+        status = node.args[0]
+        if not (isinstance(status, ast.Constant) and status.value in {403, 409, 422, 428}):
+            continue
+        cat = node.args[2] if len(node.args) > 2 else next(
+            (k.value for k in node.keywords if k.arg == "category"), None)
+        if cat is None:
+            resolved = category_for(status.value)
+        else:
+            assert not isinstance(cat, ast.JoinedStr), f"line {node.lineno}: interpolated category"
+            assert isinstance(cat, ast.Constant) and isinstance(cat.value, str), \
+                f"line {node.lineno}: category is not a literal"
+            resolved = cat.value
+        assert resolved in CATEGORIES, f"line {node.lineno}: {resolved!r} not in CATEGORIES"
+        seen += 1
+    assert seen >= 20, "the walk found suspiciously few raise sites"

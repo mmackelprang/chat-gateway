@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 # No cycle: `admin` imports delivery / registry / auth / the store, never this.
-from .admin import AdminWiring, build_admin_router
+from .admin import AdminRefusal, AdminWiring, build_admin_router
 from .auth import AuthError, authenticate
 from .delivery import DeliveryLog, Dispatcher
 from .envelope import CG_ACTION_KEY, DeliveryResult, OutboundMessage
@@ -295,6 +295,18 @@ async def _admin_safe_validation_handler(request: Request, exc: RequestValidatio
     return await request_validation_exception_handler(request, exc)
 
 
+async def _admin_refusal_handler(request: Request, exc: AdminRefusal):
+    """`HTTPException` carries only `detail`; the console's page routes a refusal
+    by `category` and lists `reasons` on the two 428s that have a list. A
+    subclass plus this handler is how sibling keys reach the body. `reasons` is
+    omitted, never null, when there are none."""
+    body: dict = {"detail": exc.detail, "category": exc.category}
+    if exc.reasons:
+        body["reasons"] = list(exc.reasons)
+    return JSONResponse(status_code=exc.status_code, content=body,
+                        headers=getattr(exc, "headers", None))
+
+
 class HeartbeatIn(BaseModel):
     check_id: str = Field(min_length=1, max_length=100)
     schedule: str = Field(description="weekdays | daily | every:<N><s|m|h|d>")
@@ -498,6 +510,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         app.include_router(build_admin_router(registry, admin, delivery_log=log,
                                               inbox=inbox, mcp_enabled=mcp_enabled))
         app.add_exception_handler(RequestValidationError, _admin_safe_validation_handler)
+        app.add_exception_handler(AdminRefusal, _admin_refusal_handler)
 
     # -- raw envelope send (synchronous; aiteam notify.py path) ---------------
     @app.post("/v1/messages", response_model=DeliveryResult)
