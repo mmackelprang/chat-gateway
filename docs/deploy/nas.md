@@ -1610,6 +1610,62 @@ off.
 
 ---
 
+### Run 2026-10-16 — CG-91 open mode and the CG-92 console, together
+
+One upgrade carried both rows: the `6e3e72f` merge of CG-92 includes CG-91
+(`231c1e9`). Executed in the CG-90 subsection's open-mode order.
+
+| Step | Result |
+|---|---|
+| preflight | `app.query` → `RUNNING`; `/healthz` `ok`, `reasons: []`, 6 apps, `admin` block present with **no `auth` field** (the 2026-10-15 image); source `b56b29e`; running image `48f7d36a…` |
+| source `b56b29e` → **`6e3e72f`** | `git fetch` + `git checkout <pinned>` |
+| rollback point | **`chat-gateway:rollback-20261016`** = `48f7d36a…`. ⚠ The first `docker tag` was issued BEFORE the build and did not land (the ssh transport's one-call output lag hid that); it was re-applied **by image id** after the build, when `local` already pointed at the new image. Tag by id, and read the image list back, before `app.update`. |
+| pre-run compose saved | `app.config` → `/tmp/cg-compose-pre-20261016.json` on the box |
+| `docker build -t chat-gateway:local .` | **`sha256:33fc7a5deed4058a0f481ffd56db7c017c68b6aa24b266811e0992bf9c6b5c22`** |
+| image probed, `--network none`, box registry mounted `:ro` | the live registry loads through the NEW loader (6 apps, 6 identities — the new optional `avatar:` rule accepts a file that has none), `AVATAR_NAMES` = 20, `admin_auth_posture("open")` = `open` |
+| compose via `midclt call -j app.update` | **exactly one delta**, computed from the live `app.config`: `GATEWAY_ADMIN_AUTH: "open"`. Port stays `<LAN-IP>:8085:8085`; mounts unchanged. → **Update completed** |
+| container after | `running`, `RestartCount: 0`, `StartedAt 2026-10-16T22:32:30Z`, image `33fc7a5d…` |
+
+**Boot lines:** `admin: loaded 0 managed secret(s)`, `env: loaded 18 key(s)`, and
+the new stderr line `admin: WARNING — GATEWAY_ADMIN_AUTH=open: /admin checks no
+credential; anything that can reach the port can use the console.` No `config
+error`, no traceback.
+
+**Verified on the box, not assumed:**
+
+- `/healthz`: `degraded` for the first ~minute with the usual
+  *subscriber … has never completed a poll* reason, then **`ok`, `reasons: []`**;
+  `admin: {enabled: true, auth: "open", writes: 0, refused: 0,
+  cross_origin_refused: 0, …}`. **`admin.auth`'s presence is what proves the
+  new image** (the field-presence technique, third time).
+- `GET /admin/api/state` **with no key → 200**: 6 apps, 7 room groups (six
+  spaces plus the no-room group), `avatars` = 20, no `inbox_pending` anywhere.
+- `GET /admin` → 200 with the CSP and `cache-control: no-store`;
+  `GET /admin/static/avatars/alert.png` → 200 `image/png`.
+- **The attribution check (spec §7 step 4) PASSED.** A *Reload from disk* POST
+  from the dev box wrote
+  `{"actor": "admin", "auth": "open", "client": "<dev-box LAN-IP>",
+  "action": "reloaded_from_disk", …}` — a real LAN peer, not the Docker bridge
+  gateway, so the port publish preserves the peer and the spec's audit-trail
+  mitigation holds as written. (The container's own access log shows the same:
+  a request from the box itself is attributed to the box's `<LAN-IP>`.)
+
+**What this run did NOT do:** `CHAT_GATEWAY_ADMIN_KEY` was **left in the box
+`.env`** (unread in open mode; harmless; spec §7 step 5 is optional) — remove it
+in a later `.env` edit if wanted. No console write beyond the one reload. No
+registry change. `capture.sh` not re-run, so the homelab capture still shows the
+pre-run compose; the homelab `SECRETS.template.md` row for the admin key does not
+yet say *"unused under open mode"*. No ⚠ verification-ledger flag moved (no
+Google-facing code in either row). The restart spent the uptime since 2026-10-15.
+
+**Rollback, if needed:** `sudo docker tag chat-gateway:rollback-20261016
+chat-gateway:local`, then `app.update` with `/tmp/cg-compose-pre-20261016.json`
+(no `GATEWAY_ADMIN_AUTH`). The old image ignores `avatar:` if a console save has
+since written one, and the key-mode login returns because the `.env` key is
+still there.
+
+---
+
 ## §11 · Observation — the CG-59 soak
 
 ⚠ **STOPPED — this section said `RUNNING` for four days after it was not.**
