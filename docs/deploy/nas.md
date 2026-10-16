@@ -280,7 +280,9 @@ construction rather than by trusting someone else's redactor.
   ]}}}
 ```
 
-`GATEWAY_ADMIN_AUTH: "open"` is the **target** (CG-91, spec `2026-10-16-admin-open-mode-design.md` §7), not what is on the box: merging this file changes nothing there until the rollout below is run.
+`GATEWAY_ADMIN_AUTH: "open"` is the **target** (CG-91, spec
+`2026-10-16-admin-open-mode-design.md` §7), not what is on the box: merging this
+file changes nothing there until the rollout below is run.
 
 ⚠ **Nothing nests, and that is the correction.** An earlier draft of this block
 **could not have booted.** It mounted the config *directory* at `/config` while
@@ -519,7 +521,8 @@ admin key have one home:
 [`docs/superpowers/specs/2026-10-15-admin-console-design.md`](../superpowers/specs/2026-10-15-admin-console-design.md).
 This subsection is only what an operator must do and must not get wrong.
 
-**Env-var NAMES, and they go in DIFFERENT places** (a third row, `GATEWAY_ADMIN_AUTH`, was added by CG-91):
+**Env-var NAMES, and they go in DIFFERENT places** (a third row,
+`GATEWAY_ADMIN_AUTH`, was added by CG-91, 2026-10-16):
 
 | Name | Where | Why there |
 |---|---|---|
@@ -632,12 +635,22 @@ identity `aitrader` holds has `space:` written** in the box's registry.
 5. Verify `/healthz` shows `admin.enabled: true`, then open `/admin`.
 6. Record the run in §10.
 
-**Open-mode steps (CG-91, spec `2026-10-16-admin-open-mode-design.md` §7), after the above:**
+**Open-mode steps (CG-91, spec `2026-10-16-admin-open-mode-design.md` §7), after
+the above:**
 
-1. Add `GATEWAY_ADMIN_AUTH: "open"` to the compose `environment:` beside `GATEWAY_ENABLE_ADMIN`; rebuild (§4) and redeploy.
-2. Verify `/healthz` shows `admin.auth: "open"`, then open `/admin`: the console renders with no sign-in and the `open · no sign-in` pill.
-3. **Check the attribution claim on the box:** click *Reload from disk* (a harmless write) and read the new `admin_audit.jsonl` line. It must carry `auth: "open"` and a `client` that is the browser's `<LAN-IP>`. If `client` is the Docker bridge gateway instead, the port publish is not preserving the peer: record that here and in §10, because the spec's "audit trail" mitigation is then weaker than written.
-4. Optionally remove `CHAT_GATEWAY_ADMIN_KEY` from the box `.env`. Harmless if left: unread in `open` mode.
+1. Add `GATEWAY_ADMIN_AUTH: "open"` to the compose `environment:` beside
+   `GATEWAY_ENABLE_ADMIN`; rebuild (§4) and redeploy.
+2. Verify `/healthz` shows `admin.auth: "open"`, then open `/admin`: the console
+   renders with no sign-in and the `open · no sign-in` pill.
+3. **Check the attribution claim on the box:** click *Reload from disk* (a
+   harmless write) and read the new `admin_audit.jsonl` line. It must carry
+   `auth: "open"` and a `client` that is the browser's `<LAN-IP>`. If `client`
+   is the Docker bridge gateway instead, the port publish is not preserving the
+   peer: record that here and in §10, because the spec's "audit trail"
+   mitigation is then weaker than written.
+4. Optionally remove `CHAT_GATEWAY_ADMIN_KEY` from the box `.env` and
+   `~/.chat-gateway/admin-key` from the dev box. Harmless if left: unread in
+   `open` mode.
 5. Record the run in §10.
 
 ---

@@ -517,10 +517,12 @@ true when written and went stale as rows landed without them being recounted:
 CG-76 added four (`delivery.delivery_failures` and the three
 `heartbeats.*undeliverable`/`orphaned` rows), CG-88 one
 (`registry.inbound_defaulted`), and CG-90 eight (`delivery.unroutable_live` and
-nine `admin.*`, of which only `admin.memory_disk_diverged` degrades). The
-struck numbers below are kept so the arithmetic of the original is readable.
+seven `admin.*`, of which only `admin.memory_disk_diverged` degrades).
+⚠ *Extended 2026-10-16 (CG-91):* the table now has **FIFTY-EIGHT** rows,
+CG-91 having added two (`admin.auth`, `admin.cross_origin_refused`, neither
+degrading); the `**yes**` count stays twenty-three. The struck numbers below are kept so the arithmetic of the original is readable.
 
-Of the ~~forty-three~~ **fifty-six** rows, ~~**eighteen**~~ **twenty-three carry
+Of the ~~forty-three~~ ~~fifty-six~~ **fifty-eight** rows, ~~**eighteen**~~ **twenty-three carry
 `**yes**` in the Degrades? column**. Counted as *fields* the number is
 ~~**twenty-one**~~ **twenty-six**, and both are right: each of the
 three liveness triples (`delivery.*`, `retention.*`, `heartbeats.*`) is read in
