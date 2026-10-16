@@ -1267,3 +1267,269 @@ def test_boot_probe_refuses_an_unwritable_registry_directory(tmp_path, monkeypat
     assert main(["check"]) == 2
     err = capsys.readouterr().err
     assert "not writable" in err and str(tmp_path) in err
+
+
+# -- rooms ------------------------------------------------------------------------
+ROOMS_TEXT = """identities:
+  i1:
+    display: d1
+    webhook_url_env: RM_W1
+    space: spaces/A
+  i2:
+    display: d2
+    webhook_url_env: RM_W2
+    space: spaces/A
+  il:
+    display: dl
+    webhook_url_env: RM_WL
+    space: spaces/LOCKED
+  i0:
+    display: d0
+    webhook_url_env: RM_W0
+  iu:
+    display: du
+    webhook_url_env: RM_WU
+    space: spaces/U
+apps:
+  a1:
+    key_env: RM_K1
+    identities: [i1]
+    allow_inbound: true
+  a2:
+    key_env: RM_K2
+    identities: [i1, i2]
+    allow_inbound: false
+  locked:
+    key_env: RM_KL
+    identities: [il]
+    allow_inbound: false
+    inbound_locked: true
+"""
+
+
+def _build_rooms(tmp_path, monkeypatch, *, inbox=None):
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    p = tmp_path / "registry.yaml"
+    p.write_text(ROOMS_TEXT, encoding="utf-8")
+    holder = RegistryHolder(load_registry(p))
+    secrets = ManagedSecrets(tmp_path / "state" / "managed.env",
+                             process_env_names=frozenset({"CHAT_GATEWAY_ADMIN_KEY"}),
+                             environ=os.environ)
+    wiring = AdminWiring(store=RegistryStore(p, holder, secrets), secrets=secrets,
+                         audit=AdminAudit(tmp_path / "state" / "admin_audit.jsonl"))
+    client = TestClient(create_app(holder, inbox if inbox is not None else Inbox(),
+                                   {"webhook": object()}, admin=wiring))
+    return client, holder
+
+
+def test_rooms_group_identities_by_space_with_the_unhomed_room_last(tmp_path, monkeypatch):
+    client, _ = _build_rooms(tmp_path, monkeypatch)
+    rooms = client.get("/admin/api/state", headers=AUTH).json()["rooms"]
+    assert list(rooms) == ["spaces/A", "spaces/LOCKED", "spaces/U", ""]
+    assert rooms["spaces/A"] == {"identities": ["i1", "i2"], "posting_apps": ["a1", "a2"],
+                                 "inbound_apps": ["a1"], "locked_by": None}
+    assert rooms["spaces/LOCKED"]["locked_by"] == "locked"
+    assert rooms["spaces/U"] == {"identities": ["iu"], "posting_apps": [],
+                                 "inbound_apps": [], "locked_by": None}
+    assert rooms[""]["identities"] == ["i0"]
+    assert rooms[""]["inbound_apps"] == [] and rooms[""]["locked_by"] is None
+
+
+def test_rooms_agree_with_the_enforcements_own_derivation(tmp_path, monkeypatch):
+    from chat_gateway.admin import _shape
+
+    client, holder = _build_rooms(tmp_path, monkeypatch)
+    rooms = client.get("/admin/api/state", headers=AUTH).json()["rooms"]
+    reg = holder.current
+    apps, spaces = _shape(reg)
+    locked: dict[str, str] = {}
+    for app_id, (_, is_locked, idents) in sorted(apps.items()):
+        if is_locked:
+            for n in idents:
+                if spaces.get(n):
+                    locked.setdefault(spaces[n], app_id)
+    for space, room in rooms.items():
+        assert room["locked_by"] == locked.get(space)
+        if space:
+            assert room["inbound_apps"] == [a for a in reg.apps_for_space(space)
+                                            if reg.apps[a].allow_inbound]
+
+
+def test_inbox_pending_is_zero_without_an_inbox_and_counts_with_one(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from chat_gateway.adapters.pubsub import dispatch
+
+    client, _ = _build_rooms(tmp_path, monkeypatch)
+    apps = client.get("/admin/api/state", headers=AUTH).json()["apps"]
+    assert {a: v["inbox_pending"] for a, v in apps.items()} == {"a1": 0, "a2": 0, "locked": 0}
+
+    inbox = Inbox()
+    client, holder = _build_rooms(tmp_path, monkeypatch, inbox=inbox)
+    fx = Path(__file__).parent / "fixtures" / "classic-cardclicked-button-event.json"
+    ev = json.loads(fx.read_text(encoding="utf-8"))
+    ev["space"]["name"] = "spaces/A"
+    assert dispatch(ev, holder, inbox) == ["a1"]
+    apps = client.get("/admin/api/state", headers=AUTH).json()["apps"]
+    assert apps["a1"]["inbox_pending"] == inbox.pending_counts()["a1"] == 1
+    assert apps["a2"]["inbox_pending"] == 0
+
+
+# -- refusal bodies: a fixed category beside detail, reasons only when a list ---
+def test_refusal_bodies_still_granted_has_a_category_and_no_reasons(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/identities/i1/delete", headers=AUTH, json={"confirm_name": "i1"})
+    assert r.status_code == 409
+    body = r.json()
+    assert body["category"] == "refused: still granted"
+    assert "a1" in body["detail"] and "reasons" not in body
+    # (g) /healthz publishes the same authored category and nothing else.
+    assert client.get("/healthz").json()["admin"]["last_write_error"] == "refused: still granted"
+
+
+def test_duplicate_identity_is_409_with_its_own_category(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/identities", headers=AUTH,
+                    json={"name": "i1", "display": "Dup", "webhook_url": HOOK})
+    assert r.status_code == 409
+    assert r.json()["category"] == "refused: already exists"
+
+
+def test_refusal_bodies_widening_428_lists_its_reasons(gw):
+    client, *_ = gw
+    r = _new_app(client, allow_inbound=True)
+    assert r.status_code == 428
+    body = r.json()
+    assert body["category"] == "refused: confirmation required"
+    assert body["reasons"] == ["allow_inbound"]
+
+
+def test_refusal_bodies_webhook_move_428_lists_the_moving_apps(fin):
+    client, *_ = fin
+    r = client.post("/admin/api/identities/mine/webhook", headers=AUTH,
+                    json={"webhook_url": HOOK_ELSEWHERE})
+    assert r.status_code == 428
+    body = r.json()
+    assert body["category"] == "refused: confirmation required"
+    assert body["reasons"] == ["consumer"]
+
+
+def test_refusal_bodies_a_typed_confirmation_428_has_no_reasons_key(gw):
+    client, *_ = gw
+    r = client.post("/admin/api/apps/a1/delete", headers=AUTH, json={"confirm_app_id": "nope"})
+    assert r.status_code == 428
+    assert r.json()["category"] == "refused: confirmation required"
+    assert "reasons" not in r.json()
+
+
+def test_refusal_bodies_out_of_band_409_has_the_stores_own_category(gw):
+    client, holder, wiring, tmp = gw
+    p = tmp / "registry.yaml"
+    p.write_text(p.read_text(encoding="utf-8") + "# hand edit\n", encoding="utf-8")
+    r = _new_app(client)
+    assert r.status_code == 409
+    assert r.json()["category"] == "refused: edited outside the console"
+    assert r.json()["category"] != "refused: still granted"
+
+
+def test_refusal_bodies_401_and_429_carry_no_category(gw):
+    client, *_ = gw
+    bad = {"Authorization": "Bearer wrong"}
+    codes, bodies = [], []
+    for _ in range(7):
+        r = client.get("/admin/api/state", headers=bad)
+        codes.append(r.status_code)
+        bodies.append(r.json())
+    assert 401 in codes and 429 in codes
+    assert all("category" not in b and "reasons" not in b for b in bodies)
+
+
+# -- avatars ---------------------------------------------------------------
+def _audit_lines(tmp):
+    return [json.loads(x) for x in
+            (tmp / "state" / "admin_audit.jsonl").read_text(encoding="utf-8").splitlines()]
+
+
+def _new_identity(client, **over):
+    body = {"name": "av1", "display": "Av One", "webhook_url": HOOK}
+    body.update(over)
+    return client.post("/admin/api/identities", headers=AUTH, json=body)
+
+
+def test_avatars_create_with_a_bundled_name_shows_in_state(gw):
+    from chat_gateway.registry import AVATAR_NAMES
+    client, holder, wiring, tmp = gw
+    r = _new_identity(client, avatar="phone")
+    assert r.status_code == 201 and r.json()["avatar"] == "phone"
+    st = client.get("/admin/api/state", headers=AUTH).json()
+    assert st["identities"]["av1"]["avatar"] == "phone"
+    assert st["identities"]["i1"]["avatar"] is None
+    assert st["avatars"] == list(AVATAR_NAMES)
+    assert "avatar" in _audit_lines(tmp)[-1]["fields"]
+
+
+def test_avatars_create_without_one_writes_no_key_and_audits_no_field(gw):
+    client, holder, wiring, tmp = gw
+    assert _new_identity(client).status_code == 201
+    assert "avatar" not in (tmp / "registry.yaml").read_text(encoding="utf-8")
+    assert "avatar" not in _audit_lines(tmp)[-1]["fields"]
+
+
+def test_avatars_create_with_a_bad_value_is_422_naming_the_field_not_the_value(gw):
+    client, *_ = gw
+    for bad in ("Phone", "http://leak.example/secret.png"):
+        r = _new_identity(client, avatar=bad)
+        assert r.status_code == 422
+        assert "avatar" in r.text and bad not in r.text and "leak.example" not in r.text
+
+
+def test_avatars_put_url_is_stored_and_display_unchanged(gw):
+    client, holder, wiring, tmp = gw
+    url = "https://x.example/a.png"
+    assert client.put("/admin/api/identities/i1", headers=AUTH, json={"avatar": url}).status_code == 200
+    st = client.get("/admin/api/state", headers=AUTH).json()["identities"]["i1"]
+    assert st["avatar"] == url and st["display"] == "d1"
+    assert _audit_lines(tmp)[-1]["fields"] == ["avatar"]
+
+
+def test_avatars_put_empty_clears_it(gw):
+    client, *_ = gw
+    client.put("/admin/api/identities/i1", headers=AUTH, json={"avatar": "alert"})
+    r = client.put("/admin/api/identities/i1", headers=AUTH, json={"avatar": ""})
+    assert r.status_code == 200
+    assert client.get("/admin/api/state", headers=AUTH).json()["identities"]["i1"]["avatar"] is None
+
+
+def test_avatars_put_display_alone_leaves_avatar_alone(gw):
+    client, holder, wiring, tmp = gw
+    client.put("/admin/api/identities/i1", headers=AUTH, json={"avatar": "alert"})
+    r = client.put("/admin/api/identities/i1", headers=AUTH, json={"display": "New"})
+    assert r.status_code == 200
+    st = client.get("/admin/api/state", headers=AUTH).json()["identities"]["i1"]
+    assert st["avatar"] == "alert" and st["display"] == "New"
+    assert _audit_lines(tmp)[-1]["fields"] == ["display"]
+
+
+def test_avatars_put_blank_display_still_422_and_empty_body_is_422(gw):
+    client, *_ = gw
+    r = client.put("/admin/api/identities/i1", headers=AUTH, json={"display": ""})
+    assert r.status_code == 422 and "display is required" in r.text
+    r = client.put("/admin/api/identities/i1", headers=AUTH, json={})
+    assert r.status_code == 422 and "nothing to change" in r.text
+    assert "display is required" not in r.text
+
+
+def test_avatars_put_raw_base_url_is_stored_as_the_bundled_name(gw):
+    from chat_gateway.registry import AVATAR_RAW_BASE
+    client, *_ = gw
+    r = client.put("/admin/api/identities/i1", headers=AUTH,
+                   json={"avatar": AVATAR_RAW_BASE + "alert.png"})
+    assert r.status_code == 200
+    assert client.get("/admin/api/state", headers=AUTH).json()["identities"]["i1"]["avatar"] == "alert"
+
+
+def test_avatars_put_bad_value_is_422_without_echo(gw):
+    client, *_ = gw
+    r = client.put("/admin/api/identities/i1", headers=AUTH,
+                   json={"avatar": "ftp://leak.example/x.png"})
+    assert r.status_code == 422 and "avatar" in r.text and "leak.example" not in r.text

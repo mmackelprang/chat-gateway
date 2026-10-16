@@ -25,6 +25,10 @@ identities:
     mode: webhook
     webhook_url_env: GOOGLE_CHAT_WEBHOOK_URL__FAMILYWORKSPACE__PM
     space: ""            # spaces/XXXX — fill once the space exists
+    # Optional. A bundled icon name (assets/avatars/png/) or an https URL, exact
+    # match. This RECORDS the icon the webhook was created with; the gateway
+    # cannot set it (Chat fixes it at webhook creation).
+    avatar: home
 
   job-hunter:
     display: "Job Hunter"

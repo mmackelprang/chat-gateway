@@ -7,13 +7,22 @@
 
 let adminKey = "";
 let state = null;
+let revealData = null; // the one minted key, in memory only; gone when the route leaves #/reveal
+let filterText = ""; // the board filter (Task 7 reads it)
+let draft = null; // the unsaved new-app form, in page memory only; cleared when the route leaves new-app/new-identity
+const DISCARD_CHANGES = "Discard unsaved changes?";
+const DISCARD_NEW_APP = "Discard the unsaved new app?";
 const SEVERITIES = ["alert", "warning", "info"];
 const ID_PATTERN = "[a-z0-9][a-z0-9\\-]{0,62}"; // `-` escaped: valid under the v-flag pattern compiler
 const TERMINAL = ["delivered", "failed", "unroutable", "expired"];
 const RULE_6 = "Hard rule #6: inbound crosses to a consumer only by that consumer's explicit registry opt-in.";
-// A LINK only: the page never loads an image from GitHub (CSP img-src 'self').
-const AVATAR_GALLERY = "https://github.com/mmackelprang/chat-gateway/tree/main/assets/avatars";
+// Handed to the operator to paste into Chat: the page never loads an image from GitHub (CSP img-src 'self').
 const AVATAR_PNG_PATTERN = "https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png/<name>.png";
+const REFUSED_INTRO = "The server refused this save until you confirm:";
+// The SVG namespace IDENTIFIER for the dashed avatar mark — nothing is fetched
+// from it. Spelt in two halves so the page's plain-HTTP scan keeps catching
+// real URLs instead of being taught an exception.
+const SVG_NS = "http:" + "//www.w3.org/2000/svg";
 const FILE_EDIT ="Grants of an inbound_locked app are a registry file edit, not a console action.";
 
 function el(tag, attrs, ...children) {
@@ -36,7 +45,9 @@ function toNodes(children) {
   return out;
 }
 const $ = (id) => document.getElementById(id);
-function toast(msg, isError) { const t = $("toast"); t.textContent = msg || ""; t.className = isError ? "error" : "ok"; }
+// Kept as the one-line spelling every existing caller uses; an empty message
+// shows nothing (notices dismiss themselves or are dismissed by hand).
+function toast(msg, isError) { if (msg) notify(msg, { kind: isError ? "alert" : "status" }); }
 function view(...nodes) { $("view").replaceChildren(...toNodes(nodes)); }
 
 // FastAPI's `detail` is a string for an HTTPException and a list of
@@ -60,16 +71,31 @@ async function api(method, path, body, key) {
   if (!r.ok) {
     const err = new Error(detailText(data, r.status));
     err.status = r.status;
+    // Task 2: refusal bodies carry a category (which recovery applies) and
+    // sometimes reasons (the 428 dialog's bullets).
+    err.category = data && data.category;
+    err.reasons = data && data.reasons;
     throw err;
   }
   return data;
 }
 
-// One place that turns an API error into words for the operator.
+// One place that turns an API error into words for the operator. The category
+// (a fixed authored phrase from the server) picks the recovery first; the
+// status is the fallback when the body carried none.
 function explain(e) {
+  switch (e.category) {
+    case "refused: edited outside the console":
+      return e.message + " — registry.yaml was edited outside the console. Use Registry › Reload from disk, then try again.";
+    case "refused: unpolled inbound": return e.message + " — poll or drain its inbox first.";
+    case "refused: env name in use": return e.message + " — pick another id; the variable name is derived from it.";
+    case "refused: still granted": return e.message + " — remove the grant from each holder first.";
+    case "refused: secret in process env": return e.message + " — that value is set in the process environment; change it there.";
+    default: break;
+  }
   switch (e.status) {
-    case 403: return "File edit only — " + e.message;
-    case 409: return e.message + " — the registry changed or conflicts. Open “Apps & identities” to refresh, or “Reload from disk” if registry.yaml was edited by hand.";
+    case 403: return "Not a console action — " + e.message;
+    case 409: return e.message + " — the registry changed or conflicts. Use Registry › Refresh view, or Reload from disk if registry.yaml was edited by hand.";
     case 428: return "Typed confirmation needed — " + e.message;
     case 401: return "Signed out: the admin key was refused.";
     default: return e.message;
@@ -83,7 +109,8 @@ function fail(e) {
 function signOut(msg) {
   adminKey = ""; state = null;
   $("console").hidden = true; $("login").hidden = false;
-  $("sha").textContent = "";
+  revealData = null; setDirty(false);
+  $("sha").textContent = ""; $("counts").textContent = "";
   $("auth-mode").hidden = true;
   view();
   $("login-error").textContent = msg || "";
@@ -92,12 +119,20 @@ function signOut(msg) {
 async function refresh() {
   state = await api("GET", "/admin/api/state");
   $("sha").textContent = "registry " + state.registry_sha256.slice(0, 12);
+  const rooms = Object.keys(state.rooms || {}).filter((k) => k).length; // "" = identities with no room
+  $("counts").textContent = Object.keys(state.apps).length + " apps · " + Object.keys(state.identities).length + " identities · " + rooms + " rooms";
+  // Operator to-dos; the same marks sit on the board's app rows (§4.1).
   const b = $("banner");
+  const todos = [];
   if (state.shadowed_env_names.length) {
-    b.hidden = false;
-    b.textContent = "Stale secrets in the read-only .env (old values that would revive if managed.env is lost): "
-      + state.shadowed_env_names.join(", ") + ". Remove those lines from .env by hand.";
-  } else b.hidden = true;
+    todos.push("Stale secrets in the read-only .env (old values that would revive if managed.env is lost): "
+      + state.shadowed_env_names.join(", ") + ". Remove those lines from .env by hand.");
+  }
+  if ((state.inbound_defaulted || []).length) {
+    todos.push("allow_inbound was left to the loader's default (off) for: " + state.inbound_defaulted.join(", ") + ". Saving the app here writes it explicitly.");
+  }
+  b.hidden = !todos.length;
+  b.textContent = todos.join(" ");
 }
 
 // Mutating call: carries the sha the page last saw, so a second tab gets 409.
@@ -116,7 +151,7 @@ async function write(method, path, body) {
     const b = $("banner");
     b.hidden = false;
     b.textContent = "The change was saved, but reloading the page's view failed (" + e.message
-      + "). The page may be stale — open “Apps & identities” to refresh before the next change.";
+      + "). The page may be stale — use Registry › Refresh view before the next change.";
   }
   return out;
 }
@@ -133,47 +168,356 @@ function lockedHolders() {
 }
 
 // --------------------------------------------------------------- board ---
-function board() {
-  const held = lockedHolders();
-  const appRows = Object.entries(state.apps).map(([id, a]) => el("tr", {},
-    el("td", {}, el("strong", { text: id })),
-    el("td", { text: a.identities.join(", ") || "—" }),
-    el("td", { text: Object.entries(a.routes).map(([s, i]) => s + "→" + i).join(", ") || "—" }),
-    el("td", {}, el("span", { class: "pill", text: a.allow_inbound ? "inbound on" : "inbound off" }),
-      a.inbound_locked ? el("span", { class: "pill warn", text: "locked" }) : null),
-    el("td", { class: a.key_configured ? "ok" : "error", text: (a.key_configured ? "key set" : "key missing") + " (" + a.key_source + ")" }),
-    el("td", { text: a.recent_deliveries.length ? a.recent_deliveries[a.recent_deliveries.length - 1].status : "—" }),
-    el("td", {}, el("button", { type: "button", text: "Manage", on: { click: () => appDetail(id) } }))));
-  const idRows = Object.entries(state.identities).map(([name, i]) => {
-    const locker = held.get(name);
-    let webhookAction = null;
-    if (i.mode === "webhook") {
-      webhookAction = locker
-        ? el("p", { class: "note", text: "Webhook held by locked app " + locker + " — replacing it is a registry file edit." })
-        : el("button", { type: "button", text: "Replace webhook", on: { click: () => replaceWebhook(name) } });
+// The grant matrix (spec §4.2): rows are apps, columns are identities grouped
+// under their room, from the server's `state.rooms` (D2 — the page never
+// re-derives rooms or locks; its only inversion is holders(), a plain lookup).
+//
+// D5: the table scrolls in its own bounded region (admin.css .matrix-wrap) so
+// its horizontal scrollbar is always on screen, and EVERY room starts
+// collapsed to one column, so a wide registry is not a long scroll either.
+// The expanded set and the highlighted app live in page memory only: lost on
+// reload by design, never stored (the storage test pins both variables).
+let expanded = new Set(); // room keys ("" = identities with no room) currently expanded
+let selectedApp = null; // the app last opened in an inspector; its row is highlighted on return
+let loadError = null; // the probe's non-401 failure, for the error-on-load card
+const CAPTION = "Which app may send as which identity, grouped by room. A column with two or more dots is a shared identity; a collapsed room shows one column, and a dot there means the app sends into that room.";
+
+// A room's hash segment is the id after `spaces/`; `none` for the empty room.
+function roomSegment(space) { return space ? (space.startsWith("spaces/") ? space.slice("spaces/".length) : space) : "none"; }
+function roomLabel(space) { return space || "No room recorded"; }
+function holders(name) { return Object.keys(state.apps).filter((a) => state.apps[a].identities.includes(name)); }
+function routesTo(appId, name) { return Object.entries(state.apps[appId].routes).filter(([, v]) => v === name).map(([s]) => s); }
+// CG-86: the rooms an app's routes land in — more than one means an all-clear
+// can post into a different room from the alert it closes.
+function routeRooms(a) {
+  return new Set(Object.values(a.routes).map((n) => state.identities[n] && state.identities[n].space).filter(Boolean));
+}
+// `dot` is the .dot colour class (ok/err); `cls` the text colour class (ok/error).
+function keyState(a) {
+  if (!a.key_configured) return { dot: "err", cls: "error", text: "key missing" };
+  const src = a.key_source === "process" || a.key_source === "managed" ? " (" + a.key_source + ")" : "";
+  return { dot: "ok", cls: "ok", text: "key ok" + src };
+}
+function lastDelivery(a) { const r = a.recent_deliveries || []; return r.length ? r[r.length - 1] : null; }
+function relTime(iso) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "";
+  const d = Math.max(0, Date.now() - t);
+  if (d < 60000) return "just now";
+  if (d < 3600000) return Math.round(d / 60000) + " min ago";
+  if (d < 86400000) return Math.round(d / 3600000) + " h ago";
+  return Math.round(d / 86400000) + " d ago";
+}
+
+// D6: a bundled icon is an <img> served by THIS gateway (CSP img-src 'self');
+// "bundled" is decided by the server's list, never by the value's shape. A
+// custom URL or none is a dashed circle with a title — never a fetched image.
+function avatarMark(value, size) {
+  const s = size || 16;
+  if (value && (state.avatars || []).includes(value)) {
+    return el("img", { class: "avatar s" + s, src: "/admin/static/avatars/" + value + ".png", alt: "", title: "avatar: " + value });
+  }
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "avatar none s" + s); svg.setAttribute("viewBox", "0 0 20 20"); svg.setAttribute("role", "img");
+  const c = document.createElementNS(SVG_NS, "circle"); c.setAttribute("cx", "10"); c.setAttribute("cy", "10"); c.setAttribute("r", "9");
+  const title = document.createElementNS(SVG_NS, "title"); title.textContent = value ? "custom avatar URL" : "no avatar recorded";
+  svg.append(...toNodes([c, title]));
+  return svg;
+}
+
+// Plain substring, lower-cased, over app id, identity name, display and room
+// id — never a RegExp, so `trader.*` or `(` filter as the characters typed.
+function applyFilter(text) {
+  const q = (text || "").trim().toLowerCase();
+  const has = (s) => !!q && (s || "").toLowerCase().includes(q);
+  const appIds = Object.keys(state.apps), names = Object.keys(state.identities);
+  const identSelf = (n) => has(n) || has(state.identities[n].display) || has(state.identities[n].space);
+  const apps = !q ? appIds : appIds.filter((a) => has(a) || state.apps[a].identities.some(identSelf));
+  const idents = !q ? names : names.filter((n) => identSelf(n) || holders(n).some(has));
+  const summary = q ? apps.length + " of " + appIds.length + " apps · " + idents.length + " of " + names.length
+    + " identities match " + "'" + text.trim() + "'" : null;
+  return { q, apps, idents: new Set(idents), summary };
+}
+
+function toggleRoom(space) {
+  if (expanded.has(space)) expanded.delete(space); else expanded.add(space);
+  focusRoomHeader(space);
+}
+function expandAll() { for (const k of Object.keys(state.rooms || {})) expanded.add(k); board(); refocus("expand-all", "collapse-all"); }
+function collapseAll() { expanded.clear(); board(); refocus("collapse-all", "expand-all"); }
+// Opening an app inspector expands the rooms that hold its grants, and that
+// app's row is highlighted on return (D5). One call on inspector entry does both.
+function expandRoomsOf(appId) {
+  selectedApp = appId;
+  const a = state.apps[appId];
+  if (!a) return;
+  for (const [k, r] of Object.entries(state.rooms || {})) if (r.identities.some((n) => a.identities.includes(n))) expanded.add(k);
+}
+// The tools row re-renders with the board; the pressed button is usually
+// disabled afterwards (its job is done), so focus moves to its twin.
+function refocus(id, alt) { const b = $(id), a = $(alt); if (b && !b.disabled) b.focus(); else if (a) a.focus(); }
+// After a toggle the matrix re-renders; focus returns to that room's header
+// (the roving stop), so a keyboard user is not dropped to the top of the page.
+function focusRoomHeader(space) {
+  board();
+  const cells = [...document.querySelectorAll("table.matrix [data-grid]")];
+  const th = cells.find((x) => x.dataset.room === space && x.dataset.grid.startsWith("0,"));
+  if (th) setRovingStop(cells, th);
+}
+function setRovingStop(cells, target) { for (const x of cells) x.tabIndex = -1; target.tabIndex = 0; target.focus(); }
+
+// Roving tabindex over three row kinds (§4.7): row 0 room headers, row 1
+// identity headers, rows 2+ apps. Left/Right/Home/End within a row; Up from an
+// identity lands on the room header that SPANS it; Down from a room header
+// lands on its first column; Enter opens (or expands a collapsed column);
+// Space toggles a room header. A collapsed room is exactly one column in every
+// row, so only the column count changes.
+function gridKeydown(ev) {
+  const table = ev.currentTarget;
+  const cur = ev.target.closest("[data-grid]");
+  if (!cur || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const [r, c] = cur.dataset.grid.split(",").map(Number);
+  if (ev.key === " ") {
+    if (r === 0 && cur.dataset.room !== undefined) { ev.preventDefault(); toggleRoom(cur.dataset.room); }
+    return;
+  }
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    if (cur.dataset.collapsed) { toggleRoom(cur.dataset.room); return; }
+    if (cur.dataset.href) navigate(cur.dataset.href);
+    return;
+  }
+  if (!["ArrowLeft", "ArrowRight", "Home", "End", "ArrowUp", "ArrowDown"].includes(ev.key)) return;
+  // Claimed before looking for a target: at an edge there is nowhere to go,
+  // and the page must not scroll under the grid instead.
+  ev.preventDefault();
+  const cells = [...table.querySelectorAll("[data-grid]")];
+  const at = (row, col) => cells.find((x) => x.dataset.grid === row + "," + col);
+  const rowOf = (row) => cells.filter((x) => Number(x.dataset.grid.split(",")[0]) === row);
+  let target = null;
+  switch (ev.key) {
+    case "ArrowLeft": case "ArrowRight": case "Home": case "End": {
+      const row = rowOf(r);
+      const nc = ev.key === "Home" ? 0 : ev.key === "End" ? row.length - 1 : c + (ev.key === "ArrowRight" ? 1 : -1);
+      target = at(r, Math.max(0, Math.min(nc, row.length - 1)));
+      break;
     }
-    return el("tr", {},
-      el("td", {}, el("strong", { text: name })),
-      el("td", { text: i.display }),
-      el("td", { text: i.space || "—" }),
-      el("td", { class: i.env_resolved ? "ok" : "error", text: i.env_resolved ? "ready" : "not resolvable" }),
-      el("td", { text: i.secret_source || "—" }),
-      el("td", {},
-        webhookAction,
-        el("button", { type: "button", text: "Rename display", on: { click: () => renameIdentity(name, i.display) } }),
-        el("button", { type: "button", class: "danger", text: "Delete", on: { click: () => deleteIdentity(name) } })));
-  });
-  const defaulted = state.inbound_defaulted || [];
+    case "ArrowUp":
+      if (r === 1) target = rowOf(0).find((x) => { const [s, e] = (x.dataset.span || "0,0").split(",").map(Number); return c >= s && c <= e; });
+      else if (r > 1) target = at(r - 1, c);
+      break;
+    default: // ArrowDown
+      if (r === 0) target = at(1, Number((cur.dataset.span || "0,0").split(",")[0]));
+      else target = at(r + 1, c);
+  }
+  if (target) setRovingStop(cells, target);
+}
+// Mouse: a collapsed column (header or cell) expands on click; anything else
+// with a destination opens it. Links and the toggle button keep their own
+// behaviour (the room link still opens the room inspector).
+function gridClick(ev) {
+  if (ev.target.closest("a, button")) return;
+  const cell = ev.target.closest("[data-grid]");
+  if (!cell) return;
+  if (cell.dataset.collapsed) { toggleRoom(cell.dataset.room); return; }
+  if (cell.dataset.href) navigate(cell.dataset.href);
+}
+
+function identityDot(i) {
+  const cls = i.mode !== "webhook" ? "" : i.env_resolved ? "ok" : "err";
+  const words = i.mode !== "webhook" ? "Chat-app identity (tier 2)" : i.env_resolved ? "webhook ready" : "webhook URL not set";
+  return [el("span", { class: ("dot " + cls).trim(), title: words }), el("span", { class: "vh", text: words + ". " })];
+}
+function pills(a) {
+  return [el("span", { class: "pill", text: a.allow_inbound ? "inbound on" : "inbound off" }),
+    a.inbound_locked ? el("span", { class: "pill warn", text: "locked" }) : null];
+}
+// Key state, last delivery (status + relative time, ISO ts in title), row marks.
+function statusStrip(appId, a) {
+  const ks = keyState(a), last = lastDelivery(a), span = routeRooms(a).size;
+  return el("div", { class: "status-strip" },
+    el("span", { class: ks.cls }, el("span", { class: "dot " + ks.dot }), ks.text),
+    last
+      ? el("span", { class: last.status === "delivered" ? "" : "error", title: last.ts }, last.status + " " + relTime(last.ts))
+      : el("span", { text: "no deliveries" }),
+    span > 1 ? el("span", { class: "warn", text: "routes span " + span + " rooms" }) : null,
+    (state.shadowed_env_names || []).includes(a.key_env) ? el("span", { class: "warn", text: "stale .env value" }) : null,
+    (state.inbound_defaulted || []).includes(appId) ? el("span", { class: "warn", text: "inbound defaulted" }) : null);
+}
+function chips(sevs) { return sevs.length ? el("span", { class: "chips" }, sevs.map((s) => el("span", { class: "chip", text: s }))) : null; }
+
+// One <th scope="colgroup"> per room. The toggle button is tabindex -1: the
+// header is the single roving stop and Space toggles it; the button is for the
+// mouse. Collapsed, the header is two short lines (toggle + lock pill over a
+// truncated id + count) so that a collapsed room really is ONE NARROW column
+// (D5: seven rooms fit a laptop); the full id and holder are in titles and
+// visually-hidden text. The header itself expands on click/Enter when
+// collapsed (`data-collapsed`); the room link still opens the room inspector.
+function groupHeaderCell(g, gi) {
+  const collapsed = !expanded.has(g.space), locked = !!g.room.locked_by, n = g.ids.length;
+  const idents = n + (n === 1 ? " identity" : " identities");
+  // Collapsed, the label is the id WITHOUT `spaces/` — the segment is the
+  // distinguishing part (controller ruling); the full id stays in the title,
+  // the link target and the expanded header.
+  const shortLabel = g.space ? roomSegment(g.space) : "no room";
+  return el("th", { scope: "colgroup", colspan: String(collapsed ? 1 : n), class: [locked ? "locked" : "", collapsed ? "collapsed" : ""].join(" ").trim() || null,
+    "data-grid": "0," + (gi + 1), "data-span": g.start + "," + g.end, "data-room": g.space, "data-collapsed": collapsed ? "1" : null,
+    "data-href": hrefFor("room", roomSegment(g.space)), tabindex: "-1" },
+    el("div", {},
+      el("button", { type: "button", class: "toggle", text: collapsed ? "expand" : "collapse", "aria-expanded": String(!collapsed), tabindex: "-1",
+        "aria-label": (collapsed ? "Expand" : "Collapse") + " room " + roomLabel(g.space), on: { click: (ev) => { ev.stopPropagation(); toggleRoom(g.space); } } }),
+      locked ? el("span", { class: "pill warn", title: "locked by " + g.room.locked_by }, collapsed ? "locked" : "locked by " + g.room.locked_by,
+        collapsed ? el("span", { class: "vh", text: " by " + g.room.locked_by }) : null) : null),
+    el("div", {},
+      el("a", { class: "roomlink", href: hrefFor("room", roomSegment(g.space)), tabindex: "-1", title: roomLabel(g.space), text: collapsed ? shortLabel : roomLabel(g.space) }),
+      collapsed ? el("span", { class: "muted", title: idents }, " ·" + n, el("span", { class: "vh", text: " " + idents })) : null,
+      !collapsed && !g.space ? el("span", { class: "muted", text: " — cannot route inbound; not covered by any lock" }) : null));
+}
+function identityHeaderCell(col, c) {
+  const locked = !!col.g.room.locked_by;
+  if (col.collapsed) {
+    return el("th", { scope: "col", class: "collapsed" + (locked ? " locked" : ""), "data-grid": "1," + (c + 1), "data-room": col.g.space, "data-collapsed": "1", tabindex: "-1" },
+      el("span", { class: "muted small", text: "any identity here" }));
+  }
+  const n = col.name, i = state.identities[n];
+  return el("th", { scope: "col", class: locked ? "locked" : null, "data-grid": "1," + (c + 1), "data-href": hrefFor("identity", n), tabindex: "-1" },
+    identityDot(i), avatarMark(i.avatar, 16),
+    el("a", { href: hrefFor("identity", n), tabindex: "-1", text: n }),
+    holders(n).length ? null : [" ", el("span", { class: "pill", text: "unused" })],
+    el("span", { class: "disp", text: i.display }));
+}
+// Cells are NOT toggles: a grant is written in the inspector with an explicit
+// Save, so the 428 flow and the ordered-identities rule keep one home.
+function collapsedCell(appId, a, col, ri, c) {
+  const mine = col.g.ids.filter((n) => a.identities.includes(n));
+  const sevs = mine.flatMap((n) => routesTo(appId, n));
+  const label = roomLabel(col.g.space);
+  return el("td", { class: (col.g.room.locked_by ? "locked " : "") + "cell", "data-grid": (ri + 2) + "," + (c + 1), "data-room": col.g.space, "data-collapsed": "1", tabindex: "-1",
+    title: (mine.length ? appId + " sends into " + label + " as " + mine.join(", ") : appId + " does not post into " + label) + " — Enter expands the room" },
+    mine.length ? [el("span", { class: "dot granted" }), el("span", { class: "vh", text: "sends here as " + mine.join(", ") })] : null,
+    chips(sevs));
+}
+function expandedCell(appId, a, col, ri, c) {
+  const n = col.name, granted = a.identities.includes(n), sevs = routesTo(appId, n);
+  return el("td", { class: (col.g.room.locked_by ? "locked " : "") + "cell", "data-grid": (ri + 2) + "," + (c + 1), "data-href": hrefFor("app", appId), tabindex: "-1",
+    title: granted ? appId + " may send as " + n + (sevs.length ? " · " + sevs.join(", ") + " route" : "") : appId + " may not send as " + n },
+    granted ? [el("span", { class: "dot granted" }), el("span", { class: "vh", text: "may send as" })] : null,
+    chips(sevs));
+}
+function appRow(appId, cols, ri) {
+  const a = state.apps[appId];
+  return el("tr", { class: appId === selectedApp ? "selected" : null },
+    el("th", { scope: "row", "data-grid": (ri + 2) + ",0", "data-href": hrefFor("app", appId), tabindex: "-1" },
+      el("a", { href: hrefFor("app", appId), tabindex: "-1", text: appId }), " ", pills(a), statusStrip(appId, a)),
+    cols.map((col, c) => (col.collapsed ? collapsedCell(appId, a, col, ri, c) : expandedCell(appId, a, col, ri, c))));
+}
+
+function legend() {
+  return el("p", { class: "legend" },
+    el("span", {}, el("span", { class: "dot granted" }), " may send as (in a collapsed room: sends into that room)"),
+    el("span", {}, el("span", { class: "chip", text: "alert" }), " severities routed there"),
+    el("span", {}, el("span", { class: "sw locked" }), " room locked by an inbound_locked app"),
+    el("span", {}, avatarMark(null, 16), " custom avatar or none"),
+    el("span", {}, el("span", { class: "dot ok" }), "webhook ready  ", el("span", { class: "dot err" }), "URL not set"));
+}
+// Phone (≤ 720 px): the table is hidden and the same data renders as stacked cards.
+function appCard(appId) {
+  const a = state.apps[appId];
+  const rooms = Object.entries(state.rooms || {}).filter(([, r]) => r.identities.some((n) => a.identities.includes(n)));
+  return el("div", { class: "appcard" },
+    el("div", {}, el("a", { href: hrefFor("app", appId) }, el("strong", { text: appId })), " ", pills(a)),
+    statusStrip(appId, a),
+    el("div", { class: "chipsrow" }, rooms.map(([space, r]) => [
+      el("span", { class: "room" + (r.locked_by ? " locked" : "") }, roomLabel(space), r.locked_by ? " · locked by " + r.locked_by : null),
+      r.identities.filter((n) => a.identities.includes(n)).map((n) => {
+        const sevs = routesTo(appId, n);
+        return el("a", { class: "ichip", href: hrefFor("identity", n) }, avatarMark(state.identities[n].avatar, 16), n,
+          sevs.length ? el("small", { text: " · " + sevs.join(", ") }) : null);
+      })])),
+    a.identities.length ? null : el("p", { class: "muted small", text: "No grants — this app cannot send." }));
+}
+
+function boardEmpty(kind, nApps, nIdents) {
+  const text = kind === "both" ? "Nothing registered yet. An app needs an identity to send as, so start there."
+    : kind === "apps" ? nIdents + " identities, no apps. Nothing can send until an app is registered and granted one."
+      : nApps + " apps and nothing to send as. Every grant list is empty.";
+  const identityBtn = el("button", { type: "button", class: kind === "apps" ? "" : "primary", text: "Create an identity", on: { click: () => navigate(hrefFor("new-identity")) } });
+  const appBtn = el("button", { type: "button", class: kind === "apps" ? "primary" : "", text: "Register an app", on: { click: () => navigate(hrefFor("new-app")) } });
+  view(el("div", { class: "card" }, el("p", { text: text }),
+    el("p", {}, kind === "apps" ? null : identityBtn, " ", kind === "identities" ? null : appBtn),
+    el("p", { class: "muted small", text: "Prefer the manual runbook? docs/registering-an-app.md" })));
+}
+// Loading: six skeleton rows, no spinner. Error: the status and the server's
+// words, then Retry; the sha and counts stay empty rather than stale. The card
+// is for a failed GET state AFTER the console is visible (Registry › Refresh
+// view, or re-entering the board with no state) — a failed first probe stays
+// CG-91's: the login section carries the message (controller ruling).
+function boardLoading() {
+  return el("div", { class: "matrix-wrap", "aria-busy": "true" }, el("span", { class: "vh", text: "Loading registry…" }),
+    el("table", { class: "matrix" }, el("tbody", {}, [0, 1, 2, 3, 4, 5].map(() => el("tr", {},
+      el("th", { scope: "row" }, el("div", { class: "skeleton" })), [0, 1, 2, 3, 4].map(() => el("td", {}, el("div", { class: "skeleton" }))))))));
+}
+function boardError(e) {
+  return el("div", { class: "card" },
+    el("h2", { text: "Could not load the registry view (HTTP " + (e && e.status ? e.status : "?") + " — " + (e && e.message ? e.message : "no response") + ")" }),
+    el("p", {}, el("button", { type: "button", class: "primary", text: "Retry", on: { click: reloadView } })));
+}
+// GET state again with the console visible. On a non-401 failure the view
+// becomes the error card and the header's sha and counts are cleared rather
+// than left describing a registry the page can no longer read.
+async function reloadView() {
+  try { await refresh(); loadError = null; render(); return true; }
+  catch (e) {
+    if (e.status === 401) { fail(e); return false; }
+    state = null; loadError = e;
+    $("sha").textContent = ""; $("counts").textContent = "";
+    render();
+    return false;
+  }
+}
+
+function board() {
+  const nApps = Object.keys(state.apps).length, nIdents = Object.keys(state.identities).length;
+  if (!nApps && !nIdents) return boardEmpty("both", nApps, nIdents);
+  if (!nApps) return boardEmpty("apps", nApps, nIdents);
+  if (!nIdents) return boardEmpty("identities", nApps, nIdents);
+  const f = applyFilter(filterText);
+  // Visible groups (rooms with at least one matching identity), then the
+  // column axis: one column per collapsed room, one per identity otherwise.
+  const groups = Object.entries(state.rooms || {})
+    .map(([space, room]) => ({ space, room, ids: room.identities.filter((n) => f.idents.has(n)) }))
+    .filter((g) => g.ids.length);
+  const cols = [];
+  for (const g of groups) {
+    g.start = cols.length + 1;
+    if (expanded.has(g.space)) for (const n of g.ids) cols.push({ g, name: n });
+    else cols.push({ g, collapsed: true });
+    g.end = cols.length;
+  }
+  const table = el("table", { class: "matrix" },
+    el("caption", { text: CAPTION }),
+    el("thead", {},
+      el("tr", { class: "groups" }, el("th", { scope: "col", "data-grid": "0,0", "data-span": "0,0", tabindex: "-1" }, el("span", { class: "vh", text: "App" })),
+        groups.map(groupHeaderCell)),
+      el("tr", { class: "idents" }, el("th", { scope: "col", "data-grid": "1,0", tabindex: "-1" }, el("span", { class: "muted small", text: "apps down · identities across" })),
+        cols.map(identityHeaderCell))),
+    el("tbody", {}, f.apps.map((appId, ri) => appRow(appId, cols, ri))));
+  // The single Tab stop: the first room header when there is one, else the corner.
+  const first = table.querySelector('[data-grid="0,1"]') || table.querySelector('[data-grid="1,0"]');
+  if (first) first.tabIndex = 0;
+  table.addEventListener("keydown", gridKeydown);
+  table.addEventListener("click", gridClick);
+  const roomKeys = Object.keys(state.rooms || {});
+  const nOpen = roomKeys.filter((k) => expanded.has(k)).length;
   view(
-    el("h2", { text: "Apps" }),
-    defaulted.length ? el("p", { class: "warn", text: "allow_inbound was left to the loader's default (off) for: " + defaulted.join(", ") + ". Saving the app here writes it explicitly." }) : null,
-    el("div", { class: "table-wrap" }, el("table", {},
-      el("thead", {}, el("tr", {}, ...["App", "Identities", "Routes", "Inbound", "API key", "Last delivery", ""].map((h) => el("th", { text: h })))),
-      el("tbody", {}, appRows))),
-    el("h2", { text: "Identities" }),
-    el("div", { class: "table-wrap" }, el("table", {},
-      el("thead", {}, el("tr", {}, ...["Identity", "Display", "Space", "Webhook", "Secret source", ""].map((h) => el("th", { text: h })))),
-      el("tbody", {}, idRows))));
+    f.summary ? el("p", { class: "muted small", text: f.summary }) : null,
+    el("div", { class: "matrix-tools" },
+      el("button", { type: "button", id: "expand-all", text: "Expand all rooms", disabled: nOpen === roomKeys.length, on: { click: expandAll } }),
+      el("button", { type: "button", id: "collapse-all", text: "Collapse all rooms", disabled: nOpen === 0, on: { click: collapseAll } }),
+      el("span", { class: "muted", text: nOpen + " of " + roomKeys.length + " room groups expanded · remembered for this session only" })),
+    el("div", { class: "matrix-wrap", role: "region", "aria-label": "Grant matrix (scrolls)" }, table),
+    legend(),
+    el("div", { class: "cards" }, f.apps.map(appCard)));
 }
 
 // ------------------------------------------------------------ app form ---
@@ -191,27 +535,146 @@ function optionalField(name, label, isSet, locked) {
   return parts;
 }
 
-function appFields(a) {
+// The rooms a list of identities posts into — for the "new room for an inbound
+// app" note and the derived receives-from line. Identities with no room count
+// for nothing here: they cannot route inbound.
+function spacesOf(names) {
+  return new Set(names.map((n) => state.identities[n] && state.identities[n].space).filter(Boolean));
+}
+// The three sources the server names (managed_secrets.source_of). Anything
+// else is reported as what it is rather than guessed at: "unset" with a
+// resolving key means the value came from somewhere this gateway does not
+// track (the UAT server's os.environ, for one).
+function keySourceWords(src) {
+  return src === "managed" ? "managed.env" : src === ".env" ? "the hand-written .env" : src === "process" ? "the process environment" : src === "unset" ? "the environment (source not tracked)" : "an untracked source (" + src + ")";
+}
+
+// Spec §4.3 part 4: ONE computed sentence replaces the static CG-86 warning.
+// Severity picks the identity and the identity picks the room, so routes in
+// two rooms mean an all-clear can post where nobody watching the alert sees it.
+function computeRouteLine(routes) {
+  if (!Object.keys(routes).length) return { cls: "error", text: "No routes — every /v1/notify returns 503. Set a default at least." };
+  const bySpace = new Map();
+  for (const sev of [...SEVERITIES, "default"]) {
+    if (!routes[sev]) continue;
+    const i = state.identities[routes[sev]];
+    const sp = roomLabel(i && i.space);
+    if (!bySpace.has(sp)) bySpace.set(sp, []);
+    bySpace.get(sp).push(sev === "default" ? "everything else" : sev);
+  }
+  const missing = routes.default ? [] : SEVERITIES.filter((s) => !routes[s]);
+  const gap = missing.length ? " " + missing.join(", ") + " " + (missing.length === 1 ? "has" : "have") + " neither a route nor a default and returns 503 at /v1/notify." : "";
+  if (bySpace.size > 1) {
+    const words = [...bySpace].map(([sp, ss]) => ss.join(", ") + " → " + sp).join(", ");
+    return { cls: "warn", text: words + " — an all-clear will land in a different room from the alert it closes (CG-86)." + gap };
+  }
+  if (missing.length) return { cls: "error", text: "Routed severities post to one room." + gap };
+  return { cls: "muted", text: "All severities post to one room." };
+}
+
+// Spec §4.3 part 5. A saved inbound app reads its rooms from
+// `state.rooms[*].inbound_apps` (D2: the server's derivation). A form that is
+// turning inbound on, or changing its grants, has no such entry yet, so the
+// rooms of the checked grants stand in and the line says it is pending Save.
+function receivesLine(appId, a, on, names) {
+  if (!on) return "Receives inbound from: nothing (inbound off).";
+  const saved = appId && a.allow_inbound ? Object.keys(state.rooms || {}).filter((k) => k && state.rooms[k].inbound_apps.includes(appId)) : [];
+  const live = [...spacesOf(names)].sort();
+  const pending = !a.allow_inbound || live.join("\n") !== saved.slice().sort().join("\n");
+  const rooms = pending ? live : saved;
+  if (!rooms.length) return "Receives inbound from: no room yet — grant an identity that has a room.";
+  return "Receives inbound from: " + rooms.join(", ") + " — every message and card interaction in those rooms" + (pending ? " (after Save)." : ".");
+}
+
+// Grants, routes and inbound as one form (spec §4.3 parts 3–5), shared with the
+// new-app flow (a blank app, no id). Grants are grouped by `state.rooms` (D2);
+// the routes selects list GRANTED identities only and re-render when a grant
+// changes, dropping a selection that was unchecked. Every note is recomputed
+// from the live form against the SAVED app, so each one names what Save would
+// do rather than what the form currently shows.
+function appFields(a, opts) {
+  const appId = (opts && opts.appId) || null;
+  const ungrant = (opts && opts.ungrant) || null;
   const locked = !!a.inbound_locked;
-  const ids = Object.keys(state.identities);
-  const idBoxes = ids.map((n) => el("label", {},
-    el("input", { type: "checkbox", name: "identity", value: n, checked: a.identities.includes(n), disabled: locked }), " " + n));
-  const routeSel = (sev) => el("label", {}, sev === "default" ? "default (every severity without its own route)" : sev,
-    el("select", { name: "route-" + sev }, el("option", { value: "", text: sev === "default" ? "— none —" : "(use default)" }),
-      ids.map((n) => el("option", { value: n, text: n, selected: (a.routes[sev] || "") === n }))));
+  const current = new Set(a.identities);
+  const checked = new Set([...a.identities.filter((n) => n !== ungrant), ...((opts && opts.precheck) || []).filter((n) => Object.hasOwn(state.identities, n))]);
+  const routes = Object.assign({}, a.routes);
+  const allow = el("input", { type: "checkbox", name: "allow_inbound", checked: a.allow_inbound, disabled: locked && !a.allow_inbound });
+  const noteFns = [];
+  const refreshNotes = () => { for (const f of noteFns) f(); };
+
+  // --- sends as: one row per identity, under its room's heading
+  const grantRow = (space, room, n) => {
+    const i = state.identities[n];
+    const others = holders(n).filter((x) => x !== appId);
+    const lockedByOther = !!room.locked_by && room.locked_by !== appId;
+    // Disabled on a locked app (grants are a file edit) and in a room another
+    // locked app owns when THIS app is inbound (the server would refuse it).
+    const box = el("input", { type: "checkbox", name: "identity", value: n, checked: checked.has(n), disabled: locked || (lockedByOther && a.allow_inbound) });
+    const note = el("div", { class: "meta" });
+    noteFns.push(() => {
+      const parts = [];
+      if (box.checked && !current.has(n) && allow.checked && space && !spacesOf(a.identities).has(space)) {
+        parts.push(el("span", { class: "warn", text: "New room for an inbound app — Save will ask you to confirm (rule #6). " }));
+      }
+      const sevs = appId && !box.checked && current.has(n) ? routesTo(appId, n) : [];
+      if (sevs.length) {
+        parts.push(el("span", { class: "warn", text: "Also removes its routes: " + sevs.map((s) => s + " → " + n).join(", ") + ". Severities left without a route return 503 at /v1/notify. " }));
+      }
+      if (lockedByOther && allow.checked) parts.push(el("span", { text: "Room locked by " + room.locked_by + " — an inbound app cannot be granted an identity here. " }));
+      parts.push(el("span", { text: others.length ? "also held by " + others.join(", ") : "held by no other app" }));
+      note.replaceChildren(...toNodes(parts));
+    });
+    box.addEventListener("change", () => { if (box.checked) checked.add(n); else checked.delete(n); refreshNotes(); renderRoutes(); renderReceives(); });
+    return el("div", { class: "grant" },
+      el("label", { class: "grant-label" }, box, " ", avatarMark(i.avatar, 16), el("strong", { text: n }), " ", el("span", { class: "muted small", text: i.display }),
+        i.mode === "webhook" && !i.env_resolved ? [" ", el("span", { class: "pill err", text: "URL not set" })] : null),
+      note);
+  };
+  const grants = Object.entries(state.rooms || {}).filter(([, r]) => r.identities.length).map(([space, r]) => el("div", { class: "roomgroup" },
+    el("div", { class: "roomhead" + (r.locked_by ? " locked" : "") }, roomLabel(space),
+      r.locked_by ? [" ", el("span", { class: "pill warn", text: "locked by " + r.locked_by })] : null,
+      !space ? el("span", { class: "muted small", text: " · cannot route inbound · not covered by any lock" }) : null),
+    r.identities.map((n) => grantRow(space, r, n))));
+
+  // --- routes: granted identities only, as "name — room"
+  const routeBox = el("div");
+  const routeLine = el("p", { class: "small muted" });
+  function renderRouteLine() { const r = computeRouteLine(routes); routeLine.className = "small " + r.cls; routeLine.textContent = r.text; }
+  function renderRoutes() {
+    for (const sev of Object.keys(routes)) if (!checked.has(routes[sev])) delete routes[sev]; // an unchecked selection is dropped
+    const granted = Object.keys(state.identities).filter((n) => checked.has(n));
+    routeBox.replaceChildren(...toNodes(["default", ...SEVERITIES].map((sev) => {
+      const sel = el("select", { name: "route-" + sev },
+        el("option", { value: "", text: sev === "default" ? "— none —" : "(use default)" }),
+        granted.map((n) => el("option", { value: n, selected: routes[sev] === n, text: n + " — " + roomLabel(state.identities[n].space) })));
+      sel.addEventListener("change", () => { if (sel.value) routes[sev] = sel.value; else delete routes[sev]; renderRouteLine(); });
+      return el("label", {}, sev === "default" ? "default (every severity without its own route)" : sev, sel);
+    })));
+    renderRouteLine();
+  }
+
+  // --- inbound
+  const receives = el("p", { class: "muted small" });
+  function renderReceives() { receives.textContent = receivesLine(appId, a, allow.checked, [...checked]); }
+  allow.addEventListener("change", () => { refreshNotes(); renderReceives(); });
+  renderRoutes(); refreshNotes(); renderReceives();
+
   return el("div", {},
-    el("fieldset", {}, el("legend", { text: "Identities this app may send as" }),
-      locked ? el("p", { class: "warn", text: "This app is inbound_locked. " + FILE_EDIT }) : null,
-      idBoxes),
-    el("fieldset", {}, el("legend", { text: "Notify routes" }),
-      el("p", { class: "warn", text: "Severity picks the SPACE, not just the loudness (CG-86): split routes put an all-clear in a different room from the alert it closes." }),
-      routeSel("default"), SEVERITIES.map(routeSel)),
+    el("fieldset", {}, el("legend", { text: "Sends as" }),
+      locked ? el("div", { class: "callout", text: "Grants on an inbound_locked app are a registry file edit, not a console action. Routes and display names stay editable here." })
+        : el("p", { class: "muted small", text: "Granting an identity lets this app post as it. Several apps may hold one identity; the room it posts into heads each group." }),
+      grants.length ? grants : el("p", { class: "muted small", text: "No identities registered yet — nothing to grant." })),
+    el("fieldset", {}, el("legend", { text: "Routes" }),
+      el("p", { class: "muted small", text: "Severity picks the identity, and the identity picks the room. Only granted identities can be routes." }),
+      routeBox, routeLine),
     el("fieldset", {}, el("legend", { text: "Inbound" }),
-      locked ? el("p", { class: "warn", text: "This app is inbound_locked. Inbound can only be narrowed here; widening is a registry file edit." }) : null,
-      el("label", {}, el("input", { type: "checkbox", name: "allow_inbound", checked: a.allow_inbound, disabled: locked && !a.allow_inbound }), " allow_inbound"),
+      locked ? el("div", { class: "callout", text: "This app is inbound_locked. Inbound can be narrowed here, never widened." }) : null,
+      el("label", {}, allow, " allow_inbound", !a.allow_inbound && !locked ? el("span", { class: "muted small", text: " — turning this on asks for a typed confirmation" }) : null),
+      receives,
       optionalField("callback_url", "callback_url (push delivery; none = poll only)", !!a.callback_url_set, locked),
-      el("label", {}, "allowed_users (one email per line; empty = anyone in the space)", el("textarea", { name: "allowed_users", rows: "3" }, (a.allowed_users || []).join("\n"))),
-      optionalField("unreachable_message", "unreachable_message", !!a.unreachable_message_set, false)));
+      el("label", {}, "allowed_users (one email per line; empty = anyone in the room)", el("textarea", { name: "allowed_users", rows: "3" }, (a.allowed_users || []).join("\n"))),
+      optionalField("unreachable_message", "unreachable_message (in-thread text when the callback is down)", !!a.unreachable_message_set, false)));
 }
 
 function readOptional(form, name) {
@@ -250,122 +713,432 @@ async function withInboundConfirm(appId, send) {
   catch (e) {
     if (e.status !== 428) throw e;
     // The server's 428 detail already quotes rule #6; add it only if it does not.
-    const msg = /hard rule #6/i.test(e.message) ? e.message : e.message + "\n\n" + RULE_6;
-    const typed = await typedConfirm(msg, appId);
+    const has = !!(e.reasons && e.reasons.length); // bullets cover the detail; do not print both
+    const typed = await typedConfirm({ title: "Confirm: widen inbound for " + appId,
+      intro: has ? REFUSED_INTRO : e.message, reasons: e.reasons,
+      note: has || !/hard rule #6/i.test(e.message) ? RULE_6 : null, expected: appId, verb: "Widen inbound", tone: "warn" });
     if (typed === null) throw new Error("cancelled");
     return await send(typed);
   }
 }
 
-function typedConfirm(message, expected) {
+// ------------------------------------------------------------- dialog ---
+// Resolves with the dialog's returnValue once it closes, then hands focus back
+// to whatever opened it. Escape closes natively with returnValue "" (= cancel).
+function closeOpen(dlg) {
+  return new Promise((resolve) => { dlg.addEventListener("close", () => resolve(), { once: true }); dlg.close(""); });
+}
+function dialogClosed(dlg, trigger) {
   return new Promise((resolve) => {
-    const input = el("input", { "aria-label": "Type " + expected + " to confirm", autocomplete: "off" });
-    const card = el("div", { class: "card", role: "dialog" },
-      el("p", { class: "warn", text: message }),
-      el("label", {}, "Type ", el("strong", { text: expected }), " to confirm", input),
-      el("button", { type: "button", class: "primary", text: "Confirm", on: { click: () => { card.remove(); resolve(input.value); } } }), " ",
-      el("button", { type: "button", text: "Cancel", on: { click: () => { card.remove(); resolve(null); } } }));
-    $("view").prepend(...toNodes([card]));
-    input.focus();
+    dlg.addEventListener("close", () => {
+      resolve(dlg.returnValue);
+      if (trigger && trigger.isConnected && trigger.focus) trigger.focus();
+    }, { once: true });
   });
 }
 
-function appDetail(appId) {
+// Typed confirmation: the verb button stays disabled until the text equals
+// `expected`, so a mismatch cannot be submitted. Resolves the typed text, or
+// null on Cancel/Escape.
+async function typedConfirm({ title, intro, reasons, note, expected, verb, tone }) {
+  const dlg = $("confirm");
+  if (dlg.open) await closeOpen(dlg);
+  const trigger = document.activeElement;
+  const input = el("input", { id: "confirm-input", autocomplete: "off", "aria-label": "Type " + expected + " to confirm" });
+  const verbBtn = el("button", { type: "button", class: tone === "danger" ? "danger" : "primary", text: verb, disabled: true });
+  const cancelBtn = el("button", { type: "button", text: "Cancel" });
+  const sync = () => { verbBtn.disabled = input.value !== expected; };
+  input.addEventListener("input", sync);
+  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); if (!verbBtn.disabled) dlg.close("ok"); } });
+  verbBtn.addEventListener("click", () => { if (!verbBtn.disabled) dlg.close("ok"); });
+  cancelBtn.addEventListener("click", () => dlg.close(""));
+  dlg.setAttribute("data-tone", tone || "warn");
+  dlg.returnValue = "";
+  dlg.replaceChildren(...toNodes([
+    el("h2", { id: "confirm-title", text: title }),
+    intro ? el("p", { text: intro }) : null,
+    reasons && reasons.length ? el("ul", {}, reasons.map((r) => el("li", { text: r }))) : null,
+    note ? el("p", { class: "muted", text: note }) : null,
+    el("label", {}, "Type ", el("strong", { text: expected }), " to confirm", input),
+    el("p", {}, verbBtn, " ", cancelBtn)]));
+  const closed = dialogClosed(dlg, trigger);
+  dlg.showModal();
+  input.focus();
+  return closed.then((v) => (v === "ok" ? input.value : null));
+}
+
+// One-shot "Discard …?" dialog for the unsaved new-app draft and a dirty
+// inspector. Escape keeps editing. Resolves true only on Discard.
+async function discardConfirm(title) {
+  const dlg = $("confirm");
+  if (dlg.open) await closeOpen(dlg);
+  const trigger = document.activeElement;
+  const keep = el("button", { type: "button", class: "primary", text: "Keep editing" });
+  const discard = el("button", { type: "button", class: "danger", text: "Discard" });
+  keep.addEventListener("click", () => dlg.close(""));
+  discard.addEventListener("click", () => dlg.close("discard"));
+  dlg.setAttribute("data-tone", "warn");
+  dlg.returnValue = "";
+  dlg.replaceChildren(...toNodes([
+    el("h2", { id: "confirm-title", text: title }),
+    el("p", { class: "muted", text: "Escape keeps editing." }),
+    el("p", {}, discard, " ", keep)]));
+  const closed = dialogClosed(dlg, trigger);
+  dlg.showModal();
+  keep.focus();
+  return closed.then((v) => v === "discard");
+}
+
+function shortcutsDialog() {
+  const dlg = $("shortcuts");
+  if (dlg.open) return;
+  const trigger = document.activeElement;
+  const close = el("button", { type: "button", class: "primary", text: "Close" });
+  close.addEventListener("click", () => dlg.close(""));
+  const row = (k, t) => el("li", {}, el("kbd", { text: k }), " " + t);
+  dlg.replaceChildren(...toNodes([
+    el("h2", { id: "shortcuts-title", text: "Keyboard shortcuts" }),
+    el("ul", {}, row("/", "filter apps and identities"), row("Escape", "back to the board; cancels a dialog"), row("?", "this list")),
+    el("p", { class: "muted", text: "Nothing here writes: there are no single-letter verbs." }),
+    el("p", {}, close)]));
+  dialogClosed(dlg, trigger);
+  dlg.showModal();
+  close.focus();
+}
+
+// ------------------------------------------------------- app inspector ---
+// Spec §4.3. One form (grants, routes, inbound) with a sticky save bar; the
+// key card, deliveries and danger zone sit outside it because none of them is
+// saved by Save. The notes before Save are the point: an operator sees what a
+// grant change costs (routes removed, a rule #6 confirmation) before the
+// server says so.
+
+// Part 2. One status line by key_source and one action. Rotate and mint are
+// the same endpoint (nothing dies on a mint); both are disabled with the reason
+// when the process environment owns the key, because managed.env cannot win.
+function keyCard(appId, a) {
+  const processOwned = a.key_source === "process";
+  const verb = a.key_configured ? "Rotate" : "Mint";
+  const line = !a.key_configured
+    ? el("p", { class: "error" }, el("span", { class: "dot err" }), "Missing — this app cannot authenticate. Mint a key to fix it.")
+    : el("p", { class: "ok" }, el("span", { class: "dot ok" }), "Configured · from " + keySourceWords(a.key_source));
+  const btn = el("button", { type: "button", text: a.key_configured ? "Rotate key…" : "Mint a key…", disabled: processOwned, on: { click: async () => {
+    const typed = await typedConfirm({ title: verb + " the API key for " + appId + "?",
+      intro: a.key_configured ? "The current key stops working the moment you confirm. Update the consuming app right after. The new key is shown once." : "The new key is shown once.",
+      expected: appId, verb: verb + " key", tone: "danger" });
+    if (typed === null) return;
+    try { const r = await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/rotate-key", {}); showKey(r); }
+    catch (e) { fail(e); }
+  } } });
+  return el("div", { class: "card" }, el("h3", { text: "API key" }), line,
+    processOwned ? el("div", { class: "callout", text: "Set in the gateway's process environment, which overrides managed.env at boot — rotate it in the compose environment, not here." }) : null,
+    (state.shadowed_env_names || []).includes(a.key_env)
+      ? el("div", { class: "callout warn", text: "An older value of " + a.key_env + " is still in the read-only .env — inert now, but it would come back if managed.env were lost. Remove that line by hand." }) : null,
+    el("p", {}, btn));
+}
+
+// Part 6. The log hands the five oldest→newest; the table reads newest first.
+function deliveriesCard(a) {
+  const recs = (a.recent_deliveries || []).slice().reverse();
+  return el("div", { class: "card" }, el("h3", { text: "Recent deliveries" }),
+    recs.length
+      ? el("table", { class: "plain" },
+        el("thead", {}, el("tr", {}, ["When", "Kind", "Status", "Detail"].map((h) => el("th", { scope: "col", text: h })))),
+        el("tbody", {}, recs.map((d) => el("tr", {},
+          el("td", { title: d.ts, text: relTime(d.ts) || d.ts }),
+          el("td", { text: d.kind }),
+          // Only a terminal failure is red: `enqueued`/`sending` are in flight, not faults.
+          el("td", { class: d.status === "delivered" ? "ok" : TERMINAL.includes(d.status) ? "error" : "muted", text: d.status }),
+          el("td", { class: "muted", text: d.detail || d.title || "" })))))
+      : el("p", { class: "muted small", text: "No deliveries since the gateway started. The log is in memory; the newest five are shown." }));
+}
+
+// Part 7. Delete is disabled with the reason wherever the server would refuse
+// (a locked app: file edit; unpolled replies: C3), so the refusal is the
+// exception rather than the discovery.
+function dangerZone(appId, a) {
+  const n = a.inbox_pending || 0;
+  const reason = a.inbound_locked ? "Deleting an inbound_locked app is a registry file edit, not a console action."
+    : n > 0 ? n + " unpolled inbound " + (n === 1 ? "reply" : "replies") + " — poll or drain its inbox first." : "";
+  const managed = a.key_source === "managed";
+  const btn = el("button", { type: "button", class: "danger", text: "Delete app…", disabled: !!reason, on: { click: async () => {
+    const typed = await typedConfirm({ title: "Delete app " + appId + "?",
+      intro: "Its queued messages close as unroutable." + (managed ? " Its managed key is removed from managed.env." : ""),
+      expected: appId, verb: "Delete app", tone: "danger" });
+    if (typed === null) return;
+    try { await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/delete", { confirm_app_id: typed }); toast("Deleted " + appId + "."); setDirty(false); navigate(hrefFor("board")); }
+    catch (e) { fail(e); }
+  } } });
+  return el("div", { class: "card" }, el("h3", { text: "Danger zone" }),
+    el("p", { class: "muted small", text: "Deleting closes this app's queued messages as unroutable" + (managed ? " and removes its managed key from managed.env." : ".") }),
+    el("p", {}, btn),
+    reason ? el("div", { class: "callout", text: reason }) : null);
+}
+
+// The sticky bar: status words, Discard, Save. `mark` is the one writer of the
+// page's dirty flag for this view, so the bar and guardNavigation cannot disagree.
+function saveBar(onDiscard, labels) {
+  const status = el("span", { class: "muted small" });
+  const save = el("button", { type: "submit", class: "primary", text: (labels && labels.save) || "Save" });
+  const discard = el("button", { type: "button", text: (labels && labels.discard) || "Discard", on: { click: onDiscard } });
+  const bar = el("div", { class: "savebar" }, status, discard, save);
+  const mark = (v, why) => { setDirty(v, labels && labels.title); save.disabled = !v; status.textContent = v ? "Unsaved changes" + (why ? " — " + why : "") : "No changes"; };
+  return { bar, mark, save };
+}
+
+function appInspector(appId, query) {
   const a = state.apps[appId];
-  const form = el("form", {}, appFields(a), el("button", { type: "submit", class: "primary", text: "Save" }));
+  expandRoomsOf(appId); // D5: this row is highlighted on return and its rooms are open
+  // `?ungrant=<name>` (from an identity inspector): enter with that box unchecked
+  // and the bar already dirty, so the routes note is on screen before Save.
+  const asked = query ? query.get("ungrant") : null;
+  const ungrant = asked && a.identities.includes(asked) ? asked : null;
+  const clean = () => { setDirty(false); if (ungrant) navigate(hrefFor("app", appId)); else appInspector(appId); };
+  const fields = appFields(a, { appId, ungrant });
+  const { bar, mark } = saveBar(clean);
+  const inline = el("div", { class: "callout err", hidden: true });
+  const form = el("form", {}, fields, inline, bar);
+  // Every control in the form is dirty-tracked by these two events; the
+  // re-rendered route selects bubble through the same listeners.
+  form.addEventListener("input", () => mark(true));
+  form.addEventListener("change", () => mark(true));
+  mark(!!ungrant, ungrant ? ungrant + " is unchecked; review and Save" : null);
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    inline.hidden = true;
     try {
       await withInboundConfirm(appId, (c) => write("PUT", "/admin/api/apps/" + encodeURIComponent(appId), Object.assign(readAppFields(form, a), { confirm_app_id: c })));
       toast("Saved " + appId + ". Live now.");
-      board();
-    } catch (e) { fail(e); }
+      clean(); // re-render from the refreshed state; the bar reads "No changes"
+    } catch (e) {
+      // A refusal also renders at the form (spec §4.6); a stale panel replaces the alert.
+      if (!showFormError(e, inline)) fail(e);
+    }
   });
-  view(el("h2", { text: "App " + appId }),
-    el("p", { class: "muted", text: "API key env var: " + a.key_env + " (" + a.key_source + ")" }),
+  view(el("h2", {}, appId, " ", pills(a)),
+    el("p", { class: "muted small" }, "API key env var ", el("code", { text: a.key_env })),
+    keyCard(appId, a),
     form,
-    el("div", { class: "card" },
-      el("h3", { text: "Rotate API key" }),
-      el("p", { text: "The current key stops working the moment you confirm. Update the consuming app right after." }),
-      el("button", { type: "button", text: "Rotate key", on: { click: async () => {
-        const typed = await typedConfirm("Rotate the API key for " + appId + "? The old key dies immediately.", appId);
-        if (typed === null) return;
-        if (typed !== appId) { toast("Typed id did not match — key not rotated.", true); return; }
-        try { const r = await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/rotate-key", {}); reveal(r); }
-        catch (e) { fail(e); }
-      } } })),
-    el("div", { class: "card" },
-      el("h3", { text: "Delete app" }),
-      a.inbound_locked
-        ? el("p", { class: "note", text: "This app is inbound_locked: deleting it is a registry file edit, not a console action." })
-        : el("button", { type: "button", class: "danger", text: "Delete " + appId, on: { click: async () => {
-          const typed = await typedConfirm("Delete app " + appId + "? Its queued messages close as unroutable.", appId);
-          if (typed === null) return;
-          try { await write("POST", "/admin/api/apps/" + encodeURIComponent(appId) + "/delete", { confirm_app_id: typed }); toast("Deleted " + appId); board(); }
-          catch (e) { fail(e); }
-        } } })));
+    deliveriesCard(a),
+    dangerZone(appId, a));
 }
 
 // ----------------------------------------------------------- new app ---
+// A refusal is shown at the form as well as in a notice (spec §4.6). A stale
+// page (409) gets the panel with the one right recovery button and the form is
+// left exactly as the operator typed it; anything else is a callout with the
+// server's words and the recovery.
+function stalePanel(e, host) {
+  const kind = e.category === "refused: edited outside the console" ? "reload" : e.category === "refused: conflict" ? "refresh" : "both";
+  const done = (msg) => { host.hidden = true; host.replaceChildren(...toNodes([])); notify(msg); };
+  const refreshBtn = el("button", { type: "button", text: "Refresh view", on: { click: async () => {
+    try { await refresh(); done("View refreshed. Compare and Save again."); } catch (x) { fail(x); }
+  } } });
+  const reloadBtn = el("button", { type: "button", text: "Reload from disk", on: { click: async () => {
+    try { await api("POST", "/admin/api/reload", {}); await refresh(); done("Reloaded from disk. Compare and Save again."); } catch (x) { fail(x); }
+  } } });
+  host.className = "callout warn"; host.hidden = false;
+  host.replaceChildren(...toNodes([
+    el("strong", { text: "The registry changed since this page loaded. Your edits are kept." }),
+    el("p", { class: "muted small", text: e.message }),
+    kind !== "reload" ? el("p", {}, refreshBtn, " pick up a change made from another tab or the console") : null,
+    kind !== "refresh" ? el("p", {}, reloadBtn, " pick up a hand edit to registry.yaml — validates the file, then swaps it live") : null,
+    el("p", { class: "muted small", text: "Then compare and Save again." })]));
+}
+// Returns true when the stale panel took the refusal (no separate alert notice).
+function showFormError(e, host) {
+  if (!e || e.message === "cancelled" || e.status === 401) return false;
+  if (e.status === 409 && (e.category === "refused: conflict" || e.category === "refused: edited outside the console")) { stalePanel(e, host); return true; }
+  host.className = "callout err"; host.textContent = explain(e); host.hidden = false;
+  return false;
+}
+
+function newDraft() { return { app_id: "", identities: [], routes: {}, allow_inbound: false, callback_url: "", unreachable_message: "", allowed_users: [], pre: null }; }
 function newApp() {
-  const blank = { identities: [], routes: {}, allow_inbound: false, inbound_locked: false,
-    callback_url_set: false, unreachable_message_set: false, allowed_users: [] };
-  const idInput = el("input", { name: "app_id", required: true, pattern: ID_PATTERN, autocomplete: "off", placeholder: "e.g. rotaryphone" });
+  const d = draft || (draft = newDraft());
+  const blank = { identities: [], routes: d.routes, allow_inbound: d.allow_inbound, inbound_locked: false,
+    callback_url_set: false, unreachable_message_set: false, allowed_users: d.allowed_users };
+  const idInput = el("input", { name: "app_id", required: true, pattern: ID_PATTERN, autocomplete: "off", placeholder: "e.g. rotaryphone", value: d.app_id });
   const envHint = el("p", { class: "muted" });
-  idInput.addEventListener("input", () => { envHint.textContent = "API key env var: CHAT_GATEWAY_API_KEY__" + idInput.value.toUpperCase().replace(/-/g, "_"); });
-  const form = el("form", {},
-    el("fieldset", {}, el("legend", { text: "1 · App id" }), el("label", {}, "App id", idInput), envHint),
-    el("p", {}, "2 · Need a new Chat space identity first? ",
-      el("button", { type: "button", text: "Create an identity", on: { click: newIdentity } })),
-    el("p", { class: "muted", text: "3 and 4 · identities, routes and inbound:" }),
-    appFields(blank),
-    el("button", { type: "submit", class: "primary", text: "Create app and mint key" }));
+  const idErr = el("p", { class: "error small", role: "alert" });
+  const syncId = () => {
+    const v = idInput.value.trim();
+    envHint.textContent = "API key env var: CHAT_GATEWAY_API_KEY__" + v.toUpperCase().replace(/-/g, "_");
+    const dup = Object.hasOwn(state.apps, v);
+    idInput.setCustomValidity(dup ? "That app id is already registered." : "");
+    idErr.textContent = dup ? "An app named " + v + " is already registered." : "";
+  };
+  const panel = el("div", { class: "callout err", hidden: true, role: "alert" });
+  const form = el("form", {});
+  const { bar, mark } = saveBar(() => guardNavigation(() => { draft = null; setDirty(false); newApp(); }),
+    { save: "Create app and mint key", discard: "Discard draft", title: DISCARD_NEW_APP });
+  const field = (n) => form.querySelector("[name=" + n + "]");
+  const capture = () => {
+    const f = readAppFields(form, blank);
+    Object.assign(d, { app_id: idInput.value.trim(), identities: f.identities, routes: f.routes, allow_inbound: f.allow_inbound,
+      allowed_users: f.allowed_users, callback_url: field("callback_url").value, unreachable_message: field("unreachable_message").value });
+  };
+  form.append(...toNodes([
+    el("fieldset", {}, el("legend", { text: "1 · App id" }), el("label", {}, "App id", idInput), idErr, envHint),
+    el("p", {}, "2 · Sends as — need an identity that does not exist yet? ",
+      el("button", { type: "button", text: "create a new identity (you will come back here)", on: { click: () => {
+        capture(); setDirty(false); window.location.hash = hrefFor("new-identity") + "?return=new-app";
+      } } })),
+    appFields(blank, { precheck: d.identities }),
+    panel, bar]));
+  field("callback_url").value = d.callback_url; field("unreachable_message").value = d.unreachable_message;
+  idInput.addEventListener("input", syncId);
+  form.addEventListener("input", () => { capture(); mark(true); });
+  form.addEventListener("change", () => { capture(); mark(true); });
+  syncId();
+  mark(!!(d.app_id || d.identities.length || d.pre), d.pre ? d.pre + " is pre-checked — the identity you just created" : null);
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    panel.hidden = true;
     const appId = idInput.value.trim();
     try {
       const r = await withInboundConfirm(appId, (c) => write("POST", "/admin/api/apps", Object.assign(readAppFields(form, blank), { app_id: appId, confirm_app_id: c })));
-      reveal(r);
-    } catch (e) { fail(e); }
+      draft = null;
+      showKey(r);
+    } catch (e) { if (!showFormError(e, panel)) fail(e); }
   });
   view(el("h2", { text: "New app" }), form);
 }
 
+// ------------------------------------------------------ avatar picker ---
+// D6: the icons are same-origin tiles (avatarMark, 40 px) with the name under
+// them, plus none and a custom https address. The paste box holds the PUBLIC
+// raw URL (Google's servers fetch it; this gateway is LAN-bound), built from
+// AVATAR_PNG_PATTERN. `node.isValid()` is false while the custom field holds a
+// non-https address; `onChange` only ever sees a usable value.
+function selectField(input, msg) { input.focus(); input.select(); toast(msg); }
+function avatarPicker({ value, onChange }) {
+  const names = state.avatars || [];
+  let cur = value || "";
+  let valid = true;
+  const urlFor = (v) => (!v ? "" : names.includes(v) ? AVATAR_PNG_PATTERN.replace("<name>", v) : v);
+  const err = el("p", { class: "error small", role: "alert", hidden: true });
+  const custom = el("input", { name: "avatar_custom", autocomplete: "off", "aria-label": "Custom avatar address", placeholder: "or paste a custom https address",
+    value: cur && !names.includes(cur) ? cur : "" });
+  const box = el("input", { class: "secret", readonly: true, "aria-label": "Avatar URL to paste into Google Chat", placeholder: "(no avatar — nothing to paste)" });
+  const tiles = [];
+  const sync = () => { for (const [t, v] of tiles) t.setAttribute("aria-pressed", String(v === cur)); box.value = urlFor(cur); };
+  const choose = (v) => { cur = v; valid = true; custom.value = ""; err.hidden = true; sync(); onChange(v); };
+  const tile = (v, label, mark) => {
+    const t = el("button", { type: "button", class: "tile", "aria-pressed": "false", on: { click: () => choose(v) } }, mark, el("span", { class: "small", text: label }));
+    tiles.push([t, v]);
+    return t;
+  };
+  custom.addEventListener("input", () => {
+    const v = custom.value.trim();
+    if (!v) { choose(""); return; }
+    if (!v.startsWith("https://")) { valid = false; err.textContent = "A custom avatar must be an https address."; err.hidden = false; return; }
+    valid = true; err.hidden = true; cur = v; sync(); onChange(v);
+  });
+  const root = el("div", { class: "picker" },
+    el("div", { class: "tiles", role: "group", "aria-label": "Avatar" },
+      names.map((n) => tile(n, n, avatarMark(n, 40))), tile("", "none", avatarMark(null, 40))),
+    el("label", {}, "Custom avatar", custom), err,
+    el("label", {}, "Paste this into the webhook's Avatar URL in Google Chat", box),
+    el("p", {}, el("button", { type: "button", text: "Select URL", on: { click: () => selectField(box, "URL selected — press Ctrl+C (or ⌘C) to copy.") } })));
+  root.isValid = () => valid;
+  sync();
+  return root;
+}
+
 // ------------------------------------------------------ new identity ---
-function newIdentity() {
+function newIdentity(query) {
+  const ticket = !!query && query.get("return") === "new-app";
+  let avatar = "";
+  const picker = avatarPicker({ value: "", onChange: (v) => { avatar = v; } });
+  const nameIn = el("input", { name: "name", required: true, pattern: ID_PATTERN, autocomplete: "off", placeholder: "e.g. rotaryphone-alerts" });
+  const envLine = el("p", { class: "muted small" });
+  nameIn.addEventListener("input", () => { envLine.textContent = "Webhook env var: GOOGLE_CHAT_WEBHOOK_URL__" + nameIn.value.trim().toUpperCase().replace(/-/g, "_"); });
+  const panel = el("div", { class: "callout err", hidden: true, role: "alert" });
+  if (ticket && draft) setDirty(true, DISCARD_NEW_APP); // the draft is at stake until Back to new app
   const form = el("form", {},
-    el("ol", { class: "guide" },
-      el("li", { text: "Open the Google Chat space this identity should post into." }),
-      el("li", { text: "Space name ▸ Apps & integrations ▸ Webhooks ▸ Add webhook." }),
-      el("li", {}, "Set the name and avatar now — they are fixed at creation and cannot be changed later without a new webhook. "
-        + "For the avatar, you can paste the PNG URL of one of the gateway's icons into the webhook's Avatar URL: ",
-        el("a", { href: AVATAR_GALLERY, target: "_blank", rel: "noopener noreferrer", text: "browse the avatar gallery" }),
-        " (each icon's PNG is at " + AVATAR_PNG_PATTERN + ")."),
-      el("li", { text: "Save, copy the whole URL, and paste it below. It is stored in managed.env and never shown again." })),
-    el("label", {}, "Identity name", el("input", { name: "name", required: true, pattern: ID_PATTERN, autocomplete: "off", placeholder: "e.g. rotaryphone-alerts" })),
-    el("label", {}, "Display name (for /v1/identities)", el("input", { name: "display", required: true, autocomplete: "off" })),
-    el("label", {}, "Webhook URL", el("input", { name: "webhook_url", type: "password", autocomplete: "off", required: true })),
+    el("fieldset", {}, el("legend", { text: "1 · Pick an avatar, then create the webhook in Google Chat" }),
+      el("p", { class: "muted", text: "The name and avatar of a webhook are fixed when it is created in Chat; the gateway cannot set them. Choose the icon first so you have its URL ready to paste." }),
+      picker,
+      el("ol", { class: "guide" },
+        el("li", { text: "Open the Google Chat space this identity should post into." }),
+        el("li", { text: "Space name ▸ Apps & integrations ▸ Webhooks ▸ Add webhook." }),
+        el("li", { text: "Set the name; paste the avatar URL above into Avatar URL. Both are fixed at creation and cannot be changed later without a new webhook." }),
+        el("li", { text: "Save and copy the whole webhook URL." }))),
+    el("fieldset", {}, el("legend", { text: "2 · Name it here" }),
+      el("label", {}, "Identity name", nameIn), envLine,
+      el("label", {}, "Display name (for /v1/identities)", el("input", { name: "display", required: true, autocomplete: "off" })),
+      el("p", { class: "muted small", text: "The sender name Chat shows is the webhook's own; this display name is what /v1/identities reports." })),
+    el("fieldset", {}, el("legend", { text: "3 · Paste the URL" }),
+      el("label", {}, "Webhook URL", el("input", { name: "webhook_url", type: "password", autocomplete: "off", required: true })),
+      el("p", { class: "muted small", text: "Stored in managed.env. Never shown again." })),
+    panel,
     el("button", { type: "submit", class: "primary", text: "Create identity" }));
+  if (ticket && draft) form.addEventListener("input", () => setDirty(true, DISCARD_NEW_APP));
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    panel.hidden = true;
+    if (!picker.isValid()) { panel.className = "callout err"; panel.textContent = "The custom avatar must be an https address (or clear it)."; panel.hidden = false; return; }
     const f = (n) => form.querySelector("[name=" + n + "]").value;
-    try {
-      const r = await write("POST", "/admin/api/identities", { name: f("name").trim(), display: f("display").trim(), webhook_url: f("webhook_url") });
-      toast("Identity " + r.name + " created in " + r.space + ".");
-      newApp();
-    } catch (e) { fail(e); }
+    const body = { name: f("name").trim(), display: f("display").trim(), webhook_url: f("webhook_url") };
+    if (avatar) body.avatar = avatar;
+    try { identityCreated(await write("POST", "/admin/api/identities", body), ticket); }
+    catch (e) { if (!showFormError(e, panel)) fail(e); }
   });
   view(el("h2", { text: "New identity (Chat webhook)" }), form);
 }
+function identityCreated(r, ticket) {
+  const onBack = () => {
+    const d = draft || (draft = newDraft());
+    if (!d.identities.includes(r.name)) d.identities.push(r.name);
+    d.pre = r.name;
+    setDirty(false); // going back to the draft is not discarding it
+    navigate(hrefFor("new-app"));
+  };
+  view(el("div", { class: "card" },
+    el("h2", { text: "Identity " + r.name + " created · room " + (r.space || "none recorded") }),
+    el("p", { text: "Not granted to any app yet." }),
+    el("p", {}, ticket
+      ? el("button", { type: "button", class: "primary", text: "Back to new app (pre-granted)", on: { click: onBack } })
+      : [el("button", { type: "button", class: "primary", text: "Open identity", on: { click: () => navigate(hrefFor("identity", r.name)) } }), " ",
+        el("button", { type: "button", text: "Board", on: { click: () => navigate(hrefFor("board")) } })])));
+}
 
+// --------------------------------------------------- replace webhook ---
 function replaceWebhook(name) {
+  const i = state.identities[name];
+  const hs = holders(name);
   const locker = lockedHolders().get(name);
-  if (locker) { toast("Identity " + name + " is held by locked app " + locker + ". " + FILE_EDIT, true); return; }
+  const blocked = locker ? "Not a console action — " + name + " is held by " + locker + ", which is inbound_locked. " + FILE_EDIT
+    : i.mode !== "webhook" ? "Chat-app identity — it sends through the service account; there is no webhook to replace."
+      : i.secret_source === "process" ? "The webhook URL is set in the gateway's process environment, which overrides managed.env — change it there." : null;
+  if (blocked) {
+    view(el("h2", { text: "Replace webhook for " + name }), el("div", { class: "callout", text: blocked }),
+      el("p", {}, el("a", { href: hrefFor("identity", name), text: "Back to " + name })));
+    return;
+  }
+  const avatarUrl = !i.avatar ? null : (state.avatars || []).includes(i.avatar) ? AVATAR_PNG_PATTERN.replace("<name>", i.avatar) : i.avatar;
+  const inbound = hs.filter((h) => state.apps[h].allow_inbound);
   const input = el("input", { type: "password", autocomplete: "off", "aria-label": "New webhook URL" });
+  const panel = el("div", { class: "callout err", hidden: true, role: "alert" });
   view(el("h2", { text: "Replace webhook for " + name }),
-    el("p", { text: "Google Chat has no regenerate button: delete the old webhook in the space, create a new one, paste its URL here." }),
+    el("p", { class: "muted", text: "Google Chat has no regenerate button: delete the old webhook in the space, create a new one with the same name, then paste its URL here." }),
+    el("ol", { class: "guide" },
+      el("li", { text: "In the space, delete the old webhook." }),
+      el("li", { text: "Create a new webhook with the same name." }),
+      el("li", {}, "Set its avatar again: ", avatarUrl ? el("code", { text: avatarUrl })
+        : "No avatar is recorded for this identity; pick one on the identity page if you want its URL kept."),
+      el("li", { text: "Copy the whole URL and paste it below." })),
+    el("div", { class: "card" }, el("h3", { text: "Consequences" }),
+      el("p", { text: hs.length ? "Held by " + hs.join(", ") + "." : "Held by no app." }),
+      el("p", { text: i.space ? "Same room — nothing else changes; a rotated webhook moves nothing." : "No room is recorded for this identity; replacing the webhook records it." }),
+      el("p", { text: inbound.length
+        ? "Different room — inbound apps " + inbound.join(", ") + " start receiving that room's messages; you will be asked to type the identity name."
+        : "Different room — no inbound app holds it, so nothing new starts receiving; the new room is recorded." })),
     el("label", {}, "New webhook URL", input),
-    el("button", { type: "button", class: "primary", text: "Replace", on: { click: async () => {
+    panel,
+    el("button", { type: "button", class: "primary", text: "Replace webhook", on: { click: async () => {
+      panel.hidden = true;
       // CG-90 final review I1: moving this identity to a NEW space widens every
       // inbound app holding it, and the server answers 428 naming them. One
       // typed confirmation — the identity name — covers all of them.
@@ -374,30 +1147,140 @@ function replaceWebhook(name) {
         try { await send(""); }
         catch (e) {
           if (e.status !== 428) throw e;
-          const msg = /hard rule #6/i.test(e.message) ? e.message : e.message + "\n\n" + RULE_6;
-          const typed = await typedConfirm(msg, name);
+          const has = !!(e.reasons && e.reasons.length);
+          const typed = await typedConfirm({ title: "Confirm: replace the webhook for " + name,
+            intro: has ? REFUSED_INTRO : e.message, reasons: e.reasons,
+            note: has || !/hard rule #6/i.test(e.message) ? RULE_6 : null, expected: name, verb: "Replace webhook", tone: "warn" });
           if (typed === null) throw new Error("cancelled");
           await send(typed);
         }
-        input.value = ""; toast("Webhook replaced."); board();
+        input.value = ""; toast("Webhook replaced."); navigate(hrefFor("identity", name));
       }
-      catch (e) { fail(e); }
+      catch (e) { if (!showFormError(e, panel)) fail(e); }
     } } }));
 }
 
-function renameIdentity(name, current) {
-  const input = el("input", { value: current, "aria-label": "Display name", autocomplete: "off" });
-  view(el("h2", { text: "Display name for " + name }), el("label", {}, "Display name", input),
-    el("button", { type: "button", class: "primary", text: "Save", on: { click: async () => {
-      try { await write("PUT", "/admin/api/identities/" + encodeURIComponent(name), { display: input.value.trim() }); toast("Saved display name for " + name + "."); board(); }
+// ------------------------------------------------- identity inspector ---
+function recordedAvatar(v) {
+  if (!v) return "Recorded: none recorded";
+  return (state.avatars || []).includes(v) ? "Recorded: bundled icon “" + v + "”" : "Recorded: custom URL — " + v;
+}
+function identityInspector(name) {
+  const i = state.identities[name];
+  const hs = holders(name);
+  const room = (state.rooms || {})[i.space || ""];
+  const roomLocker = room && room.locked_by;
+  const heldLocked = lockedHolders().get(name);
+  const url = "/admin/api/identities/" + encodeURIComponent(name);
+  const replaceReason = i.mode !== "webhook" ? "Chat-app identity — there is no webhook to replace."
+    : heldLocked ? "Held by " + heldLocked + ", which is inbound_locked — replacing its webhook is a registry file edit, not a console action."
+      : i.secret_source === "process" ? "The webhook URL is set in the gateway's process environment — change it there." : "";
+  const deleteReason = hs.length ? "Remove it from " + hs.length + (hs.length === 1 ? " app" : " apps") + " first. Use Remove grant… beside each holder above." : "";
+
+  // Header and display name (inline rename).
+  const status = i.mode !== "webhook" ? el("p", {}, el("span", { class: "dot" }), "Chat-app identity — sends through the service account; no webhook to replace here.")
+    : i.env_resolved ? el("p", { class: "ok" }, el("span", { class: "dot ok" }), "Webhook ready · from " + keySourceWords(i.secret_source))
+      : el("p", { class: "error" }, el("span", { class: "dot err" }), "Webhook URL not set — " + i.webhook_url_env + " is unset; sends as this identity fail at dispatch");
+  const nameRow = el("p", {});
+  const showName = () => nameRow.replaceChildren(...toNodes(["Display name: ", el("strong", { text: i.display }), " ",
+    el("button", { type: "button", text: "Rename…", on: { click: editName } })]));
+  const editName = () => {
+    const input = el("input", { value: i.display, "aria-label": "Display name", autocomplete: "off" });
+    const save = async () => {
+      try { await write("PUT", url, { display: input.value.trim() }); toast("Saved display name for " + name + "."); identityInspector(name); }
       catch (e) { fail(e); }
-    } } }));
+    };
+    input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); save(); } });
+    nameRow.replaceChildren(...toNodes([input, " ", el("button", { type: "button", class: "primary", text: "Save", on: { click: save } }), " ",
+      el("button", { type: "button", text: "Cancel", on: { click: showName } })]));
+    input.focus();
+  };
+  showName();
+
+  // Avatar card: recorded value, or the picker with Save avatar / Cancel.
+  const avatarCard = el("div", { class: "card" });
+  const showAvatar = () => {
+    setDirty(false);
+    avatarCard.replaceChildren(...toNodes([el("h3", { text: "Avatar" }),
+      el("p", {}, avatarMark(i.avatar, 20), " ", recordedAvatar(i.avatar)),
+      el("p", {}, el("button", { type: "button", text: "Change avatar…", on: { click: pickAvatar } })),
+      el("p", { class: "muted small", text: "The icon Chat shows is set in the webhook's dialog in Google Chat; the gateway cannot set it. What is recorded here is which icon you chose, so the board can show it and you can paste its URL again when the webhook is recreated." })]));
+  };
+  const pickAvatar = () => {
+    let pending = i.avatar || "";
+    const picker = avatarPicker({ value: pending, onChange: (v) => { pending = v; setDirty(pending !== (i.avatar || "")); } });
+    const save = async () => {
+      if (!picker.isValid()) { toast("The custom avatar must be an https address (or clear it).", true); return; }
+      try { await write("PUT", url, { avatar: pending }); setDirty(false); toast("Saved avatar for " + name + "."); identityInspector(name); }
+      catch (e) { fail(e); }
+    };
+    avatarCard.replaceChildren(...toNodes([el("h3", { text: "Avatar" }), picker,
+      el("div", { class: "callout", text: "Recording an avatar here does not change the webhook. Open the webhook in Google Chat and paste the URL above into its Avatar URL field." }),
+      el("p", {}, el("button", { type: "button", class: "primary", text: "Save avatar", on: { click: save } }), " ",
+        el("button", { type: "button", text: "Cancel", on: { click: showAvatar } }))]));
+  };
+  showAvatar();
+
+  // Held by.
+  const heldBy = el("div", { class: "card" }, el("h3", { text: "Held by" }),
+    hs.length ? hs.map((id) => {
+      const a = state.apps[id], sevs = routesTo(id, name);
+      return el("p", {}, el("a", { href: hrefFor("app", id), text: id }), " ", pills(a), " ",
+        sevs.length ? chips(sevs) : el("span", { class: "muted small", text: "granted, no route" }), " ",
+        a.inbound_locked ? el("span", { class: "muted small", text: "file edit" })
+          : el("button", { type: "button", text: "Remove grant…", on: { click: () => navigate(hrefFor("app", id) + "?ungrant=" + encodeURIComponent(name)) } }));
+    }) : el("p", { class: "muted", text: "Not granted to any app. Nothing can send as this identity — grant it from an app, or delete it." }));
+
+  // Siblings.
+  const sibs = room ? room.identities.filter((n) => n !== name) : [];
+  const sibCard = el("div", { class: "card" }, el("h3", { text: "Also posting into this room" }),
+    i.space ? (sibs.length ? el("p", {}, sibs.map((n) => [el("a", { class: "ichip", href: hrefFor("identity", n) }, avatarMark(state.identities[n].avatar, 16), n), " "]))
+      : el("p", { class: "muted", text: "No other identity posts into this room." }))
+      : el("p", { class: "muted", text: "No room recorded … Replacing the webhook records the room." }),
+    roomLocker ? el("div", { class: "callout", text: "This room is locked by " + roomLocker + " (inbound_locked): the console will not replace webhooks here or change that app's grants." }) : null);
+
+  // Actions, with every disabled reason printed.
+  const actions = el("div", { class: "card" }, el("h3", { text: "Actions" }),
+    el("p", {},
+      el("button", { type: "button", text: "Replace webhook…", disabled: !!replaceReason, on: { click: () => navigate(hrefFor("replace", name)) } }), " ",
+      el("button", { type: "button", class: "danger", text: "Delete…", disabled: !!deleteReason, on: { click: () => deleteIdentity(name) } })),
+    replaceReason ? el("div", { class: "callout", text: replaceReason }) : null,
+    deleteReason ? el("div", { class: "callout", text: deleteReason }) : null);
+
+  view(el("h2", {}, avatarMark(i.avatar, 20), name, " ",
+      roomLocker ? el("span", { class: "pill warn", text: "room locked by " + roomLocker }) : null,
+      hs.length ? null : el("span", { class: "pill", text: "unused" })),
+    el("p", { class: "muted small" }, "Room ", i.space ? el("a", { href: hrefFor("room", roomSegment(i.space)), text: i.space }) : "none recorded",
+      i.webhook_url_env ? [" · env ", el("code", { text: i.webhook_url_env })] : null),
+    status, nameRow,
+    el("p", { class: "muted small", text: "The sender name and avatar Chat shows are fixed by the webhook itself; the display name is what /v1/identities reports." }),
+    avatarCard, heldBy, sibCard, actions);
+}
+
+// ------------------------------------------------------ room inspector ---
+function roomInspector(space) {
+  const r = state.rooms[space];
+  const idents = r.identities.map((n) => ({ n, i: state.identities[n] }));
+  const names = idents.map((x) => x.i.display).join(", ");
+  const none = !space;
+  view(el("h2", {}, roomLabel(space), " ", r.locked_by ? el("span", { class: "pill warn", text: "locked by " + r.locked_by }) : null),
+    none ? el("div", { class: "callout warn", text: "These identities have no space recorded. They cannot route inbound and are not covered by any inbound_locked app's lock. Replacing an identity's webhook records its room." })
+      : el("p", { class: "muted", text: "The gateway knows this Chat room only by its id, derived from webhook URLs. Posting here: " + (names || "no identity") + "." }),
+    el("div", { class: "card" }, el("h3", { text: "Identities posting here" }),
+      idents.length ? idents.map(({ n, i }) => el("p", {}, identityDot(i), avatarMark(i.avatar, 16), el("a", { href: hrefFor("identity", n), text: n }), " ",
+        el("span", { class: "muted small", text: i.display + " · held by " + (holders(n).join(", ") || "no app") }))) : el("p", { class: "muted", text: "None." })),
+    el("div", { class: "card" }, el("h3", { text: "Apps posting here" }),
+      r.posting_apps.length ? el("p", {}, r.posting_apps.map((id) => [el("a", { href: hrefFor("app", id), text: id }), " "])) : el("p", { class: "muted", text: "No app posts here." })),
+    none ? null : el("div", { class: "card" }, el("h3", { text: "Inbound" }),
+      el("p", { text: r.inbound_apps.length ? "Received by " + r.inbound_apps.join(", ") + " — every message and card interaction here."
+        : "No app receives inbound from this room; its events are counted as suppressed and never stored." }),
+      r.locked_by ? el("div", { class: "callout", text: "Locked by " + r.locked_by + " (inbound_locked). The console refuses, in this room: granting these identities to another inbound app, replacing their webhooks, and changing or deleting " + r.locked_by + ". Those are registry.yaml edits on the box, then Registry › Reload from disk." }) : null));
 }
 
 async function deleteIdentity(name) {
-  const typed = await typedConfirm("Delete identity " + name + "?", name);
+  const typed = await typedConfirm({ title: "Delete identity " + name + "?", intro: "", expected: name, verb: "Delete identity", tone: "danger" });
   if (typed === null) return;
-  try { await write("POST", "/admin/api/identities/" + encodeURIComponent(name) + "/delete", { confirm_name: typed }); toast("Deleted " + name); board(); }
+  try { await write("POST", "/admin/api/identities/" + encodeURIComponent(name) + "/delete", { confirm_name: typed }); toast("Deleted " + name); navigate(hrefFor("board")); }
   catch (e) { fail(e); }
 }
 
@@ -409,11 +1292,7 @@ function copyKey(key, box) {
 }
 function selectBox(box) {
   // The clipboard API needs a secure context; a plain-LAN page selects instead.
-  const range = document.createRange();
-  range.selectNodeContents(box);
-  const sel = window.getSelection();
-  sel.removeAllRanges(); sel.addRange(range);
-  toast("Key selected — press Ctrl+C (or ⌘C) to copy.");
+  selectField(box, "Key selected — press Ctrl+C (or ⌘C) to copy.");
 }
 
 function reveal(r) {
@@ -422,26 +1301,28 @@ function reveal(r) {
   const curl = "printf 'url = \"%s\"\\nheader = \"Authorization: Bearer %s\"\\nheader = \"Content-Type: application/json\"\\ndata = \"%s\"\\n' \\\n  \"" + base + "/v1/notify\" \"$CHAT_GATEWAY_API_KEY\" '{\\\"severity\\\":\\\"info\\\",\\\"title\\\":\\\"hello\\\"}' \\\n  | curl --config -";
   const py = "from chat_gateway.client import GatewayClient\nimport os\ngw = GatewayClient(\"" + base + "\", api_key=os.environ[\"CHAT_GATEWAY_API_KEY\"])\ngw.notify(\"info\", \"hello\")";
   const mcp = JSON.stringify({ mcpServers: { "chat-gateway": { type: "http", url: base + "/mcp", headers: { Authorization: "Bearer ${CHAT_GATEWAY_API_KEY}" } } } }, null, 2);
-  const keyBox = el("div", { class: "secret", text: key });
+  const keyBox = el("input", { class: "secret", readonly: true, value: key, "aria-label": "API key", autocomplete: "off" });
   const result = el("p", { role: "status" });
   view(
     el("h2", { text: "API key for " + r.app_id }),
     el("p", { class: "warn", text: "This is the only time this key is shown. Copy it into the consuming app's secret store now." }),
     keyBox,
-    el("button", { type: "button", text: "Copy key", on: { click: () => copyKey(key, keyBox) } }),
+    el("p", {}, el("button", { type: "button", class: "primary", text: "Select key", on: { click: () => selectBox(keyBox) } }), " ",
+      el("button", { type: "button", text: window.isSecureContext ? "Copy key" : "Copy — selects on HTTP", on: { click: () => copyKey(key, keyBox) } })),
     r.shadows_env_file ? el("p", { class: "warn", text: "The OLD value of " + r.key_env + " is still in the read-only .env. It is inert now, but would revive if managed.env were lost — remove that line by hand." }) : null,
-    el("h3", { text: "Connect" }),
-    el("p", {}, "Gateway URL: ", el("code", { text: base }), " · env var in the consumer: ", el("code", { text: "CHAT_GATEWAY_API_KEY" })),
-    el("h4", { text: "curl (key stays out of argv)" }), el("pre", { text: curl }),
-    el("h4", { text: "Python" }), el("pre", { text: py }),
-    // Only when the gateway serves /mcp (GATEWAY_ENABLE_MCP=1); otherwise this
-    // would be a working-looking config for a 404 (CG-90 final review).
-    state.mcp_enabled ? [el("h4", { text: "MCP client config" }), el("pre", { text: mcp })] : null,
+    el("details", {}, el("summary", { text: "Connect snippets" }),
+      el("p", {}, "Gateway URL: ", el("code", { text: base }), " · env var in the consumer: ", el("code", { text: "CHAT_GATEWAY_API_KEY" })),
+      el("h4", { text: "curl (key stays out of argv)" }), el("pre", { text: curl }),
+      el("h4", { text: "Python" }), el("pre", { text: py }),
+      // Only when the gateway serves /mcp (GATEWAY_ENABLE_MCP=1); otherwise this
+      // would be a working-looking config for a 404 (CG-90 final review).
+      state.mcp_enabled ? [el("h4", { text: "MCP client config" }), el("pre", { text: mcp })] : null),
     el("h3", { text: "Send test notification" }),
     el("p", { class: "muted", text: "202 enqueued is not delivery — this waits for the delivery log to say delivered or failed." }),
     el("button", { type: "button", class: "primary", text: "Send test", on: { click: () => testSend(key, result) } }),
     result,
-    el("p", {}, el("button", { type: "button", text: "Done", on: { click: board } })));
+    el("p", {}, el("button", { type: "button", class: "primary", text: "Done — I have stored the key", on: { click: () => navigate(r.app_id ? hrefFor("app", r.app_id) : hrefFor("board")) } })),
+    el("p", { class: "muted small", text: "Leave this page and the key is gone; rotate again to get a new one." }));
 }
 
 async function testSend(key, out) {
@@ -465,16 +1346,206 @@ async function testSend(key, out) {
   } catch (e) { out.className = "error"; out.textContent = e.message; }
 }
 
+// --------------------------------------------------------------- router ---
+// Routes live in the URL hash (nothing is stored). `#/reveal` is in-memory
+// only: reloading it lands on the "No key to show" card.
+let dirty = false; // set by an inspector with unsaved edits (Task 8)
+let shownHash = "#/";
+let ignoreHashChange = false;
+let dirtyTitle = DISCARD_CHANGES;
+function setDirty(v, title) { dirty = !!v; dirtyTitle = dirty && title ? title : DISCARD_CHANGES; }
+
+// The ONE normalisation of "which route is this": a page opened with no hash
+// is the board. render(), navigate() and the hashchange handler all use it.
+function routeKey(hash) { return hash || "#/"; }
+// The ONE builder of route hashes; ids are encoded here and decoded in routeFromHash.
+function hrefFor(name, id) {
+  const e = encodeURIComponent(id == null ? "" : id);
+  switch (name) {
+    case "board": return "#/";
+    case "app": return "#/app/" + e;
+    case "identity": return "#/identity/" + e;
+    case "replace": return "#/identity/" + e + "/replace";
+    case "room": return "#/room/" + e;
+    case "new-app": return "#/new-app";
+    case "new-identity": return "#/new-identity";
+    case "reveal": return "#/reveal";
+    default: return "#/";
+  }
+}
+
+function routeFromHash() {
+  const raw = routeKey(window.location.hash).replace(/^#/, "");
+  const q = raw.indexOf("?");
+  const path = q < 0 ? raw : raw.slice(0, q);
+  // The query is a route's entry hint (`#/app/x?ungrant=name`), never state.
+  const query = new URLSearchParams(q < 0 ? "" : raw.slice(q + 1));
+  const r = (name, params) => ({ name, params, query });
+  const seg = path.split("/").filter(Boolean).map((x) => { try { return decodeURIComponent(x); } catch (_) { return x; } });
+  if (!seg.length) return r("board", {});
+  if (seg[0] === "app" && seg.length === 2) return r("app", { id: seg[1] });
+  if (seg[0] === "identity" && seg.length === 2) return r("identity", { id: seg[1] });
+  if (seg[0] === "identity" && seg.length === 3 && seg[2] === "replace") return r("replace", { id: seg[1] });
+  if (seg[0] === "room" && seg.length === 2) return r("room", { id: seg[1] });
+  if (seg[0] === "new-app" && seg.length === 1) return r("new-app", {});
+  if (seg[0] === "new-identity" && seg.length === 1) return r("new-identity", {});
+  if (seg[0] === "reveal" && seg.length === 1) return r("reveal", {});
+  return r("notfound", { kind: "view", id: path });
+}
+
+// Runs `fn` now when the page is clean; otherwise asks once and runs it only
+// if the operator chooses Discard.
+function guardNavigation(fn) {
+  if (!dirty) { fn(); return Promise.resolve(true); }
+  return discardConfirm(dirtyTitle).then((ok) => { if (ok) { setDirty(false); fn(); } return ok; });
+}
+function navigate(hash) {
+  return guardNavigation(() => { if (routeKey(window.location.hash) === routeKey(hash)) render(); else window.location.hash = hash; });
+}
+
+function setCrumbs(...parts) {
+  const nodes = [];
+  parts.forEach((p, i) => {
+    if (i) nodes.push(" › ");
+    nodes.push(p.href ? el("a", { href: p.href, text: p.text }) : p.text);
+  });
+  $("crumbs").replaceChildren(...toNodes(nodes));
+}
+const NAV_ROUTES = [["nav-board", "board"], ["nav-new-app", "new-app"], ["nav-new-identity", "new-identity"]];
+function setNav(name) {
+  for (const [id, n] of NAV_ROUTES) {
+    if (n === name) $(id).setAttribute("aria-current", "page"); else $(id).removeAttribute("aria-current");
+  }
+}
+
+function notFound(kind, id) {
+  setNav(null); setCrumbs({ text: "Unknown " + kind });
+  view(el("div", { class: "card" }, el("h2", { text: "No " + kind + " “" + id + "”" }),
+    el("p", {}, el("a", { href: hrefFor("board"), text: "Back to the board" }))));
+  return null;
+}
+
+// Called by every flow that mints a key: hold it in memory, go to #/reveal.
+// The server has already minted the key: edits are moot and the reveal must
+// never be blocked by the discard guard, so this bypasses guardNavigation.
+function showKey(r) {
+  revealData = r; setDirty(false);
+  if (routeKey(window.location.hash) === hrefFor("reveal")) render(); else window.location.hash = hrefFor("reveal");
+}
+function revealView() {
+  setNav(null);
+  if (!revealData) {
+    setCrumbs({ text: "Key" });
+    view(el("div", { class: "card" }, el("h2", { text: "No key to show" }),
+      el("p", { text: "A key is shown exactly once, at the moment it is minted. If you reloaded this page the key is gone — rotate again to get a new one." }),
+      el("p", {}, el("a", { href: hrefFor("board"), text: "Back to the board" }))));
+    return;
+  }
+  setCrumbs({ text: "App " + revealData.app_id, href: hrefFor("app", revealData.app_id) }, { text: "API key" });
+  reveal(revealData);
+}
+
+let lastRenderedHash = null;
+function render() {
+  shownHash = routeKey(window.location.hash);
+  if (!state) { view(loadError ? boardError(loadError) : boardLoading()); return; }
+  const { name, params, query } = routeFromHash();
+  if (name !== "reveal") revealData = null;
+  if (lastRenderedHash !== null && lastRenderedHash !== shownHash) for (const n of $("notices").querySelectorAll(".notice.alert")) n.remove();
+  lastRenderedHash = shownHash;
+  if (name !== "new-app" && name !== "new-identity") draft = null;
+  setCrumbs();
+  switch (name) {
+    case "board": setNav("board"); board(); break;
+    case "app": {
+      const a = (Object.hasOwn(state.apps, params.id) && state.apps[params.id]) || notFound("app", params.id);
+      if (a) { setNav(null); setCrumbs({ text: "App " + params.id }); appInspector(params.id, query); }
+      break;
+    }
+    case "identity": {
+      const i = (Object.hasOwn(state.identities, params.id) && state.identities[params.id]) || notFound("identity", params.id);
+      if (i) { setNav(null); setCrumbs({ text: "Identity " + params.id }); identityInspector(params.id); }
+      break;
+    }
+    case "replace": {
+      const i = (Object.hasOwn(state.identities, params.id) && state.identities[params.id]) || notFound("identity", params.id);
+      if (i) {
+        setNav(null);
+        setCrumbs({ text: "Identity " + params.id, href: hrefFor("identity", params.id) }, { text: "Replace webhook" });
+        replaceWebhook(params.id);
+      }
+      break;
+    }
+    case "room": {
+      const key = params.id === "none" ? "" : "spaces/" + params.id;
+      const r = (Object.hasOwn(state.rooms || {}, key) && state.rooms[key]) || notFound("room", params.id);
+      if (r) { setNav(null); setCrumbs({ text: "Room " + params.id }); roomInspector(key); }
+      break;
+    }
+    case "new-app": setNav("new-app"); setCrumbs({ text: "New app" }); newApp(); break;
+    case "new-identity": setNav("new-identity"); setCrumbs({ text: "New identity" }); newIdentity(query); break;
+    case "reveal": revealView(); break;
+    default: notFound(params.kind, params.id);
+  }
+}
+
+// Back/Forward while dirty: the hash has already moved, so put it back, ask,
+// and only on Discard go where the operator was headed.
+window.addEventListener("hashchange", () => {
+  if (ignoreHashChange) { ignoreHashChange = false; return; }
+  const target = routeKey(window.location.hash);
+  if (target === shownHash) return;
+  if (!dirty || !state) { render(); return; }
+  ignoreHashChange = true;
+  window.location.hash = shownHash;
+  discardConfirm(dirtyTitle).then((ok) => { if (ok) { setDirty(false); window.location.hash = target; } });
+});
+
+// --------------------------------------------------------------- notices ---
+// Successes are role="status" and dismiss themselves after 6 s; refusals are
+// role="alert" and stay until dismissed. Refusals also render at the control.
+function notify(msg, opts) {
+  const kind = opts && opts.kind === "alert" ? "alert" : "status";
+  const dismiss = el("button", { type: "button", "aria-label": "Dismiss", text: "×" });
+  const n = el("div", { class: "notice " + kind, role: kind }, el("p", { text: msg }), dismiss);
+  dismiss.addEventListener("click", () => n.remove());
+  $("notices").append(...toNodes([n]));
+  if (kind === "status") setTimeout(() => n.remove(), 6000);
+  return n;
+}
+
+// -------------------------------------------------------------- keyboard ---
+function onKey(ev) {
+  if (document.querySelector("dialog[open]")) return; // dialogs own Escape (cancel) natively
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const t = ev.target;
+  const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
+  if (ev.key === "Escape") {
+    if (routeFromHash().name === "reveal") return; // the key's only way out is Done
+    if (!$("console").hidden) { ev.preventDefault(); navigate(hrefFor("board")); }
+  } else if (ev.key === "/" && !typing && !$("console").hidden) {
+    ev.preventDefault(); guardNavigation(() => $("filter").focus());
+  } else if (ev.key === "?" && !typing && !$("console").hidden) {
+    ev.preventDefault(); shortcutsDialog();
+  }
+}
+
 // --------------------------------------------------------------- boot ---
 // Ask the API before asking the human: in open mode the state call answers
 // with no header and the sign-in form never appears; in key mode it is a 401
 // (which does not count toward the login rate limit) and the form is shown.
 async function probePosture() {
+  view(boardLoading()); // paints once the console shows, if the probe is slow
   try {
     await refresh();
+    loadError = null;
     $("console").hidden = false; $("auth-mode").hidden = false;
-    board();
+    render(); // resume the hash the page was opened on
   } catch (e) {
+    // CG-91's shell owns a failed probe: the login section carries the message.
+    // The board's error-on-load card is rendered beneath it for the Retry path.
+    loadError = e.status === 401 ? null : e;
+    render();
     $("login").hidden = false;
     $("login-error").textContent = e.status === 401 ? "" : e.message;
   }
@@ -490,16 +1561,29 @@ document.addEventListener("DOMContentLoaded", () => {
       await refresh();
       $("login-error").textContent = "";
       $("login").hidden = true; $("console").hidden = false;
-      board();
+      render();
     } catch (e) { adminKey = ""; $("login-error").textContent = e.message; }
   });
-  $("nav-board").addEventListener("click", async () => {
-    try { await refresh(); toast(""); board(); } catch (e) { fail(e); }
+  document.addEventListener("keydown", onKey);
+  $("nav-board").addEventListener("click", () => navigate(hrefFor("board")));
+  $("nav-new-app").addEventListener("click", () => navigate(hrefFor("new-app")));
+  $("nav-new-identity").addEventListener("click", () => navigate(hrefFor("new-identity")));
+  $("filter").addEventListener("input", () => {
+    const typed = $("filter").value;
+    if (routeFromHash().name === "board") { filterText = typed; render(); return; }
+    // Typing from another view leaves it: a dirty form asks first and, if the
+    // operator keeps editing, the filter box goes back to what it held.
+    guardNavigation(() => { filterText = typed; navigate(hrefFor("board")); }).then((ok) => { if (!ok) $("filter").value = filterText; });
   });
-  $("nav-new-app").addEventListener("click", () => { toast(""); newApp(); });
-  $("nav-new-identity").addEventListener("click", () => { toast(""); newIdentity(); });
-  $("nav-reload").addEventListener("click", async () => {
-    try { await api("POST", "/admin/api/reload", {}); await refresh(); board(); toast("Reloaded from disk."); }
-    catch (e) { fail(e); }
+  const closeMenu = () => { $("registry-menu").open = false; };
+  $("menu-refresh").addEventListener("click", async () => {
+    closeMenu();
+    if (await reloadView()) notify("View refreshed.");
   });
+  $("menu-reload").addEventListener("click", async () => {
+    closeMenu();
+    try { await api("POST", "/admin/api/reload", {}); } catch (e) { fail(e); return; } // a refused reload is a notice, the registry is unchanged
+    if (await reloadView()) notify("Reloaded from disk.");
+  });
+  $("menu-shortcuts").addEventListener("click", () => { closeMenu(); shortcutsDialog(); });
 });

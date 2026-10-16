@@ -104,7 +104,7 @@ opt-in admin console (CG-90): `admin` (the `/admin` router), `admin_audit`,
 Google Cloud setup + integration guide. Tests: `python3 -m pytest` on POSIX,
 `python -m pytest` on the Windows dev box (its msys `python3` has no pytest;
 `python` is 3.13.7) — offline. Windows dev box: 680 passed, 7 skipped
-(2026-10-15); WSL venv, Python 3.13: 721 passed, 0 skipped (2026-10-16, CG-91) —
+(2026-10-15); WSL venv, Python 3.13: 792 passed, 0 skipped (2026-10-16, CG-92) —
 different machines, not a delta.
 
 ## Current status (2026-07-31)
@@ -793,3 +793,10 @@ different machines, not a delta.
   `admin.cross_origin_refused` to `/healthz`, neither degrading (rows in the
   integration guide). Merged is not in effect: the box rollout is an operator
   action.
+- **Admin console redrawn as a grant matrix, since CG-92 (2026-10-16).** Apps x
+  identities grouped by room, with app, identity and room inspectors and an
+  avatar picker. User decisions D1-D6 are recorded in the spec, which is their
+  one home: `docs/superpowers/specs/2026-10-16-admin-console-ux-design.md`. The
+  API change is additive (`rooms`, `inbox_pending`, refusal `category`/`reasons`,
+  identity `avatar`). No hard rule changed and no ledger flag moved. Merged is
+  not in effect until the box is rebuilt.

@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -40,9 +41,49 @@ RESERVED_APP_ID_PREFIX = "_"
 # to that tenant, and the console's "a tenant key is 401 here" would invert.
 ADMIN_KEY_ENV = "CHAT_GATEWAY_ADMIN_KEY"
 
+# CG-92. The bundled avatar icons ship inside the package so the admin page can
+# render them same-origin; the PUBLIC copies Google fetches stay pinned at
+# assets/avatars/png/ (published URLs must not move). Two homes, one guard:
+# tests/test_avatars.py asserts the two directories are byte-identical.
+AVATAR_DIR = Path(__file__).parent / "static" / "admin" / "avatars"
+AVATAR_NAMES: tuple[str, ...] = tuple(sorted(p.stem for p in AVATAR_DIR.glob("*.png")))
+AVATAR_RAW_BASE = (
+    "https://raw.githubusercontent.com/mmackelprang/chat-gateway/main/assets/avatars/png/"
+)
+
 
 class RegistryError(ValueError):
     pass
+
+
+def normalize_avatar(raw) -> str | None:
+    """An avatar is a bundled icon NAME or a public https URL — nothing else.
+
+    EXACT match, never coerced (hard rule #7's treatment of a written value):
+    `Alert`, `alert.png` and `http://…` are refused rather than repaired, because
+    a repaired value is one the file does not say. The value is a name or a public
+    URL, never a secret (hard rule #2). The gateway cannot set a webhook's icon —
+    Chat fixes it at webhook creation — so this only RECORDS the choice for the
+    console to show.
+
+    A custom URL equal to a bundled icon's raw URL maps back to the bundled name,
+    so the board never shows a neutral mark for an icon it actually has.
+    """
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, str):
+        if raw in AVATAR_NAMES:
+            return raw
+        if raw.startswith(AVATAR_RAW_BASE) and raw.endswith(".png"):
+            name = raw[len(AVATAR_RAW_BASE):-len(".png")]
+            if name in AVATAR_NAMES:
+                return name
+        if raw.startswith("https://"):
+            parsed = urlparse(raw)
+            if (parsed.scheme == "https" and parsed.netloc
+                    and not any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in raw)):
+                return raw
+    raise ValueError(f"avatar {raw!r} must be a bundled icon name or an https URL")
 
 
 def _require_id_str(kind: str, value) -> None:
@@ -140,6 +181,7 @@ class Identity:
     mode: str = "webhook"
     webhook_url_env: str | None = None
     space: str = ""
+    avatar: str | None = None
 
     def webhook_url(self) -> str:
         if not self.webhook_url_env:
@@ -346,6 +388,12 @@ def load_registry(path: str | Path) -> Registry:
             webhook_url_env=spec.get("webhook_url_env"),
             space=spec.get("space") or "",
         )
+        try:
+            ident.avatar = normalize_avatar(spec.get("avatar"))
+        except ValueError as exc:
+            raise RegistryError(
+                f"identity {name!r}: avatar must be a bundled icon name or an https URL"
+            ) from exc
         if ident.channel not in CHANNELS:
             raise RegistryError(f"identity {name!r}: unknown channel {ident.channel!r}")
         if ident.mode not in MODES:

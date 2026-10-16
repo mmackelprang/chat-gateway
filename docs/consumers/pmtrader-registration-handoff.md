@@ -158,6 +158,7 @@ numbers somebody typed once.
 | `channel` | str | `google_chat` | |
 | `mode` | str | `webhook` | tier 1. `aitrader`'s two identities are both `webhook` — no Google Cloud project, no service account |
 | `webhook_url_env` | str \| None | `None` | the **env-var NAME**. The URL embeds `key`+`token` and is a secret (hard rule #2) |
+| `avatar` | str \| None | `None` | optional (CG-92): a bundled icon name or an `https://` URL. Never a secret |
 | `space` | str | `""` | `spaces/…` — a posting target, **not** a membership record |
 
 ### `apps:` — **senders.** Who may send, and where they may send.

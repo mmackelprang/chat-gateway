@@ -46,6 +46,26 @@ _DEFAULT_CATEGORY = {
 }
 
 
+#: Every fixed phrase a refusal may carry, for the page to route on and for
+#: `/healthz`. The explicit ones are named where the store or the router raises
+#: them; the two `failed: …` 500 phrases append an exception TYPE and are not
+#: listed (they are never a 4xx a page routes on). Literals only — a category
+#: reaches an unauthenticated surface (hard rule #2).
+CATEGORIES: tuple[str, ...] = (
+    *_DEFAULT_CATEGORY.values(),
+    "refused: edited outside the console",
+    "refused: already exists",
+    "refused: registry unparseable",
+    "refused: registry validation",
+    "refused: parser disagreement",
+    "refused: secret value",
+    "refused: env name in use",
+    "refused: unpolled inbound",
+    "refused: still granted",
+    "refused: secret in process env",
+)
+
+
 def category_for(status: int) -> str:
     return _DEFAULT_CATEGORY.get(status, "failed" if status >= 500 else "refused")
 
@@ -55,10 +75,12 @@ class StoreError(Exception):
     ids and env-var NAMES only — never a value (hard rule #2). `category` is
     the short authored phrase `/healthz` publishes instead of the message."""
 
-    def __init__(self, status: int, message: str, category: str | None = None):
+    def __init__(self, status: int, message: str, category: str | None = None,
+                 reasons: list[str] | None = None):
         super().__init__(message)
         self.status = status
         self.category = category or category_for(status)
+        self.reasons = reasons
 
 
 def flow_seq(items: list[str]) -> CommentedSeq:

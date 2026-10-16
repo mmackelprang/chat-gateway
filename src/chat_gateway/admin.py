@@ -28,7 +28,8 @@ from .auth import mint_key
 from .delivery import DeliveryLog
 from .inbox import Inbox
 from .managed_secrets import ManagedSecrets
-from .registry import ADMIN_KEY_ENV, SEVERITIES, App, RegistryError
+from .registry import (ADMIN_KEY_ENV, AVATAR_DIR, AVATAR_NAMES, SEVERITIES, App, RegistryError,
+                       normalize_avatar)
 from .registry_holder import RegistryHolder
 from .registry_store import RegistryStore, StoreError, category_for, flow_seq
 
@@ -100,6 +101,20 @@ def parse_webhook_space(url: str) -> str:
         raise ValueError("the webhook URL is missing its key or token parameter — "
                          "copy the whole URL from the Chat space's webhook settings")
     return f"spaces/{m.group(1)}"
+
+
+class AdminRefusal(HTTPException):
+    """An HTTPException that carries sibling keys beside `detail`: FastAPI's own
+    class has nowhere to put them. `service._admin_refusal_handler` renders
+    `{"detail", "category"}` and `"reasons"` only when non-empty. `category` is
+    a fixed authored phrase (never interpolated); `reasons` names ids and
+    widening kinds only."""
+
+    def __init__(self, status_code: int, detail: str, category: str,
+                 reasons: list[str] | None = None):
+        super().__init__(status_code, detail)
+        self.category = category
+        self.reasons = reasons
 
 
 def widening(old: App | None, new, spaces: dict[str, str] | None = None) -> list[str]:
@@ -201,6 +216,35 @@ def locked_space_violations(apps: dict[str, _AppShape],
     return out
 
 
+def rooms_for(reg) -> dict[str, dict]:
+    """The registry grouped by Chat space ("room"), derived with the enforcement's
+    own rules so the page never re-derives rooms or locks (D2: this is the one
+    home). Keys: space ids ascending, then "" (identities with no space) last.
+    `locked_by` follows `locked_space_violations`'s first loop: first
+    `inbound_locked` app by sorted id holding an identity homed there. Names and
+    ids only, never a URL or value."""
+    spaces = {i.space for i in reg.identities.values() if i.space}
+    locked: dict[str, str] = {}
+    for app_id, app in sorted(reg.apps.items()):
+        if app.inbound_locked:
+            for n in app.identities:
+                ident = reg.identities.get(n)
+                if ident and ident.space:
+                    locked.setdefault(ident.space, app_id)
+    out: dict[str, dict] = {}
+    for space in [*sorted(spaces), ""]:
+        names = sorted(i.name for i in reg.identities.values() if (i.space or "") == space)
+        out[space] = {
+            "identities": names,
+            "posting_apps": sorted(a for a, app in reg.apps.items()
+                                   if any(n in names for n in app.identities)),
+            "inbound_apps": [a for a in reg.apps_for_space(space)
+                             if reg.apps[a].allow_inbound],
+            "locked_by": locked.get(space) if space else None,
+        }
+    return out
+
+
 def _section(tree: CommentedMap, section: str) -> CommentedMap:
     """`tree[section]`, created if the file left it empty (`apps:` with no body
     loads as None — `load_registry` accepts that, so the console must too)."""
@@ -284,10 +328,15 @@ class IdentityCreate(_Guarded):
     name: str = ""
     display: str = ""
     webhook_url: str = ""
+    avatar: str = ""        # "" = none; validated by `normalize_avatar` (hard rule #7)
 
 
-class DisplayIn(_Guarded):
-    display: str = ""
+class IdentityUpdate(_Guarded):
+    # Absent = unchanged, for both. `display == ""` is refused; `avatar == ""`
+    # clears it. No field is required, so pydantic never builds a missing-field
+    # 422 that echoes the request body (hard rule #2 — the avatar may be a URL).
+    display: str | None = None
+    avatar: str | None = None
 
 
 class WebhookIn(_Guarded):
@@ -360,17 +409,25 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
                                          "mint a separate admin key (hard rule #4)")
         return host
 
-    def refuse(status: int, message: str, category: str | None = None) -> HTTPException:
+    def refuse(status: int, message: str, category: str | None = None) -> AdminRefusal:
         # The store counts it and keeps the CATEGORY only (I2); the message goes
         # to the authenticated caller and nowhere else.
-        store.note_refusal(category or category_for(status))
-        return HTTPException(status, message)
+        category = category or category_for(status)
+        store.note_refusal(category)
+        return AdminRefusal(status, message, category)
+
+    def check_avatar(raw: str) -> str | None:
+        try:
+            return normalize_avatar(raw)
+        except ValueError as exc:  # the message names the rule, never the value
+            raise refuse(422, "avatar must be a bundled icon name or an https URL") from exc
 
     def run(mutate, secret_changes=None, *, sha=None):
         try:
             return store.apply(mutate, secrets=secret_changes, expect_sha256=sha)
         except StoreError as exc:
-            raise HTTPException(exc.status, str(exc)) from exc
+            raise AdminRefusal(exc.status, str(exc), exc.category or category_for(exc.status),
+                               exc.reasons) from exc
         except ValueError as exc:  # ManagedSecrets value refusal — names only
             raise refuse(422, str(exc), "refused: secret value") from exc
 
@@ -382,7 +439,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
     def managed_name(name: str) -> None:
         if secrets.blocked(name):
             raise refuse(409, f"{name} is set in the gateway's process environment, which "
-                              "overrides managed.env at boot — change it there, not here")
+                              "overrides managed.env at boot — change it there, not here",
+                         "refused: secret in process env")
 
     def claim_env_name(name: str) -> None:
         """Refuse a DERIVED env-var name somebody already uses (CG-90 final
@@ -451,7 +509,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
                                   "console action. " + RULE_6)
         if body.confirm_app_id != app_id:
             raise StoreError(428, f"widening inbound ({', '.join(reasons)}) requires typing "
-                                  f"the app id to confirm. {RULE_6}")
+                                  f"the app id to confirm. {RULE_6}",
+                             reasons=list(reasons))
         return reasons
 
     def guard_locked_spaces(after: tuple[dict, dict], touched: set[str]) -> None:
@@ -541,6 +600,14 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         return FileResponse(STATIC_DIR / name, media_type=static_files[name],
                             headers=page_headers)
 
+    @router.get("/static/avatars/{name}.png", include_in_schema=False)
+    def avatar_icon(name: str):
+        # Matched against the packaged set, never joined onto a path.
+        if name not in AVATAR_NAMES:
+            raise HTTPException(404, "not found")
+        return FileResponse(AVATAR_DIR / f"{name}.png", media_type="image/png",
+                            headers=page_headers)
+
     # -- read ------------------------------------------------------------------
     @router.get("/api/state", dependencies=[Depends(require_admin)])
     def state():
@@ -557,16 +624,20 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
                     "key_env": a.key_env, "key_configured": a.key_configured(),
                     "key_source": secrets.source_of(a.key_env),
                     "recent_deliveries": delivery_log.query(a.app_id, 5),
+                    "inbox_pending": (inbox.pending_counts().get(a.app_id, 0)
+                                      if inbox is not None else 0),
                 } for a in sorted(reg.apps.values(), key=lambda a: a.app_id)
             },
             "identities": {
                 i.name: {
-                    "display": i.display, "mode": i.mode, "space": i.space,
-                    "webhook_url_env": i.webhook_url_env, "env_resolved": i.env_resolved(),
+                    "display": i.display, "avatar": i.avatar, "mode": i.mode,
+                    "space": i.space, "webhook_url_env": i.webhook_url_env, "env_resolved": i.env_resolved(),
                     "secret_source": (secrets.source_of(i.webhook_url_env)
                                       if i.webhook_url_env else None),
                 } for i in sorted(reg.identities.values(), key=lambda i: i.name)
             },
+            "rooms": rooms_for(reg),
+            "avatars": list(AVATAR_NAMES),
             "shadowed_env_names": secrets.shadowed(),
             "inbound_defaulted": list(reg.inbound_defaulted),
             # The reveal panel offers an MCP client config only when /mcp is
@@ -579,7 +650,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
     def create_app_entry(body: AppCreate, client: str = Depends(require_admin)):
         check_id(body.app_id, "app")
         if body.app_id in registry.apps:
-            raise refuse(409, f"app {body.app_id!r} already exists")
+            raise refuse(409, f"app {body.app_id!r} already exists", "refused: already exists")
         check_refs(body)
         key_env = env_name(KEY_PREFIX, body.app_id)
         managed_name(key_env)
@@ -697,11 +768,12 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             raise refuse(422, "name, display and webhook_url are all required")
         check_id(body.name, "identity")
         if body.name in registry.identities:
-            raise refuse(409, f"identity {body.name!r} already exists")
+            raise refuse(409, f"identity {body.name!r} already exists", "refused: already exists")
         try:
             space = parse_webhook_space(body.webhook_url)
         except ValueError as exc:
             raise refuse(422, str(exc)) from exc
+        avatar = check_avatar(body.avatar) if body.avatar else None
         url_env = env_name(WEBHOOK_PREFIX, body.name)
         managed_name(url_env)
 
@@ -712,6 +784,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             claim_env_name(url_env)
             m = CommentedMap()
             m["display"] = body.display
+            if avatar:
+                m["avatar"] = avatar
             m["channel"] = "google_chat"
             m["mode"] = "webhook"
             m["webhook_url_env"] = url_env
@@ -719,8 +793,11 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
             identities[body.name] = m
 
         run(mutate, {url_env: body.webhook_url.strip()}, sha=body.registry_sha256)
-        audit.record("identity_created", body.name, ["display", "webhook_url_env", "space"], client=client)
-        return {"name": body.name, "webhook_url_env": url_env, "space": space}
+        audit.record("identity_created", body.name,
+                     ["display", *(["avatar"] if avatar else []), "webhook_url_env", "space"],
+                     client=client)
+        return {"name": body.name, "webhook_url_env": url_env, "space": space,
+                "avatar": avatar}
 
     def get_identity(name: str):
         ident = registry.identities.get(name)
@@ -729,24 +806,39 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         return ident
 
     @router.put("/api/identities/{name}")
-    def update_identity(name: str, body: DisplayIn, client: str = Depends(require_admin)):
+    def update_identity(name: str, body: IdentityUpdate, client: str = Depends(require_admin)):
         get_identity(name)
-        if not body.display.strip():
+        if body.display is None and body.avatar is None:
+            raise refuse(422, "nothing to change: send display and/or avatar")
+        if body.display is not None and not body.display.strip():
             # `load_registry` would accept "" and render a blank sender name.
             raise refuse(422, "display is required")
+        avatar = check_avatar(body.avatar) if body.avatar else None
+        fields: list[str] = []
+        if body.display is not None:
+            fields.append("display")
+        if body.avatar is not None:
+            fields.append("avatar")
 
         def mutate(tree):
-            _node(tree, "identities", name, "identity")["display"] = body.display
+            node = _node(tree, "identities", name, "identity")
+            if body.display is not None:
+                node["display"] = body.display
+            if body.avatar is not None:
+                if avatar:
+                    node["avatar"] = avatar
+                else:
+                    node.pop("avatar", None)
 
         run(mutate, sha=body.registry_sha256)
-        audit.record("identity_updated", name, ["display"], client=client)
+        audit.record("identity_updated", name, fields, client=client)
         return {"name": name}
 
     @router.post("/api/identities/{name}/webhook")
     def replace_webhook(name: str, body: WebhookIn, client: str = Depends(require_admin)):
         ident = get_identity(name)
         if ident.mode != "webhook" or not ident.webhook_url_env:
-            raise refuse(409, f"identity {name!r} is not a webhook identity")
+            raise refuse(409, f"identity {name!r} is not a webhook identity", "refused: already exists")
         try:
             space = parse_webhook_space(body.webhook_url)
         except ValueError as exc:
@@ -784,7 +876,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
                     raise StoreError(428, f"identity {name!r} is held by inbound app(s) "
                                           f"{', '.join(movers)}: moving it to another space "
                                           "widens what they receive — type the identity name "
-                                          f"to confirm. {RULE_6}")
+                                          f"to confirm. {RULE_6}", reasons=movers)
                 widened.extend(movers)
             node["space"] = space
 
@@ -802,7 +894,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         users = sorted(a.app_id for a in registry.apps.values() if name in a.identities)
         if users:
             raise refuse(409, f"identity {name!r} is still granted to: {', '.join(users)} — "
-                              "remove it from those apps first")
+                              "remove it from those apps first",
+                         "refused: still granted")
 
         def mutate(tree):
             _node(tree, "identities", name, "identity")
@@ -820,7 +913,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         try:
             store.reload()
         except StoreError as exc:
-            raise HTTPException(exc.status, str(exc)) from exc
+            raise AdminRefusal(exc.status, str(exc), exc.category or category_for(exc.status),
+                               exc.reasons) from exc
         audit.record("reloaded_from_disk", "registry.yaml", [], client=client)
         return {"registry_sha256": store.sha256}
 

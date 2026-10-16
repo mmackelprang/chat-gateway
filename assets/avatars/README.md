@@ -44,3 +44,7 @@ Edit the `ICONS` table in `build.py` and run `python assets/avatars/build.py`.
 It rewrites `svg/`, `png/`, `preview.png` and this README. It needs PyMuPDF
 and Pillow, which are build-time tools only. Keep glyphs within about 70px of
 the centre, because Chat crops avatars to a circle.
+
+The PNGs are written to a second place too, `src/chat_gateway/static/admin/avatars/`,
+so the admin console can show them same-origin. `png/` stays the published home
+(the URLs above must not move); `tests/test_avatars.py` fails if the two differ.
