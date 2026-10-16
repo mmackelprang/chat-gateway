@@ -164,6 +164,7 @@ def test_guard_accepts_same_origin_and_non_browser_requests(headers):
     ({"sec-fetch-site": "same-site"}, "Sec-Fetch-Site"),
     ({"origin": "http://evil.example", "host": "gw.local:8085"}, "Origin"),
     ({"origin": "null", "host": "gw.local:8085"}, "Origin"),
+    ({"origin": "null"}, "Origin"),
     ({"origin": "http://gw.local:9000", "host": "gw.local:8085"}, "Origin"),
 ])
 def test_guard_refuses_cross_origin_evidence_and_never_echoes_it(headers, word):
@@ -175,9 +176,32 @@ def test_key_mode_refuses_a_valid_bearer_from_a_foreign_origin(gw):
     client, holder, wiring, tmp = gw
     r = client.get("/admin/api/state", headers={**AUTH, "Origin": "http://evil.example"})
     assert r.status_code == 403 and "evil" not in r.text
-    assert client.get("/healthz").json()["admin"]["last_write_error"] == "refused: cross-origin"
+    admin = client.get("/healthz").json()["admin"]
+    assert admin["cross_origin_refused"] == 1
+    # The guard must not touch the store's slot: an unauthenticated host would
+    # otherwise be able to mask a real store failure (latest-wins).
+    assert admin["last_write_error"] is None and admin["refused"] == 0
     r = client.post("/admin/api/reload", headers={**AUTH, "Sec-Fetch-Site": "cross-site"}, json={})
     assert r.status_code == 403
+    admin = client.get("/healthz").json()["admin"]
+    assert admin["cross_origin_refused"] == 2
+    assert admin["last_write_error"] is None and admin["refused"] == 0
+
+
+def test_guard_runs_before_the_limiter_and_is_not_a_failed_login(gw):
+    client, holder, wiring, tmp = gw
+    bad = {"Authorization": "Bearer wrong"}
+    foreign = {**AUTH, "Origin": "http://evil.example"}
+    # Four failures, then cross-origin refusals: if those counted, the fifth
+    # wrong bearer below would already be locked out.
+    assert [client.get("/admin/api/state", headers=bad).status_code for _ in range(4)] == [401] * 4
+    assert [client.get("/admin/api/state", headers=foreign).status_code for _ in range(3)] == [403] * 3
+    assert client.get("/admin/api/state", headers=bad).status_code == 401   # 5th real failure
+    # Now locked out: a same-origin request is 429, a cross-origin one is
+    # still the guard's 403 (it runs first), and neither changes the lockout.
+    assert client.get("/admin/api/state", headers=AUTH).status_code == 429
+    assert client.get("/admin/api/state", headers=foreign).status_code == 403
+    assert client.get("/admin/api/state", headers=bad).status_code == 429
 
 
 # -- auth -------------------------------------------------------------------

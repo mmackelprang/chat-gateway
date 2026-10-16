@@ -63,18 +63,21 @@ def cross_origin_reason(headers: Mapping[str, str]) -> str | None:
     """Why this request looks cross-origin, or None to accept it (CG-91).
 
     Refuses a browser-declared `Sec-Fetch-Site` other than same-origin/none, or
-    an `Origin` whose host:port differs from `Host` (`Origin: null` parses to an
-    empty netloc, so it fails too). A non-browser client sends neither header
-    and is accepted by design. Scheme is deliberately not compared, so a
-    TLS-terminating proxy does not break the page. The messages name the header
-    and never echo its value (hard rule #2).
+    an `Origin` whose host:port differs from `Host`; `Origin: null` (an empty
+    netloc) is refused whatever `Host` says. A non-browser client sends neither
+    header and is accepted by design. Scheme is deliberately not compared, so a
+    TLS-terminating proxy that preserves `Host` does not break the page. Keys
+    are expected lowercased, as Starlette's `Headers` provides. The messages
+    name the header and never echo its value (hard rule #2).
     """
     site = headers.get("sec-fetch-site")
     if site is not None and site.lower() not in ("same-origin", "none"):
         return "Sec-Fetch-Site is not same-origin"
     origin = headers.get("origin")
-    if origin is not None and urlparse(origin).netloc.lower() != headers.get("host", "").lower():
-        return "Origin does not match Host"
+    if origin is not None:
+        netloc = urlparse(origin).netloc.lower()
+        if not netloc or netloc != headers.get("host", "").lower():
+            return "Origin does not match Host"
     return None
 
 
@@ -212,10 +215,16 @@ class AdminWiring:
     secrets: ManagedSecrets
     audit: AdminAudit
     auth: str = AUTH_KEY
+    #: Requests refused by the cross-origin guard. A bare counter, kept OFF the
+    #: store's `last_write_error` on purpose: the guard fires before any
+    #: credential check, so an unauthenticated host must not be able to become
+    #: the latest writer of that field and mask a real store failure.
+    cross_origin_refused: int = 0
 
     def health(self) -> dict:
         return {"enabled": True, "auth": self.auth, "writes": self.store.writes,
                 "refused": self.store.refused,
+                "cross_origin_refused": self.cross_origin_refused,
                 # An authored CATEGORY, never a message: this lands on the
                 # unauthenticated /healthz (fix round I2, hard rule #2).
                 "last_write_error": self.store.last_write_error,
@@ -315,7 +324,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         # logic: a valid bearer from a foreign page is still a forged request.
         reason = cross_origin_reason(request.headers)
         if reason:
-            raise refuse(403, reason, "refused: cross-origin")
+            wiring.cross_origin_refused += 1
+            raise HTTPException(403, reason)
         host = request.client.host if request.client else "?"
         limiter.check(host)
         # Read per request, not at mount: rotating the admin key is an env
