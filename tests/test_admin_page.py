@@ -75,13 +75,12 @@ def test_api_responses_are_no_store(gw):
     assert client.get("/admin/api/state", headers=AUTH).headers["cache-control"] == "no-store"
 
 
-def test_avatar_gallery_is_a_link_and_nothing_is_loaded_cross_origin():
-    """The webhook guide links the avatar gallery; the page never fetches or
-    embeds anything from GitHub (CSP img-src/connect-src stay 'self')."""
+def test_avatar_url_is_handed_to_the_operator_and_nothing_is_loaded_cross_origin():
+    """The picker hands the operator the public raw PNG URL to paste into Chat; the
+    page never fetches or embeds anything from GitHub (CSP img-src/connect-src
+    stay 'self'). The gallery link is gone: the picker replaced it."""
     js = (STATIC / "admin.js").read_text(encoding="utf-8")
-    gallery = "https://github.com/mmackelprang/chat-gateway/tree/main/assets/avatars"
-    assert f'AVATAR_GALLERY = "{gallery}"' in js
-    assert 'el("a", { href: AVATAR_GALLERY, target: "_blank", rel: "noopener noreferrer"' in js
+    assert "AVATAR_GALLERY" not in js and "github.com/mmackelprang" not in js
     assert not re.search(r"""\bsrc\s*[:=]\s*["'`]?https?:""", js)
     assert "new Image" not in js
     assert not re.search(r"""fetch\(\s*["'`]https?:""", js)
@@ -94,7 +93,7 @@ def test_avatar_gallery_is_a_link_and_nothing_is_loaded_cross_origin():
     assert f'AVATAR_PNG_PATTERN = "{raw}' in js
     for line in js.splitlines():
         if "https://" in line:
-            assert line.lstrip().startswith(("const AVATAR_GALLERY =", "const AVATAR_PNG_PATTERN =")), line
+            assert line.lstrip().startswith("const AVATAR_PNG_PATTERN =") or 'startsWith("https://")' in line, line
 
 
 def test_write_never_throws_after_the_mutation_succeeded():
@@ -483,3 +482,51 @@ def test_read_app_fields_keeps_the_ordered_identities_rule_and_the_put_body():
 def test_router_parses_the_query_string():
     fn = _fn(_js(), "function routeFromHash(")
     assert "URLSearchParams" in fn
+
+
+# --- CG-92 Task 9: identity and room inspectors, avatar picker, replace webhook
+
+def test_identity_and_room_inspectors_and_picker_copy():
+    js = _js()
+    for head in ("function identityInspector(", "function roomInspector(", "function avatarPicker(", "function replaceWebhook("):
+        assert head in js, head
+    assert "function renameIdentity(" not in js  # the inspector renames inline
+    assert "aria-pressed" in _fn(js, "function avatarPicker(")
+    assert "avatarMark(" in _fn(js, "function avatarPicker(") and ", 40)" in _fn(js, "function avatarPicker(")
+    assert '"Recorded: bundled icon' in js and "Remove it from" in js and "Select URL" in js
+    assert "AVATAR_PNG_PATTERN.replace(" in js and 'startsWith("https://")' in js
+    assert "Recording an avatar here does not change the webhook." in js
+    assert "Not granted to any app. Nothing can send as this identity" in js
+    assert "?ungrant=" in js and "Consequences" in js
+    fn = _fn(js, "function identityInspector(")
+    assert 'write("PUT", url, { avatar: pending })' in fn and '"/admin/api/identities/" + encodeURIComponent(name)' in fn
+    assert "Delete identity" in js or "deleteIdentity(" in fn
+
+
+# --- CG-92 Task 10: new app draft, identity stepper, reveal, discard guard
+
+def test_new_app_draft_return_ticket_and_stepper():
+    js = _js()
+    assert "?return=new-app" in js and "let draft = null;" in js
+    assert '"Discard the unsaved new app?"' in js and '"Discard unsaved changes?"' in js
+    assert '"Back to new app (pre-granted)"' in js
+    ni = _fn(js, "function newIdentity(")
+    assert "avatarPicker(" in ni and "avatar" in ni
+    assert 'query.get("return") === "new-app"' in ni and "Open identity" in js  # never an unconditional jump
+    assert "Never shown again" in js
+
+
+def test_reveal_view_selects_on_http_and_done_is_the_only_way_out():
+    js = _js()
+    fn = _fn(js, "function reveal(")
+    assert "window.isSecureContext" in js and "Copy — selects on HTTP" in fn
+    assert '"Select key"' in fn and "details" in fn and '"Done — I have stored the key"' in js
+    assert "Leave this page and the key is gone" in js
+
+
+def test_stale_page_panel_picks_the_recovery_by_category():
+    js = _js()
+    fn = _fn(js, "function stalePanel(")
+    assert "Refresh view" in fn and "Reload from disk" in fn
+    assert "The registry changed since this page loaded. Your edits are kept." in js
+    assert "refused: edited outside the console" in fn
