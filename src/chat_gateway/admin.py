@@ -201,6 +201,35 @@ def locked_space_violations(apps: dict[str, _AppShape],
     return out
 
 
+def rooms_for(reg) -> dict[str, dict]:
+    """The registry grouped by Chat space ("room"), derived with the enforcement's
+    own rules so the page never re-derives rooms or locks (D2: this is the one
+    home). Keys: space ids ascending, then "" (identities with no space) last.
+    `locked_by` follows `locked_space_violations`'s first loop: first
+    `inbound_locked` app by sorted id holding an identity homed there. Names and
+    ids only, never a URL or value."""
+    spaces = {i.space for i in reg.identities.values() if i.space}
+    locked: dict[str, str] = {}
+    for app_id, app in sorted(reg.apps.items()):
+        if app.inbound_locked:
+            for n in app.identities:
+                ident = reg.identities.get(n)
+                if ident and ident.space:
+                    locked.setdefault(ident.space, app_id)
+    out: dict[str, dict] = {}
+    for space in [*sorted(spaces), ""]:
+        names = sorted(i.name for i in reg.identities.values() if (i.space or "") == space)
+        out[space] = {
+            "identities": names,
+            "posting_apps": sorted(a for a, app in reg.apps.items()
+                                   if any(n in names for n in app.identities)),
+            "inbound_apps": [a for a in reg.apps_for_space(space)
+                             if reg.apps[a].allow_inbound],
+            "locked_by": locked.get(space) if space else None,
+        }
+    return out
+
+
 def _section(tree: CommentedMap, section: str) -> CommentedMap:
     """`tree[section]`, created if the file left it empty (`apps:` with no body
     loads as None — `load_registry` accepts that, so the console must too)."""
@@ -557,6 +586,8 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
                     "key_env": a.key_env, "key_configured": a.key_configured(),
                     "key_source": secrets.source_of(a.key_env),
                     "recent_deliveries": delivery_log.query(a.app_id, 5),
+                    "inbox_pending": (inbox.pending_counts().get(a.app_id, 0)
+                                      if inbox is not None else 0),
                 } for a in sorted(reg.apps.values(), key=lambda a: a.app_id)
             },
             "identities": {
@@ -567,6 +598,7 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
                                       if i.webhook_url_env else None),
                 } for i in sorted(reg.identities.values(), key=lambda i: i.name)
             },
+            "rooms": rooms_for(reg),
             "shadowed_env_names": secrets.shadowed(),
             "inbound_defaulted": list(reg.inbound_defaulted),
             # The reveal panel offers an MCP client config only when /mcp is

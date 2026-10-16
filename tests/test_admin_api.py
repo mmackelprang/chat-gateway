@@ -1267,3 +1267,109 @@ def test_boot_probe_refuses_an_unwritable_registry_directory(tmp_path, monkeypat
     assert main(["check"]) == 2
     err = capsys.readouterr().err
     assert "not writable" in err and str(tmp_path) in err
+
+
+# -- rooms ------------------------------------------------------------------------
+ROOMS_TEXT = """identities:
+  i1:
+    display: d1
+    webhook_url_env: RM_W1
+    space: spaces/A
+  i2:
+    display: d2
+    webhook_url_env: RM_W2
+    space: spaces/A
+  il:
+    display: dl
+    webhook_url_env: RM_WL
+    space: spaces/LOCKED
+  i0:
+    display: d0
+    webhook_url_env: RM_W0
+  iu:
+    display: du
+    webhook_url_env: RM_WU
+    space: spaces/U
+apps:
+  a1:
+    key_env: RM_K1
+    identities: [i1]
+    allow_inbound: true
+  a2:
+    key_env: RM_K2
+    identities: [i1, i2]
+    allow_inbound: false
+  locked:
+    key_env: RM_KL
+    identities: [il]
+    allow_inbound: false
+    inbound_locked: true
+"""
+
+
+def _build_rooms(tmp_path, monkeypatch, *, inbox=None):
+    monkeypatch.setenv("CHAT_GATEWAY_ADMIN_KEY", ADMIN)
+    p = tmp_path / "registry.yaml"
+    p.write_text(ROOMS_TEXT, encoding="utf-8")
+    holder = RegistryHolder(load_registry(p))
+    secrets = ManagedSecrets(tmp_path / "state" / "managed.env",
+                             process_env_names=frozenset({"CHAT_GATEWAY_ADMIN_KEY"}),
+                             environ=os.environ)
+    wiring = AdminWiring(store=RegistryStore(p, holder, secrets), secrets=secrets,
+                         audit=AdminAudit(tmp_path / "state" / "admin_audit.jsonl"))
+    client = TestClient(create_app(holder, inbox if inbox is not None else Inbox(),
+                                   {"webhook": object()}, admin=wiring))
+    return client, holder
+
+
+def test_rooms_group_identities_by_space_with_the_unhomed_room_last(tmp_path, monkeypatch):
+    client, _ = _build_rooms(tmp_path, monkeypatch)
+    rooms = client.get("/admin/api/state", headers=AUTH).json()["rooms"]
+    assert list(rooms) == ["spaces/A", "spaces/LOCKED", "spaces/U", ""]
+    assert rooms["spaces/A"] == {"identities": ["i1", "i2"], "posting_apps": ["a1", "a2"],
+                                 "inbound_apps": ["a1"], "locked_by": None}
+    assert rooms["spaces/LOCKED"]["locked_by"] == "locked"
+    assert rooms["spaces/U"] == {"identities": ["iu"], "posting_apps": [],
+                                 "inbound_apps": [], "locked_by": None}
+    assert rooms[""]["identities"] == ["i0"]
+    assert rooms[""]["inbound_apps"] == [] and rooms[""]["locked_by"] is None
+
+
+def test_rooms_agree_with_the_enforcements_own_derivation(tmp_path, monkeypatch):
+    from chat_gateway.admin import _shape
+
+    client, holder = _build_rooms(tmp_path, monkeypatch)
+    rooms = client.get("/admin/api/state", headers=AUTH).json()["rooms"]
+    reg = holder.current
+    apps, spaces = _shape(reg)
+    locked: dict[str, str] = {}
+    for app_id, (_, is_locked, idents) in sorted(apps.items()):
+        if is_locked:
+            for n in idents:
+                if spaces.get(n):
+                    locked.setdefault(spaces[n], app_id)
+    for space, room in rooms.items():
+        assert room["locked_by"] == locked.get(space)
+        if space:
+            assert room["inbound_apps"] == [a for a in reg.apps_for_space(space)
+                                            if reg.apps[a].allow_inbound]
+
+
+def test_inbox_pending_is_zero_without_an_inbox_and_counts_with_one(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from chat_gateway.adapters.pubsub import dispatch
+
+    client, _ = _build_rooms(tmp_path, monkeypatch)
+    apps = client.get("/admin/api/state", headers=AUTH).json()["apps"]
+    assert {a: v["inbox_pending"] for a, v in apps.items()} == {"a1": 0, "a2": 0, "locked": 0}
+
+    inbox = Inbox()
+    client, holder = _build_rooms(tmp_path, monkeypatch, inbox=inbox)
+    fx = Path(__file__).parent / "fixtures" / "classic-cardclicked-button-event.json"
+    ev = json.loads(fx.read_text(encoding="utf-8"))
+    ev["space"]["name"] = "spaces/A"
+    assert dispatch(ev, holder, inbox) == ["a1"]
+    apps = client.get("/admin/api/state", headers=AUTH).json()["apps"]
+    assert apps["a1"]["inbox_pending"] == inbox.pending_counts()["a1"] == 1
+    assert apps["a2"]["inbox_pending"] == 0
