@@ -13,7 +13,7 @@ import hmac
 import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -57,6 +57,25 @@ def admin_auth_posture(raw: str | None) -> str:
         return raw
     raise RegistryError(f"{AUTH_ENV}={raw!r} is not one of 'key', 'open' "
                         "(CG-91; absence means 'key')")
+
+
+def cross_origin_reason(headers: Mapping[str, str]) -> str | None:
+    """Why this request looks cross-origin, or None to accept it (CG-91).
+
+    Refuses a browser-declared `Sec-Fetch-Site` other than same-origin/none, or
+    an `Origin` whose host:port differs from `Host` (`Origin: null` parses to an
+    empty netloc, so it fails too). A non-browser client sends neither header
+    and is accepted by design. Scheme is deliberately not compared, so a
+    TLS-terminating proxy does not break the page. The messages name the header
+    and never echo its value (hard rule #2).
+    """
+    site = headers.get("sec-fetch-site")
+    if site is not None and site.lower() not in ("same-origin", "none"):
+        return "Sec-Fetch-Site is not same-origin"
+    origin = headers.get("origin")
+    if origin is not None and urlparse(origin).netloc.lower() != headers.get("host", "").lower():
+        return "Origin does not match Host"
+    return None
 
 
 def env_name(prefix: str, ident: str) -> str:
@@ -292,6 +311,11 @@ def build_admin_router(registry: RegistryHolder, wiring: AdminWiring, *,
         # no-store on every admin answer: two of them carry a freshly minted
         # key, and a cached copy of that response is a second home for it.
         response.headers["Cache-Control"] = "no-store"
+        # Cross-origin guard first, in both postures and before any credential
+        # logic: a valid bearer from a foreign page is still a forged request.
+        reason = cross_origin_reason(request.headers)
+        if reason:
+            raise refuse(403, reason, "refused: cross-origin")
         host = request.client.host if request.client else "?"
         limiter.check(host)
         # Read per request, not at mount: rotating the admin key is an env

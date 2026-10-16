@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from chat_gateway.admin import (AUTH_KEY, AUTH_OPEN, AdminWiring, admin_auth_posture,
-                                env_name, parse_webhook_space, widening)
+                                cross_origin_reason, env_name, parse_webhook_space, widening)
 from chat_gateway.admin_audit import AdminAudit
 from chat_gateway.inbox import Inbox
 from chat_gateway.managed_secrets import ManagedSecrets
@@ -147,6 +147,37 @@ def test_wiring_defaults_to_key_and_reports_it(gw):
     client, holder, wiring, tmp = gw
     assert wiring.auth == AUTH_KEY
     assert client.get("/healthz").json()["admin"]["auth"] == "key"
+
+
+# -- cross-origin guard -----------------------------------------------------
+@pytest.mark.parametrize("headers", [
+    {}, {"sec-fetch-site": "same-origin"}, {"sec-fetch-site": "none"},
+    {"origin": "http://gw.local:8085", "host": "gw.local:8085"},
+    {"origin": "http://GW.LOCAL:8085", "host": "gw.local:8085"},
+])
+def test_guard_accepts_same_origin_and_non_browser_requests(headers):
+    assert cross_origin_reason(headers) is None
+
+
+@pytest.mark.parametrize("headers,word", [
+    ({"sec-fetch-site": "cross-site"}, "Sec-Fetch-Site"),
+    ({"sec-fetch-site": "same-site"}, "Sec-Fetch-Site"),
+    ({"origin": "http://evil.example", "host": "gw.local:8085"}, "Origin"),
+    ({"origin": "null", "host": "gw.local:8085"}, "Origin"),
+    ({"origin": "http://gw.local:9000", "host": "gw.local:8085"}, "Origin"),
+])
+def test_guard_refuses_cross_origin_evidence_and_never_echoes_it(headers, word):
+    reason = cross_origin_reason(headers)
+    assert word in reason and "evil" not in reason and "9000" not in reason
+
+
+def test_key_mode_refuses_a_valid_bearer_from_a_foreign_origin(gw):
+    client, holder, wiring, tmp = gw
+    r = client.get("/admin/api/state", headers={**AUTH, "Origin": "http://evil.example"})
+    assert r.status_code == 403 and "evil" not in r.text
+    assert client.get("/healthz").json()["admin"]["last_write_error"] == "refused: cross-origin"
+    r = client.post("/admin/api/reload", headers={**AUTH, "Sec-Fetch-Site": "cross-site"}, json={})
+    assert r.status_code == 403
 
 
 # -- auth -------------------------------------------------------------------
