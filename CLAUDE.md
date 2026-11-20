@@ -800,3 +800,12 @@ different machines, not a delta.
   API change is additive (`rooms`, `inbox_pending`, refusal `category`/`reasons`,
   identity `avatar`). No hard rule changed and no ledger flag moved. Merged is
   not in effect until the box is rebuilt.
+- **Dead-man messages in plain English, since 2026-11-20 (owner request).**
+  What is wrong first, in the check's own `tz` (named once), then what to do,
+  then one `Details:` line with the UTC stamp — an owner-approved exception to
+  the chat policy's UTC rule for wall-clock jobs. `POST /v1/heartbeat` gained
+  four optional, app-written display fields (`name`, `description`, `why`,
+  `steps`); the gateway stores and places that text and never interprets it, so
+  hard rule #1 holds. Field limits have one home, `heartbeat.py`'s `MAX_*`
+  constants, quoted to consumers in `docs/integration-guide.md`. No ledger flag
+  moved. Merged is not in effect until the box is rebuilt.

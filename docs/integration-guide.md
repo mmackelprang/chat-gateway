@@ -89,17 +89,78 @@ route `alert`**: expect quiet-looking messages in your alert space.
 
 ⚠ **Titles carry no severity word or emoji.** They are `[<app>] <subject> —
 <what changed>`; the gateway's own `severity_prefix()` supplies the severity,
-and a title repeating it renders it twice. Bodies open with a UTC timestamp
-line and close with an `Action:` line, including when the action is `none`.
+and a title repeating it renders it twice.
+
+**Plain-English bodies (since 2026-11-20).** Each message says what is wrong
+(or fine) first, then what to do, and ends with one `Details:` line: check id,
+schedule, grace and, on replies, the UTC stamp. Times in the body are in the
+check's own `tz`, named once (`New York`), as weekday, date and 24h time. The
+UTC stamp appears only on the `Details:` line. Every message still names its
+action: the alert with a numbered "What to do" list, the thread root and the
+all-clear with `Action: none`.
+
+### Optional display fields
+
+Four optional fields let your app say, in its own words, what the check is
+and what to do when it goes quiet. The gateway stores the text and places it
+in a fixed layout; it never reads meaning out of it (hard rule #1). Leave them
+out and every request behaves exactly as before.
+
+| Field | Type and limit | Used for |
+|---|---|---|
+| `name` | string, 1 to 80 characters | The title, and the lead sentence when there is no `description`: `Stock spreads job` |
+| `description` | string, 1 to 200 characters | The lead sentence's subject, so write a noun phrase that can start a sentence: `The stock-spreads job on the appserver` |
+| `why` | string, 1 to 500 characters | A `Why it matters:` line in the alert |
+| `steps` | list of up to 8 strings, each 1 to 160 characters | The alert's numbered `What to do:` list, in order |
+
+Each is one line: a newline or other control character is a **422**, and so is
+anything over its limit. **Each refresh replaces all four** with what that
+request sent, like `schedule` and `grace`: a refresh that leaves them out
+clears them, so send them on every call. With no `name` the title uses the
+check id; with no `steps` the alert says *Look at the job's log on the machine
+that runs it* and *If the job is retired, delete this check.* `GET
+/v1/heartbeat/{source}` does not return them.
 
 ```bash
 curl -s $GW/v1/heartbeat -H "$AUTH" -H "$JSON" -d '{
   "check_id": "daily-trading-run", "schedule": "weekdays", "grace": "2h"}'
 # -> {"status":"ok","check_id":"daily-trading-run","next_deadline":"2026-07-27T22:30:00+00:00"}
 
+curl -s $GW/v1/heartbeat -H "$AUTH" -H "$JSON" -d '{
+  "check_id": "trader2-stock-spreads", "schedule": "weekdays", "grace": "3h",
+  "name": "Stock spreads job",
+  "description": "The stock-spreads job on the appserver",
+  "why": "Practice Money'"'"'s fill check uses these quotes; without them it falls back to older ones.",
+  "steps": ["Open trader2-spreads.log on the appserver (/srv/trader2/data/logs).",
+            "If the job ran but this check did not refresh, the chat gateway may be down."]}'
+
 curl -s $GW/v1/heartbeat/aitrader -H "$AUTH"            # your checks + states
 curl -s -X DELETE $GW/v1/heartbeat/aitrader/daily-trading-run -H "$AUTH"
 ```
+
+What the second check's first missed alert looks like (the severity prefix is
+the gateway's; the overdue figure is the time since the last check-in):
+
+```
+[aitrader] Stock spreads job didn't check in — 1d03h overdue
+
+The stock-spreads job on the appserver last checked in Thu 19 Nov 15:21 (New York). It should have checked in again by Fri 20 Nov 18:21.
+
+Why it matters: Practice Money's fill check uses these quotes; without them it falls back to older ones.
+
+What to do:
+1. Open trader2-spreads.log on the appserver (/srv/trader2/data/logs).
+2. If the job ran but this check did not refresh, the chat gateway may be down.
+
+Next reminder: Sat 18:26 if still missing.
+Details: check trader2-stock-spreads, weekdays, grace 3h, 2026-11-20T23:26:35Z.
+```
+
+Reminders are titled `… didn't check in — still missing, 2d03h` and add
+`reminder N` to the `Details:` line. The all-clear is titled
+`[aitrader] Stock spreads job — back to normal after 1d17h` and says when it
+checked in again and how long it was missing. The thread root is
+`[aitrader] 🧵 Stock spreads job — check-in watch`.
 
 **422s on this endpoint.** A bad `schedule`/`grace`/`tz` returns the parser's
 own message. Since CG-76 there is a second one: **registering a `check_id` you
