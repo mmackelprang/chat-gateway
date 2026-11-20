@@ -14,15 +14,24 @@ from chat_gateway.delivery import DeliveryLog, Dispatcher
 from chat_gateway.envelope import TEXT_MAX, DeliveryResult
 from chat_gateway.heartbeat import (
     DEFAULT_REPEAT_S,
+    DEFAULT_STEPS,
+    MAX_BODY_LEN,
+    MAX_DESCRIPTION_LEN,
+    MAX_INFO_COMBINED_LEN,
+    MAX_NAME_LEN,
     MAX_REPEAT_S,
+    MAX_STEP_LEN,
+    MAX_STEPS,
     MAX_THREAD_KEY_LEN,
     MAX_TITLE_LEN,
+    MAX_WHY_LEN,
     Check,
     HeartbeatError,
     HeartbeatMonitor,
     HeartbeatStore,
     alert_message,
     format_elapsed,
+    format_local,
     parse_schedule,
     recovery_message,
     repeat_after,
@@ -544,8 +553,8 @@ def test_weekday_deadman_no_weekend_false_alarm(registry, tmp_path):
     assert [i for i, _ in adapter.sent] == ["aitrader-alerts"] * 2
     (_, root), = rendered_as(adapter, "info")
     (_, msg), = rendered_as(adapter, "alert")
-    assert "🧵 Heartbeat daily-run" in root.text
-    assert "[aitrader] heartbeat daily-run — missed, no refresh for" in msg.text
+    assert "🧵 daily-run" in root.text
+    assert "[aitrader] daily-run didn't check in — " in msg.text
     assert root.thread_key == msg.thread_key == "hb:aitrader:daily-run"
     # repeat suppressed within the daily backoff...
     clock.now += dt.timedelta(minutes=30)
@@ -1285,7 +1294,7 @@ def test_the_first_transition_into_missed_still_alerts(registry, tmp_path):
     alerts = rendered_as(adapter, "alert")
     assert len(alerts) == 1
     _, msg = alerts[0]
-    assert "missed, no refresh for" in msg.text
+    assert "didn't check in — " in msg.text and " overdue" in msg.text
     assert client.get("/healthz").json()["heartbeats"]["missed"] == 1
 
 
@@ -1541,7 +1550,7 @@ def test_a_missed_check_that_refreshes_delivers_exactly_one_recovery(
     assert ident == "aitrader-alerts"
     assert msg.text.startswith(severity_prefix("info"))
     assert msg.thread_key == "hb:aitrader:daily-run"
-    assert "recovered after 7m" in msg.text
+    assert "back to normal after 7m" in msg.text
     assert "Action: none" in msg.text
 
     # A second refresh, now that the check is `ok`, adds nothing.
@@ -1654,7 +1663,7 @@ def test_a_check_whose_ROOT_failed_but_whose_ALERT_landed_still_gets_its_all_cle
 
     (ident, msg), = rendered_as(adapter, "info")
     assert ident == "aitrader-alerts"
-    assert "recovered after" in msg.text
+    assert "back to normal after" in msg.text
     assert msg.thread_key == "hb:aitrader:daily-run", \
         "and it closes the alert's own thread, which the alert opened"
 
@@ -1789,18 +1798,26 @@ def test_a_dead_man_title_leads_with_the_source_and_carries_no_severity(
             assert SEVERITY_EMOJI[severity] not in title
         assert len(title) <= MAX_TITLE_LEN
 
-    assert titles[1] == "[aitrader] heartbeat candle-crawl — missed, no refresh for 7d01h"
-    assert titles[2] == "[aitrader] heartbeat candle-crawl — still missed, 7d01h"
-    assert titles[3] == "[aitrader] heartbeat candle-crawl — recovered after 7d01h"
+    assert titles[0] == "[aitrader] 🧵 candle-crawl — check-in watch"
+    assert titles[1] == "[aitrader] candle-crawl didn't check in — 7d01h overdue"
+    assert titles[2] == "[aitrader] candle-crawl didn't check in — still missing, 7d01h"
+    assert titles[3] == "[aitrader] candle-crawl — back to normal after 7d01h"
 
-    # Every body opens with its own UTC timestamp and closes with an `Action:`
-    # line, including when the action is `none` — silence is not information.
+    # Every message names its action, including when it is `none` — silence is
+    # not information. The alert does it with its "What to do:" list. Every
+    # reply keeps its UTC stamp, on the closing `Details:` line only.
+    for body in (alert_message(check, now)[1], alert_message(fired, now)[1]):
+        assert "\nWhat to do:\n1. " in body
+    assert "\nAction: none — this closes the alert above.\n" in \
+        recovery_message(check, now)[1]
+    assert "\nAction: none — this message opens the thread.\n" in \
+        thread_root_message(check)[1]
     for body in (alert_message(check, now)[1], alert_message(fired, now)[1],
                  recovery_message(check, now)[1]):
-        assert body.startswith("2026-08-31T15:47:52Z · ")
-        assert body.splitlines()[-1].startswith("Action: ")
-    assert thread_root_message(check)[1].splitlines()[-1] == \
-        "Action: none — this message opens the thread."
+        last = body.splitlines()[-1]
+        assert last.startswith("Details: check candle-crawl, every:15m, grace 45m, ")
+        assert last.endswith("2026-08-31T15:47:52Z.")
+        assert body.count("2026-08-31T15:47:52Z") == 1, "UTC on the Details line only"
 
 
 def test_an_overlong_thread_key_is_capped_and_still_distinguishes(registry):
@@ -1953,3 +1970,323 @@ def test_a_heartbeats_json_written_before_CG_86_still_loads(tmp_path):
     assert (check.status, check.thread_started, check.alert_count) == \
         ("missed", False, 0)
     assert check.thread_key() == "hb:aitrader:daily-run"
+
+
+# --- plain-English dead-man messages (owner request, 2026-11-20) -------------
+#
+# The owner approved one shape for a missed-check alert: what is wrong first,
+# in the check's own time zone; why it matters; what to do; the next reminder;
+# then one `Details:` line holding the check id, schedule, grace and the UTC
+# stamp. Four optional, app-written display fields feed it. These tests pin the
+# shape with and without those fields, the time-zone rendering, the field
+# limits, and that state files written before the fields existed still load.
+
+SPREADS_STEPS = [
+    "Open trader2-spreads.log on the appserver (/srv/trader2/data/logs).",
+    "If the job ran but this check didn't refresh, the chat gateway may be down.",
+    "It runs again next weekday at 12:20.",
+]
+SPREADS_WHY = ("Practice Money's fill check uses these quotes; without them it "
+               "falls back to older ones.")
+
+
+def _spreads_check(**over) -> Check:
+    """The owner's approved example, as a `Check`: last seen Thu 15:21 New York."""
+    fields_ = dict(source="aitrader", check_id="trader2-stock-spreads",
+                   schedule="weekdays", grace="3h", tz="America/New_York",
+                   last_seen="2026-11-19T20:21:00+00:00",
+                   name="Stock spreads job",
+                   description="The stock-spreads job on the appserver",
+                   why=SPREADS_WHY, steps=list(SPREADS_STEPS))
+    fields_.update(over)
+    return Check(**fields_)
+
+
+SPREADS_NOW = dt.datetime(2026, 11, 20, 23, 26, 35, tzinfo=UTC)  # Fri 18:26 NY
+
+
+def test_the_alert_with_every_display_field_matches_the_approved_shape():
+    title, body = alert_message(_spreads_check(), SPREADS_NOW)
+    assert title == "[aitrader] Stock spreads job didn't check in — 1d03h overdue"
+    assert body == (
+        "The stock-spreads job on the appserver last checked in Thu 19 Nov 15:21 "
+        "(New York). It should have checked in again by Fri 20 Nov 18:21.\n"
+        "\n"
+        f"Why it matters: {SPREADS_WHY}\n"
+        "\n"
+        "What to do:\n"
+        f"1. {SPREADS_STEPS[0]}\n"
+        f"2. {SPREADS_STEPS[1]}\n"
+        f"3. {SPREADS_STEPS[2]}\n"
+        "\n"
+        "Next reminder: Sat 18:26 if still missing.\n"
+        "Details: check trader2-stock-spreads, weekdays, grace 3h, "
+        "2026-11-20T23:26:35Z."
+    )
+
+
+def test_the_alert_without_display_fields_says_the_plain_default():
+    """aitrader is frozen and will never send the fields; its alert must still
+    read as plain English, and still tell the reader what to do."""
+    bare = _spreads_check(name="", description="", why="", steps=[])
+    title, body = alert_message(bare, SPREADS_NOW)
+    assert title == "[aitrader] trader2-stock-spreads didn't check in — 1d03h overdue"
+    assert body == (
+        "The check trader2-stock-spreads last checked in Thu 19 Nov 15:21 "
+        "(New York). It should have checked in again by Fri 20 Nov 18:21.\n"
+        "\n"
+        "What to do:\n"
+        f"1. {DEFAULT_STEPS[0]}\n"
+        f"2. {DEFAULT_STEPS[1]}\n"
+        "\n"
+        "Next reminder: Sat 18:26 if still missing.\n"
+        "Details: check trader2-stock-spreads, weekdays, grace 3h, "
+        "2026-11-20T23:26:35Z."
+    )
+    assert "Why it matters" not in body
+
+
+def test_a_name_without_a_description_leads_the_sentence():
+    title, body = alert_message(
+        _spreads_check(description="", name="stock spreads job"), SPREADS_NOW)
+    assert title.startswith("[aitrader] stock spreads job didn't check in — ")
+    assert body.startswith("Stock spreads job last checked in Thu 19 Nov 15:21")
+
+
+def test_a_reminder_says_still_missing_and_counts_itself():
+    later = SPREADS_NOW + dt.timedelta(days=1)
+    title, body = alert_message(_spreads_check(alert_count=1), later)
+    assert title == "[aitrader] Stock spreads job didn't check in — still missing, 2d03h"
+    # The second rung is two days out, so the reminder after this one is Monday.
+    assert "\nNext reminder: Mon 18:26 if still missing.\n" in body
+    assert body.splitlines()[-1] == (
+        "Details: check trader2-stock-spreads, weekdays, grace 3h, reminder 1, "
+        "2026-11-21T23:26:35Z.")
+
+
+def test_a_reminder_a_week_out_names_its_date():
+    """At the weekly ceiling a weekday alone would name today."""
+    _, body = alert_message(_spreads_check(alert_count=4), SPREADS_NOW)
+    assert "\nNext reminder: Fri 27 Nov 18:26 if still missing.\n" in body
+
+
+def test_the_recovery_says_it_is_fine_and_for_how_long_it_was_missing():
+    back = dt.datetime(2026, 11, 21, 14, 2, tzinfo=UTC)  # Sat 09:02 NY
+    title, body = recovery_message(_spreads_check(alert_count=1), back)
+    assert title == "[aitrader] Stock spreads job — back to normal after 1d17h"
+    assert body == (
+        "The stock-spreads job on the appserver checked in again at Sat 21 Nov 09:02 "
+        "(New York). It is back to normal after 1d17h without a check-in.\n"
+        "\n"
+        "Action: none — this closes the alert above.\n"
+        "Details: check trader2-stock-spreads, weekdays, grace 3h, "
+        "2026-11-21T14:02:00Z."
+    )
+
+
+def test_the_recovery_without_display_fields():
+    back = dt.datetime(2026, 11, 21, 14, 2, tzinfo=UTC)
+    title, body = recovery_message(
+        _spreads_check(name="", description="", why="", steps=[]), back)
+    assert title == "[aitrader] trader2-stock-spreads — back to normal after 1d17h"
+    assert body.startswith("The check trader2-stock-spreads checked in again at "
+                           "Sat 21 Nov 09:02 (New York).")
+
+
+def test_the_thread_root_with_and_without_display_fields():
+    title, body = thread_root_message(_spreads_check())
+    assert title == "[aitrader] 🧵 Stock spreads job — check-in watch"
+    assert body == (
+        "The stock-spreads job on the appserver should check in on weekdays. "
+        "If it is more than 3h late, an alert follows in this thread.\n"
+        "Closes when: it checks in again, or this check is deleted.\n"
+        "Action: none — this message opens the thread.\n"
+        "Details: check trader2-stock-spreads, weekdays, grace 3h, "
+        "tz America/New_York, thread hb:aitrader:trader2-stock-spreads."
+    )
+    title, body = thread_root_message(
+        _spreads_check(name="", description="", schedule="every:15m"))
+    assert title == "[aitrader] 🧵 trader2-stock-spreads — check-in watch"
+    assert body.startswith("The check trader2-stock-spreads should check in every 15m.")
+
+
+def test_local_times_follow_the_zone_across_a_dst_change():
+    """New York leaves daylight time at 02:00 on Sun 1 Nov 2026. The same UTC
+    hour reads one hour earlier on the wall clock after the change."""
+    assert format_local(dt.datetime(2026, 10, 31, 13, 0, tzinfo=UTC),
+                        "America/New_York") == "Sat 31 Oct 09:00"
+    assert format_local(dt.datetime(2026, 11, 1, 13, 0, tzinfo=UTC),
+                        "America/New_York") == "Sun 1 Nov 08:00"
+    assert format_local(dt.datetime(2026, 11, 1, 13, 0, tzinfo=UTC),
+                        "America/New_York", short=True) == "Sun 08:00"
+
+
+def test_an_alert_whose_outage_spans_the_dst_change_reads_in_wall_clock_time():
+    """Last seen Fri 16:00 EDT; the weekend rolls the due time to Monday 16:00,
+    which is EST by then, so the deadline reads 18:00 on the wall clock."""
+    check = Check(source="aitrader", check_id="close-run", schedule="weekdays",
+                  grace="2h", last_seen="2026-10-30T20:00:00+00:00")
+    _, body = alert_message(check, dt.datetime(2026, 11, 2, 23, 5, tzinfo=UTC))
+    assert body.startswith(
+        "The check close-run last checked in Fri 30 Oct 16:00 (New York). "
+        "It should have checked in again by Mon 2 Nov 18:00.")
+
+
+def test_the_zone_is_named_by_its_city_and_a_bad_zone_falls_back_to_utc():
+    london = _spreads_check(tz="Europe/London", schedule="daily")
+    assert "Thu 19 Nov 20:21 (London)" in alert_message(london, SPREADS_NOW)[1]
+    utc = _spreads_check(tz="UTC", schedule="daily")
+    assert "Thu 19 Nov 20:21 (UTC)" in alert_message(utc, SPREADS_NOW)[1]
+    # A hand-edited state file must degrade the message, never drop the alert.
+    bad = _spreads_check(tz="Not/AZone", schedule="daily")
+    assert "Thu 19 Nov 20:21 (UTC)" in alert_message(bad, SPREADS_NOW)[1]
+
+
+def test_corrupt_display_fields_degrade_to_the_plain_message():
+    """`_load` validates nothing, and a composer that raises drops the alert."""
+    odd = _spreads_check(name=5, description=None, why=["x"], steps="open the log")
+    title, body = alert_message(odd, SPREADS_NOW)
+    assert title.startswith("[aitrader] trader2-stock-spreads didn't check in")
+    assert f"1. {DEFAULT_STEPS[0]}" in body
+    assert "Why it matters" not in body
+    assert thread_root_message(odd)[0].startswith("[aitrader] 🧵 trader2-stock-spreads")
+    assert recovery_message(odd, SPREADS_NOW)[0].startswith(
+        "[aitrader] trader2-stock-spreads — back to normal")
+
+
+def test_every_display_field_at_its_limit_renders_without_truncation():
+    full = _spreads_check(check_id="c" * 100, name="N" * MAX_NAME_LEN,
+                          description="D" * MAX_DESCRIPTION_LEN, why="W" * MAX_WHY_LEN,
+                          steps=["S" * MAX_STEP_LEN] * MAX_STEPS)
+    title, body = alert_message(full, SPREADS_NOW)
+    assert len(title) <= MAX_TITLE_LEN
+    assert len(body) < MAX_BODY_LEN and body.endswith("2026-11-20T23:26:35Z.")
+    assert Notification(severity="alert", title=title, body=body)
+    for title, body in (thread_root_message(full), recovery_message(full, SPREADS_NOW)):
+        assert not body.endswith("…")
+        assert Notification(severity="info", title=title, body=body)
+
+
+def test_an_unbounded_schedule_cannot_push_a_body_past_the_model():
+    """`every:0…01d` parses at any width and neither `schedule` nor `grace` is
+    length-bounded, so the composer caps the body. A body over the model's
+    limit raises inside `_monitor_notify` and the alert is never sent."""
+    wide = _spreads_check(schedule="every:" + "0" * 4200 + "1d")
+    for compose, severity in ((lambda c: alert_message(c, SPREADS_NOW), "alert"),
+                              (thread_root_message, "info"),
+                              (lambda c: recovery_message(c, SPREADS_NOW), "info")):
+        title, body = compose(wide)
+        assert body.endswith("…")
+        assert Notification(severity=severity, title=title, body=body)
+
+
+def test_the_body_caps_match_the_notification_model():
+    """Same pin as `test_the_composition_caps_match_the_notification_model`."""
+    body_max = next(m.max_length for m in Notification.model_fields["body"].metadata
+                    if hasattr(m, "max_length"))
+    assert MAX_BODY_LEN == body_max
+    assert MAX_INFO_COMBINED_LEN == info_max_combined_length()
+
+
+def test_display_fields_are_stored_persisted_and_replaced_by_each_refresh(
+        registry, tmp_path):
+    clock = Clock(dt.datetime(2026, 11, 19, 20, 21, tzinfo=UTC))
+    client, app, _ = make_client(registry, clock, tmp_path)
+    base = {"check_id": "spreads", "schedule": "weekdays", "grace": "3h"}
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        **base, "name": "Stock spreads job",
+        "description": "The stock-spreads job on the appserver",
+        "why": SPREADS_WHY, "steps": SPREADS_STEPS})
+    assert r.status_code == 200
+    assert set(r.json()) == {"status", "check_id", "next_deadline"}
+
+    row = json.loads((tmp_path / "hb.json").read_text(encoding="utf-8"))["checks"][0]
+    assert (row["name"], row["description"], row["why"], row["steps"]) == (
+        "Stock spreads job", "The stock-spreads job on the appserver",
+        SPREADS_WHY, SPREADS_STEPS)
+    # A restart reads them back.
+    reloaded = HeartbeatStore(tmp_path / "hb.json").list_for("aitrader")[0]
+    assert reloaded.steps == SPREADS_STEPS and reloaded.name == "Stock spreads job"
+
+    # A refresh stores exactly what it was sent, like `schedule` and `grace`.
+    client.post("/v1/heartbeat", headers=AUTH, json={**base, "name": "Spreads"})
+    check = app.state.heartbeats.list_for("aitrader")[0]
+    assert (check.name, check.description, check.why, check.steps) == (
+        "Spreads", "", "", [])
+    client.post("/v1/heartbeat", headers=AUTH, json=base)
+    assert app.state.heartbeats.list_for("aitrader")[0].name == ""
+
+
+@pytest.mark.parametrize("extra", [
+    {"name": "N" * (MAX_NAME_LEN + 1)},
+    {"name": ""},
+    {"name": "two\nlines"},
+    {"description": "D" * (MAX_DESCRIPTION_LEN + 1)},
+    {"why": "W" * (MAX_WHY_LEN + 1)},
+    {"why": "tab\there"},
+    {"steps": ["s"] * (MAX_STEPS + 1)},
+    {"steps": ["S" * (MAX_STEP_LEN + 1)]},
+    {"steps": [""]},
+    {"steps": ["ok", "bad\nstep"]},
+    {"steps": "not a list"},
+])
+def test_display_fields_out_of_bounds_are_refused(registry, tmp_path, extra):
+    clock = Clock(dt.datetime(2026, 11, 19, 20, 21, tzinfo=UTC))
+    client, app, _ = make_client(registry, clock, tmp_path)
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "spreads", "schedule": "weekdays", "grace": "3h", **extra})
+    assert r.status_code == 422
+    assert app.state.heartbeats.list_for("aitrader") == []
+
+
+def test_display_fields_at_their_limits_are_accepted(registry, tmp_path):
+    clock = Clock(dt.datetime(2026, 11, 19, 20, 21, tzinfo=UTC))
+    client, _, _ = make_client(registry, clock, tmp_path)
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "spreads", "schedule": "weekdays", "grace": "3h",
+        "name": "N" * MAX_NAME_LEN, "description": "D" * MAX_DESCRIPTION_LEN,
+        "why": "W" * MAX_WHY_LEN, "steps": ["S" * MAX_STEP_LEN] * MAX_STEPS})
+    assert r.status_code == 200
+
+
+def test_display_fields_reach_the_delivered_messages(registry, tmp_path):
+    """End to end: the app's text, through the store and the monitor, into the
+    rendered card and the quiet thread root."""
+    clock = Clock(dt.datetime(2026, 7, 24, 20, 30, tzinfo=UTC))
+    client, app, adapter = make_client(registry, clock, tmp_path)
+    assert client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "daily-run", "schedule": "every:60s", "grace": "60s",
+        "name": "Daily run", "description": "The daily run on the dev box",
+        "why": "Nothing trades without it.", "steps": ["Open the run log."]},
+    ).status_code == 200
+    clock.now += dt.timedelta(seconds=300)
+    assert app.state.monitor.scan_once() == 1
+    app.state.dispatcher.process_due()
+
+    (_, root), = rendered_as(adapter, "info")
+    (_, alert), = rendered_as(adapter, "alert")
+    assert "[aitrader] 🧵 Daily run — check-in watch" in root.text
+    assert "The daily run on the dev box should check in every 60s." in root.text
+    assert alert.text == severity_prefix("alert") + \
+        "[aitrader] Daily run didn't check in — 5m overdue"
+    card_body = alert.cards[0]["card"]["sections"][0]["widgets"][0]["textParagraph"]["text"]
+    assert card_body.startswith("The daily run on the dev box last checked in ")
+    assert "\nWhy it matters: Nothing trades without it.\n" in card_body
+    assert "\nWhat to do:\n1. Open the run log.\n" in card_body
+
+
+def test_a_heartbeats_json_written_before_the_display_fields_still_loads(tmp_path):
+    """A CG-86-era row has no display fields; it loads with all four empty and
+    its alert falls back to the check id and the default steps."""
+    path = tmp_path / "hb.json"
+    path.write_text(json.dumps({"checks": [{
+        "source": "aitrader", "check_id": "daily-run", "schedule": "weekdays",
+        "grace": "2h", "tz": "America/New_York",
+        "last_seen": "2026-11-19T20:21:00+00:00", "last_alerted": "",
+        "status": "ok", "thread_started": True, "alert_count": 0,
+    }]}), encoding="utf-8")
+    check = HeartbeatStore(path).list_for("aitrader")[0]
+    assert (check.name, check.description, check.why, check.steps) == ("", "", "", [])
+    title, body = alert_message(check, SPREADS_NOW)
+    assert title.startswith("[aitrader] daily-run didn't check in — ")
+    assert f"1. {DEFAULT_STEPS[0]}" in body
