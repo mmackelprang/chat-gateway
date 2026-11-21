@@ -12,10 +12,20 @@ MESSAGE POLICY (CG-86). Every message about a check — the thread root, the
 first alert, each reminder, and the recovery notice — carries ONE
 `thread_key` (`thread_key_for`), because the check is the durable subject the
 owner's chat policy threads on. Titles lead with the source and carry the
-DELTA (`[<source>] heartbeat <id> — still missed, 7d02h`), never a severity
-word: the gateway's own `severity_prefix()` supplies that, and a title that
-repeats it renders it twice. This module composes those strings; `service.py`
-routes and renders them.
+DELTA (`[<source>] <name> didn't check in — still missing, 7d02h`), never a
+severity word: the gateway's own `severity_prefix()` supplies that, and a title
+that repeats it renders it twice. This module composes those strings;
+`service.py` routes and renders them.
+
+PLAIN-ENGLISH BODIES (owner request, 2026-11-20). Each body says what is wrong
+first, then what to do, and keeps the machine facts on one closing `Details:`
+line. Times are shown in the check's own `tz`, named once ("New York"), with
+weekday, date and 24h time; the UTC stamp survives only on the `Details:`
+line. That is an owner-approved exception to the chat policy's UTC rule, for
+jobs that run on a wall clock. An app may supply four optional display fields
+(`name`, `description`, `why`, `steps`). Hard rule #1 holds: the gateway
+stores that text and places it in a fixed layout, and never reads meaning out
+of it.
 
 Schedules (v0):
     "every:<N><s|m|h|d>"  — fixed period
@@ -34,9 +44,11 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import html
 import json
 import re
 import threading
+import unicodedata
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Callable
@@ -70,6 +82,28 @@ MAX_REPEAT_S = 604800
 #: `check_id` (`HeartbeatIn` allows 100) have to be absorbed here.
 MAX_THREAD_KEY_LEN = 128
 MAX_TITLE_LEN = 200
+#: `Notification.body`'s `max_length`, and the info lane's combined
+#: title + body budget (`notifications.info_max_combined_length()`). Same
+#: reasoning and same pin as the two caps above: a body over either raises a
+#: `ValidationError` inside `_monitor_notify`, which drops the alert. The
+#: bodies carry `schedule` and `grace` verbatim, and neither is length-bounded
+#: (`every:<digits>d` parses at any width), so the composition caps the body
+#: itself rather than trusting its inputs.
+MAX_BODY_LEN = 4000
+MAX_INFO_COMBINED_LEN = 3989
+
+#: Bounds on the app-written display fields (`HeartbeatIn`). Chosen so that
+#: every field at its maximum still renders well inside `MAX_BODY_LEN`; the
+#: body cap above is the backstop, not the plan.
+MAX_NAME_LEN = 80
+MAX_DESCRIPTION_LEN = 200
+MAX_WHY_LEN = 500
+MAX_STEPS = 8
+MAX_STEP_LEN = 160
+
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 _DURATION = re.compile(r"^(?P<n>\d+)(?P<u>[smhd])$")
 _UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -201,14 +235,148 @@ def _title(source: str, subject: str, delta: str) -> str:
 
     ⚠ THE CAP IS A DROPPED-ALERT GUARD, not cosmetic. `MAX_TITLE_LEN` says
     what an overflow costs. Truncation takes the TAIL because the head is the
-    identifying half — `[source] heartbeat <check_id>` — and losing the
+    identifying half — `[source] <name or check_id>` — and losing the
     elapsed delta from a title still leaves the body, which carries it in
     full and is four thousand characters wide.
     """
     full = f"[{source}] {subject} — {delta}"
-    if len(full) <= MAX_TITLE_LEN:
-        return full
-    return full[:MAX_TITLE_LEN - 1] + "…"
+    return _cap(full, MAX_TITLE_LEN)
+
+
+def _cap(text: str, limit: int) -> str:
+    """`text`, cut to `limit` characters with a trailing `…` if it overflows."""
+    if len(text) <= limit:
+        return text
+    return text[:max(limit - 1, 0)] + "…"
+
+
+# --- plain-English rendering helpers (owner request, 2026-11-20) -------------
+#
+# ⚠ NONE OF THESE MAY RAISE ON A PERSISTED VALUE. They format fields that come
+# off `heartbeats.json`, which `_load` does not validate, and a raise inside a
+# message composer is caught by `scan_once`'s per-check `except` and drops the
+# alert. Display is worth strictly less than delivery, so a bad display value
+# degrades to a plainer message rather than to no message.
+
+def _zone(tz: str) -> tuple[dt.tzinfo, str]:
+    """(zone, human label) for a check's `tz`, falling back to UTC.
+
+    The label is the IANA name's last segment with underscores as spaces:
+    `America/New_York` -> `New York`, `UTC` -> `UTC`. `refresh_seen` validates
+    `tz` on the way in, so the fallback covers only a hand-edited state file or
+    an image without that zone's data. An `Etc/` zone keeps its full name,
+    because its last segment misleads: `Etc/GMT+5` is five hours BEHIND UTC.
+    """
+    try:
+        zone = ZoneInfo(tz)
+    except Exception:  # noqa: BLE001 — never strand an alert on a display value
+        return dt.timezone.utc, "UTC"
+    if str(tz).startswith("Etc/"):
+        return zone, str(tz)
+    return zone, str(tz).rsplit("/", 1)[-1].replace("_", " ")
+
+
+def format_local(moment: dt.datetime, tz: str, *, short: bool = False) -> str:
+    """`Thu 19 Nov 15:21` in the check's zone; `short` drops the date (`Sat 18:20`).
+
+    Spelled from fixed tables rather than `strftime("%a %b")`, whose names
+    follow the process locale.
+    """
+    zone, _ = _zone(tz)
+    d = moment.astimezone(zone)
+    day = _WEEKDAYS[d.weekday()]
+    if short:
+        return f"{day} {d:%H:%M}"
+    return f"{day} {d.day} {_MONTHS[d.month - 1]} {d:%H:%M}"
+
+
+def _text(value: object) -> str:
+    """A display field as a string; anything that is not a string is absent."""
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _steps(value: object) -> list[str]:
+    """The `steps` display field as a list of non-empty strings."""
+    if not isinstance(value, list):
+        return []
+    return [s.strip() for s in value if isinstance(s, str) and s.strip()]
+
+
+def _schedule_phrase(schedule: str) -> str:
+    """`weekdays` -> `on weekdays`, `daily` -> `every day`, `every:15m` -> `every 15m`."""
+    s = str(schedule).strip().lower()
+    if s == "weekdays":
+        return "on weekdays"
+    if s == "daily":
+        return "every day"
+    if s.startswith("every:"):
+        return f"every {s.removeprefix('every:')}"
+    return f"on schedule {schedule}"
+
+
+# --- display-field limits: refuse on registration, repair on refresh ---------
+#
+# ⚠ A BAD DISPLAY FIELD MUST NEVER REFUSE A LIVENESS PING. Registering and
+# refreshing are the same call, so a 422 on a refresh freezes `last_seen` and
+# the gateway then reports a job that is running as silent — the fabricated
+# outage `service.refresh_heartbeat` is written never to cause. The split is
+# CG-76's: a NEW check with bad display text is a mistake being made now, by
+# the party who can fix it, and is refused with the reasons; an EXISTING
+# check's refresh is accepted and its display text repaired to fit.
+
+def _is_line_break_or_control(ch: str) -> bool:
+    """Control characters (C0, DEL, C1) and Unicode line/paragraph separators."""
+    return unicodedata.category(ch) in ("Cc", "Zl", "Zp")
+
+
+def display_problems(name: str | None, description: str | None, why: str | None,
+                     steps: list[str] | None) -> list[str]:
+    """Every way these display fields break their limits, in plain words.
+
+    Empty when they are fine. Absent fields (`None`) are always fine.
+    """
+    problems: list[str] = []
+    for label, value, limit in (("name", name, MAX_NAME_LEN),
+                                ("description", description, MAX_DESCRIPTION_LEN),
+                                ("why", why, MAX_WHY_LEN)):
+        if value is None:
+            continue
+        if not value.strip():
+            problems.append(f"{label} is empty")
+        if len(value) > limit:
+            problems.append(f"{label} is {len(value)} characters, limit {limit}")
+        if any(_is_line_break_or_control(ch) for ch in value):
+            problems.append(f"{label} must be one line, with no control characters")
+    if steps is not None:
+        if len(steps) > MAX_STEPS:
+            problems.append(f"steps has {len(steps)} items, limit {MAX_STEPS}")
+        for n, step in enumerate(steps, 1):
+            if not step.strip():
+                problems.append(f"step {n} is empty")
+            if len(step) > MAX_STEP_LEN:
+                problems.append(f"step {n} is {len(step)} characters, limit {MAX_STEP_LEN}")
+            if any(_is_line_break_or_control(ch) for ch in step):
+                problems.append(f"step {n} must be one line, with no control characters")
+    return problems
+
+
+def _repair_line(value: str, limit: int) -> str:
+    one_line = "".join(" " if _is_line_break_or_control(ch) else ch for ch in value)
+    return _cap(one_line.strip(), limit)
+
+
+def repair_display(name: str | None, description: str | None, why: str | None,
+                   steps: list[str] | None) -> dict:
+    """The display fields made to fit: one line each, cut to their limits,
+    empty steps dropped and only the first `MAX_STEPS` kept. Keyword arguments
+    for `HeartbeatStore.refresh_seen`."""
+    return {
+        "name": _repair_line(name or "", MAX_NAME_LEN),
+        "description": _repair_line(description or "", MAX_DESCRIPTION_LEN),
+        "why": _repair_line(why or "", MAX_WHY_LEN),
+        "steps": [r for r in (_repair_line(s, MAX_STEP_LEN) for s in steps or [])
+                  if r][:MAX_STEPS],
+    }
 
 
 @dataclass
@@ -244,6 +412,31 @@ class Check:
     #: RESET by `refresh` (a recovery ends the outage, so the next one starts a
     #: fresh ladder) — unlike `thread_started`, which does not.
     alert_count: int = 0
+    #: Optional app-written display text (owner request, 2026-11-20). The
+    #: gateway stores it and places it in the messages below; it never reads
+    #: meaning out of it (hard rule #1). Each refresh REPLACES all four with
+    #: what that request sent, like `schedule` and `grace`, so a refresh that
+    #: omits them clears them. Defaults keep a state file written before these
+    #: fields existed loading unchanged.
+    name: str = ""             # short human name: "Stock spreads job"
+    description: str = ""      # noun phrase that starts a sentence: what, where
+    why: str = ""              # why a miss matters
+    steps: list[str] = field(default_factory=list)  # what to do, in order
+
+    def display_name(self) -> str:
+        """`name` if the app gave one, else the check id."""
+        return _text(self.name) or self.check_id
+
+    def subject(self) -> str:
+        """Who the lead sentence is about: description, else name, else check id.
+
+        App-written text is used exactly as written (hard rule #1): the
+        contract asks for a phrase that can start a sentence, and re-casing it
+        would turn `eBay sync job` into `EBay sync job`. A bare check id is an
+        identifier, so it is shown as registered, as `The check daily-run`.
+        """
+        return (_text(self.description) or _text(self.name)
+                or f"The check {self.check_id}")
 
     def next_due(self) -> dt.datetime:
         kind, period = parse_schedule(self.schedule)
@@ -291,14 +484,34 @@ class Check:
         return format_elapsed((now - last).total_seconds())
 
 
-# --- CG-86 message composition -----------------------------------------------
+# --- message composition (CG-86 threading; plain English since 2026-11-20) ---
 #
-# Four messages, one thread. Every body opens with its own UTC timestamp line
-# and closes with an `Action:` line — including when the action is `none`,
-# because "no action needed" is information and silence is not (the owner's
-# chat policy, §Hygiene). The thread ROOT is the one exception to the timestamp
-# line: it is a Thread Title, not a reply, and the policy gives it its own
-# fixed shape, quoted in `thread_root_message` below.
+# Four messages, one thread. Each body leads with a plain sentence saying what
+# is wrong (or fine), then what to do, and closes with ONE `Details:` line
+# carrying the check id, schedule, grace and — on replies — the UTC stamp.
+# Every message still names its action, including `none` (the owner's chat
+# policy, §Hygiene): the alert does it with its "What to do:" list, the root
+# and the all-clear with an `Action:` line.
+#
+# Local times use the check's own `tz`, named once per message; the UTC stamp
+# is kept only on the `Details:` line. Owner decision, 2026-11-20: an approved
+# exception to the policy's UTC rule for wall-clock jobs.
+
+#: What the alert tells the reader to do when the app sent no `steps`. Plain,
+#: and true for any job: the gateway knows nothing about the job but its
+#: silence (hard rule #1).
+DEFAULT_STEPS = (
+    "Look at the job's log on the machine that runs it.",
+    "If the job is retired, delete this check.",
+)
+
+
+def _details(check: Check, *extra: str) -> str:
+    """The one closing machine-facts line: `Details: check X, weekdays, grace 3h, ...`."""
+    parts = [f"check {check.check_id}", str(check.schedule), f"grace {check.grace}",
+             *extra]
+    return "Details: " + ", ".join(parts) + "."
+
 
 def thread_root_message(check: Check) -> tuple[str, str]:
     """(title, body) for the message that OPENS a check's thread.
@@ -307,18 +520,22 @@ def thread_root_message(check: Check) -> tuple[str, str]:
     never misses must never post anything. Rendered `info` (quiet) and routed
     `alert` (CG-86 D2), so it lands in the same space as the alert it is about
     — threading is per-space, and a root in another room threads nothing.
+
+    Keeps the policy's Thread Title parts — the 🧵 marker, what the thread is
+    about, what closes it — in plain words. Its body is capped to the info
+    lane's combined budget, because an info message over it is refused by
+    validation and the root would never post.
     """
-    key = check.thread_key()
-    title = f"[{check.source}] 🧵 Heartbeat {check.check_id}"
+    title = _cap(f"[{check.source}] 🧵 {check.display_name()} — check-in watch",
+                 MAX_TITLE_LEN)
     body = (
-        f"Subject: dead-man check {check.check_id} for {check.source} "
-        f"(schedule {check.schedule}, grace {check.grace}, tz {check.tz}).\n"
-        f"Closes when: the check refreshes, or is deleted.\n"
-        f"Identifiers: source {check.source}, check_id {check.check_id}, "
-        f"thread {key}.\n"
-        f"Action: none — this message opens the thread."
+        f"{check.subject()} should check in {_schedule_phrase(check.schedule)}. "
+        f"If it is more than {check.grace} late, an alert follows in this thread.\n"
+        f"Closes when: it checks in again, or this check is deleted.\n"
+        f"Action: none — this message opens the thread.\n"
+        + _details(check, f"tz {check.tz}", f"thread {check.thread_key()}")
     )
-    return title[:MAX_TITLE_LEN], body
+    return title, _cap(body, MAX_INFO_COMBINED_LEN - len(title))
 
 
 def alert_message(check: Check, now: dt.datetime,
@@ -333,29 +550,51 @@ def alert_message(check: Check, now: dt.datetime,
     The two are distinguished by `alert_count`, not by `status`: `status` is
     already `missed` by the time a reminder is composed, so branching on it
     would call every alert a reminder.
+
+    The title's figure is the time since the last check-in — the number the
+    owner's approved sample shows ("27h overdue" for a job last seen 27 hours
+    earlier) — not the time past the deadline, which on a first alert is always
+    about one scan interval and tells the reader nothing.
     """
     elapsed = check.elapsed_since_seen(now)
     first = check.alert_count == 0
-    subject = f"heartbeat {check.check_id}"
-    title = _title(check.source, subject,
-                   f"missed, no refresh for {elapsed}" if first
-                   else f"still missed, {elapsed}")
-    nxt = format_elapsed(repeat_after(check.alert_count + 1, repeat_s))
+    title = _title(check.source, f"{check.display_name()} didn't check in",
+                   f"{elapsed} overdue" if first else f"still missing, {elapsed}")
+    _, zone_label = _zone(check.tz)
+    last_seen = dt.datetime.fromisoformat(check.last_seen)
+    lines = [
+        f"{check.subject()} last checked in "
+        f"{format_local(last_seen, check.tz)} ({zone_label}). "
+        f"It should have checked in again by "
+        f"{format_local(check.deadline(), check.tz)}.",
+    ]
+    why = _text(check.why)
+    if why:
+        lines += ["", f"Why it matters: {why}"]
+    steps = _steps(check.steps) or list(DEFAULT_STEPS)
+    lines += ["", "What to do:"]
+    lines += [f"{n}. {step}" for n, step in enumerate(steps, 1)]
+    nxt = now + dt.timedelta(seconds=repeat_after(check.alert_count + 1, repeat_s))
+    # Within six days a weekday names the moment unambiguously; at the weekly
+    # ceiling it would name today, so the date comes back.
+    short = (nxt - now) < dt.timedelta(days=6)
+    lines += ["", f"Next reminder: {format_local(nxt, check.tz, short=short)} "
+                  f"if still missing."]
     # ⚠ `alert_count`, NOT `alert_count + 1`. The count is how many alerts have
     # ALREADY gone out, so the first reminder — the second alert — is reminder
     # ONE. It was labelled `(reminder 2)` until 2026-08-31: a human-facing
     # ordinal that started at two, because it was counting alerts under a word
     # that means something else.
-    lead = (f"missed, no refresh for {elapsed}" if first
-            else f"still missed, {elapsed} (reminder {check.alert_count})")
-    body = (
-        f"{_utc_stamp(now)} · {lead}\n"
-        f"No refresh since {check.last_seen} (schedule {check.schedule}, "
-        f"grace {check.grace}, tz {check.tz}).\n"
-        f"Next reminder in {nxt} if it is still missed.\n"
-        f"Action: refresh this check, or delete it if the job is retired."
-    )
-    return title, body
+    extra = [] if first else [f"reminder {check.alert_count}"]
+    lines.append(_details(check, *extra, _utc_stamp(now)))
+    # ⚠ ESCAPED, AND ONLY HERE. The alert renders as a card, and a Cards v2
+    # `textParagraph` reads a subset of HTML, so app text such as
+    # `sort < input.txt` would be mangled or stripped. The thread root and the
+    # all-clear render `info`, as plain text, and must NOT be escaped or they
+    # would show `&lt;` literally. Every other byte here is the gateway's own
+    # and holds no `<` or `&`, so escaping the whole body is the same as
+    # escaping the app's fields.
+    return title, _cap(html.escape("\n".join(lines), quote=False), MAX_BODY_LEN)
 
 
 def recovery_message(previous: Check, now: dt.datetime) -> tuple[str, str]:
@@ -364,7 +603,9 @@ def recovery_message(previous: Check, now: dt.datetime) -> tuple[str, str]:
     `previous` is the check as it stood BEFORE the refresh — the refresh has
     already replaced it in the store, and `last_seen` on the new one is `now`,
     which would make every outage report as zero. The elapsed figure is the
-    length of the SILENCE: the old `last_seen` to now.
+    length of the SILENCE: the old `last_seen` to now. The display text is the
+    previous check's too, so the all-clear names the job the way the alert it
+    closes did.
 
     Rendered `info` (the policy's quiet lane) and routed `alert`, so it threads
     under the alert it closes. That routing is not a nicety: `RESOLVED` is quiet
@@ -372,15 +613,18 @@ def recovery_message(previous: Check, now: dt.datetime) -> tuple[str, str]:
     about, so an all-clear in a different space is an all-clear nobody sees.
     """
     elapsed = previous.elapsed_since_seen(now)
-    title = _title(previous.source, f"heartbeat {previous.check_id}",
-                   f"recovered after {elapsed}")
+    title = _title(previous.source, previous.display_name(),
+                   f"back to normal after {elapsed}")
+    _, zone_label = _zone(previous.tz)
     body = (
-        f"{_utc_stamp(now)} · recovered after {elapsed}\n"
-        f"A refresh arrived; the check is ok again (schedule "
-        f"{previous.schedule}, grace {previous.grace}, tz {previous.tz}).\n"
-        f"Action: none — this closes the missed-check alert above."
+        f"{previous.subject()} checked in again at "
+        f"{format_local(now, previous.tz)} ({zone_label}). "
+        f"It is back to normal after {elapsed} without a check-in.\n"
+        f"\n"
+        f"Action: none — this closes the alert above.\n"
+        + _details(previous, _utc_stamp(now))
     )
-    return title, body
+    return title, _cap(body, MAX_INFO_COMBINED_LEN - len(title))
 
 
 class HeartbeatStore:
@@ -447,17 +691,20 @@ class HeartbeatStore:
         return self._now()
 
     def refresh(self, source: str, check_id: str, schedule: str, grace: str,
-                tz: str = DEFAULT_TZ) -> Check:
+                tz: str = DEFAULT_TZ, **display) -> Check:
         """Register or refresh a check. A thin wrapper — see `refresh_seen`.
 
-        Kept at this exact signature and return type on purpose: every existing
-        caller and test uses it, and CG-86 needed only the ONE extra fact
-        `refresh_seen` returns.
+        Kept at this positional signature and return type on purpose: every
+        existing caller and test uses it, and CG-86 needed only the ONE extra
+        fact `refresh_seen` returns. `display` is `refresh_seen`'s keyword-only
+        display text, passed through.
         """
-        return self.refresh_seen(source, check_id, schedule, grace, tz)[0]
+        return self.refresh_seen(source, check_id, schedule, grace, tz, **display)[0]
 
     def refresh_seen(self, source: str, check_id: str, schedule: str, grace: str,
-                     tz: str = DEFAULT_TZ) -> tuple[Check, Check | None]:
+                     tz: str = DEFAULT_TZ, *, name: str = "", description: str = "",
+                     why: str = "", steps: list[str] | tuple[str, ...] = ()
+                     ) -> tuple[Check, Check | None]:
         """Refresh, and hand back the check as it stood BEFORE this call.
 
         Returns `(new_check, previous)`; `previous` is `None` when there was no
@@ -466,7 +713,7 @@ class HeartbeatStore:
         ⚠ A SNAPSHOT COPY, NOT THE STORED OBJECT, AND NOT MERELY ITS STATUS.
         CG-86 D6 specifies "a method returning `(new_check, previous_status)`",
         and a bare status is not enough to build the message it exists for: the
-        recovery title is "recovered after <elapsed>", whose elapsed is the old
+        recovery title is "back to normal after <elapsed>", whose elapsed is the old
         check's `last_seen` to now, and the old `last_seen` is gone from the
         store the instant this method returns. Handing back the LIVE object
         instead would re-open the CG-76 window from the other side — a
@@ -493,6 +740,11 @@ class HeartbeatStore:
         one starts its backoff ladder from the top. `thread_started` does not,
         because the thread's durable subject is the CHECK, not the outage —
         letting it reset would re-post a thread root on every ping.
+
+        The display fields (`name`, `description`, `why`, `steps`) follow the
+        construct-fresh rule too: each refresh stores exactly what it was sent,
+        so a refresh without them clears them. Their LENGTHS are bounded at the
+        HTTP edge (`HeartbeatIn`); this store keeps whatever it is handed.
         """
         parse_schedule(schedule)  # validate early
         parse_duration(grace)
@@ -503,7 +755,9 @@ class HeartbeatStore:
             check = Check(source=source, check_id=check_id, schedule=schedule,
                           grace=grace, tz=tz, last_seen=now.isoformat(),
                           last_alerted="", status="ok",
-                          thread_started=bool(previous and previous.thread_started))
+                          thread_started=bool(previous and previous.thread_started),
+                          name=name, description=description, why=why,
+                          steps=list(steps))
             self._checks[(source, check_id)] = check
             self._save()
             snapshot = replace(previous) if previous is not None else None

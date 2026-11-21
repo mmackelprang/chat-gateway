@@ -36,7 +36,7 @@ from .envelope import CG_ACTION_KEY, DeliveryResult, OutboundMessage
 from .errors import describe_exception
 from .heartbeat import (
     DEFAULT_TZ, HeartbeatError, HeartbeatMonitor, HeartbeatStore,
-    recovery_message,
+    display_problems, recovery_message, repair_display,
 )
 from .inbox import Inbox
 from .mcp import TOOL_NAMES as MCP_TOOL_NAMES, build_router as build_mcp_router
@@ -312,6 +312,29 @@ class HeartbeatIn(BaseModel):
     schedule: str = Field(description="weekdays | daily | every:<N><s|m|h|d>")
     grace: str = Field(description="duration, e.g. 2h, 90m, 1d")
     tz: str = Field(default=DEFAULT_TZ)
+    # Optional display text for the dead-man messages (owner request,
+    # 2026-11-20). Generic and app-written: the gateway stores it and places it
+    # in a fixed layout, and never reads meaning out of it (hard rule #1). A
+    # request without them is exactly as valid as before — aitrader is frozen
+    # and will never send them. Each refresh replaces all four.
+    #
+    # ⚠ THE LIMITS ARE DELIBERATELY NOT pydantic CONSTRAINTS. A constraint here
+    # would 422 every call, refreshes included, and a refused refresh freezes
+    # `last_seen` and fabricates an outage. `refresh_heartbeat` applies them
+    # instead: refused on registration, repaired on refresh
+    # (`heartbeat.display_problems` / `repair_display`). Limits:
+    # `heartbeat.MAX_NAME_LEN`, `MAX_DESCRIPTION_LEN`, `MAX_WHY_LEN`,
+    # `MAX_STEPS`, `MAX_STEP_LEN`.
+    name: str | None = Field(default=None,
+                             description="short human name, e.g. 'Stock spreads job'")
+    description: str | None = Field(
+        default=None,
+        description="noun phrase that can start a sentence: what it is and where "
+                    "it runs, e.g. 'The stock-spreads job on the appserver'")
+    why: str | None = Field(default=None, description="why a missed check-in matters")
+    steps: list[str] | None = Field(
+        default=None,
+        description="what the reader should do, in order; one short line each")
 
 
 def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
@@ -563,11 +586,11 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         # `is_missed`, and the moment the route is restored the gateway
         # delivers a missed-check alert for a source that never stopped
         # pinging. (That measurement delivered `[ALERT] heartbeat missed:
-        # daily-run`; CG-86 retired that wire shape on 2026-08-31 and the title
-        # is now `[aitrader] heartbeat daily-run — missed, no refresh for …`.
-        # The measurement is unchanged — only its rendering moved — so the
-        # quote is dropped rather than updated, because a quoted string in this
-        # comment is a second copy of a title that lives in `_title`.)
+        # daily-run`, a wire shape since retired twice — by CG-86 on 2026-08-31
+        # and by the plain-English rewrite on 2026-11-20. The measurement is
+        # unchanged; only its rendering moved. The current title lives in
+        # `heartbeat.alert_message` and is deliberately not quoted here, since a
+        # quoted title in this comment is a second copy that goes stale.)
         # A registry misconfiguration becomes a
         # FABRICATED outage, on the very source this feature exists to watch.
         # The dead-man switch must never be the thing that invents the death.
@@ -590,7 +613,18 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         #
         # `str(exc)` is safe: `RegistryError`'s message is authored in
         # `registry.py` and names identities, never URLs (hard rule #2).
-        if not any(c.check_id == h.check_id for c in checks.list_for(app_id)):
+        is_new = not any(c.check_id == h.check_id for c in checks.list_for(app_id))
+        # Display-field limits: the same registration/refresh split, for the
+        # same reason (`heartbeat.display_problems`). A new check is refused
+        # with every problem named; an existing check's ping is always accepted
+        # and its display text repaired to fit.
+        problems = display_problems(h.name, h.description, h.why, h.steps)
+        if is_new and problems:
+            raise HTTPException(
+                status_code=422,
+                detail="cannot register a dead-man check: " + "; ".join(problems))
+        display = repair_display(h.name, h.description, h.why, h.steps)
+        if is_new:
             try:
                 registry.route_for(app_id, "alert")
             except RegistryError as exc:
@@ -603,7 +637,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 ) from exc
         try:
             check, previous = checks.refresh_seen(
-                app_id, h.check_id, h.schedule, h.grace, h.tz)
+                app_id, h.check_id, h.schedule, h.grace, h.tz, **display)
         except (HeartbeatError, Exception) as exc:
             if isinstance(exc, HeartbeatError):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc

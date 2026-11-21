@@ -72,6 +72,11 @@ route for severity 'warning' (add routes: {severity: identity} to the registry)`
 
 `{"check_id": str(1-100), "schedule": str, "grace": str, "tz": str = "America/New_York"}`
 → `{"status": "ok", "check_id": "...", "next_deadline": "<iso8601>"}`.
+Since 2026-11-20 the request also accepts four **optional** display fields
+(`name`, `description`, `why`, `steps`; limits in `docs/integration-guide.md`,
+*Optional display fields*). You do not send them and need not: a request
+without them is accepted exactly as before, and your messages fall back to the
+check id and a generic "What to do" (§7).
 Bad `schedule`/`grace`/`tz` → **422** with the parser's own message. Registering
 and refreshing are the **same call** — see §7.
 
@@ -354,37 +359,52 @@ body:  No refresh since <iso> (schedule weekdays, grace 2h).
 struck rather than deleted because it is what you received until that date.
 Titles now lead with your app id, carry the elapsed delta, and contain **no
 severity word or emoji** — the gateway's own `severity_prefix()` supplies that,
-and a title repeating it renders it twice. Every body opens with its own UTC
-timestamp line and closes with an `Action:` line, including when the action is
-`none`.
+and a title repeating it renders it twice.
+
+⚠ **The wording changed again on 2026-11-20** (plain-English messages, an owner
+request). Threading, routing, severities and cadence are unchanged; only the
+text moved. Bodies now say what is wrong first, in your check's own `tz`
+(named once, `New York`), then what to do, and end with one `Details:` line
+holding the check id, schedule, grace and the UTC stamp. You send no display
+fields, so your messages use the check id and the generic "What to do":
 
 ```
 # posted once per check, at its first alert — rendered info, routed alert
-title: [aitrader] 🧵 Heartbeat daily-trading-run
-body:  Subject: dead-man check daily-trading-run for aitrader (schedule
-       weekdays, grace 2h, tz America/New_York).
-       Closes when: the check refreshes, or is deleted.
-       Identifiers: source aitrader, check_id daily-trading-run,
-       thread hb:aitrader:daily-trading-run.
+title: [aitrader] 🧵 daily-trading-run — check-in watch
+body:  The check daily-trading-run should check in on weekdays. If it is more
+       than 2h late, an alert follows in this thread.
+       Closes when: it checks in again, or this check is deleted.
        Action: none — this message opens the thread.
+       Details: check daily-trading-run, weekdays, grace 2h, tz America/New_York,
+       thread hb:aitrader:daily-trading-run.
 
 # the first miss — rendered alert, routed alert
-title: [aitrader] heartbeat daily-trading-run — missed, no refresh for 7d01h
-body:  <iso>Z · missed, no refresh for 7d01h
-       No refresh since <iso> (schedule weekdays, grace 2h, tz America/New_York).
-       Next reminder in 1d00h if it is still missed.
-       Action: refresh this check, or delete it if the job is retired.
+title: [aitrader] daily-trading-run didn't check in — 1d03h overdue
+body:  The check daily-trading-run last checked in Thu 19 Nov 15:21 (New York).
+       It should have checked in again by Fri 20 Nov 17:21.
 
-# a reminder — same, with "still missed" and a fresh delta
-title: [aitrader] heartbeat daily-trading-run — still missed, 8d01h
+       What to do:
+       1. Look at the job's log on the machine that runs it.
+       2. If the job is retired, delete this check.
+
+       Next reminder: Sat 18:26 if still missing.
+       Details: check daily-trading-run, weekdays, grace 2h, 2026-11-20T23:26:35Z.
+
+# a reminder — same, with "still missing", a fresh delta, and "reminder N"
+# on the Details line
+title: [aitrader] daily-trading-run didn't check in — still missing, 2d03h
 
 # the all-clear — rendered info, routed alert, same thread (CG-86 D6)
-title: [aitrader] heartbeat daily-trading-run — recovered after 8d02h
-body:  <iso>Z · recovered after 8d02h
-       A refresh arrived; the check is ok again (schedule weekdays, grace 2h,
-       tz America/New_York).
-       Action: none — this closes the missed-check alert above.
+title: [aitrader] daily-trading-run — back to normal after 1d03h
+body:  The check daily-trading-run checked in again at Fri 20 Nov 18:26
+       (New York). It is back to normal after 1d03h without a check-in.
+
+       Action: none — this closes the alert above.
+       Details: check daily-trading-run, weekdays, grace 2h, 2026-11-20T23:26:35Z.
 ```
+
+The overdue figure in the first title is the time since your last check-in,
+not the time past the deadline.
 
 ⚠ **THE ALL-CLEAR IS NEW, AND IT FIRES ON THE `missed` → `ok` TRANSITION
 ONLY.** Before CG-86 a recovery delivered **nothing at all** — `refresh()`
