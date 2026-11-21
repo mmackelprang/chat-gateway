@@ -2046,11 +2046,12 @@ def test_the_alert_without_display_fields_says_the_plain_default():
     assert "Why it matters" not in body
 
 
-def test_a_name_without_a_description_leads_the_sentence():
+def test_a_name_without_a_description_leads_the_sentence_as_written():
+    """App text is shown as written — re-casing `eBay` would make `EBay`."""
     title, body = alert_message(
-        _spreads_check(description="", name="stock spreads job"), SPREADS_NOW)
-    assert title.startswith("[aitrader] stock spreads job didn't check in — ")
-    assert body.startswith("Stock spreads job last checked in Thu 19 Nov 15:21")
+        _spreads_check(description="", name="eBay sync job"), SPREADS_NOW)
+    assert title.startswith("[aitrader] eBay sync job didn't check in — ")
+    assert body.startswith("eBay sync job last checked in Thu 19 Nov 15:21")
 
 
 def test_a_reminder_says_still_missing_and_counts_itself():
@@ -2290,3 +2291,71 @@ def test_a_heartbeats_json_written_before_the_display_fields_still_loads(tmp_pat
     title, body = alert_message(check, SPREADS_NOW)
     assert title.startswith("[aitrader] daily-run didn't check in — ")
     assert f"1. {DEFAULT_STEPS[0]}" in body
+
+
+def test_a_refresh_with_bad_display_fields_is_still_a_liveness_ping(registry, tmp_path):
+    """⚠ A bad display field must never refuse a refresh: a refused refresh
+    freezes `last_seen` and the gateway reports a running job as silent. The
+    check's ping is accepted and its text repaired to fit."""
+    clock = Clock(dt.datetime(2026, 11, 19, 20, 21, tzinfo=UTC))
+    client, app, _ = make_client(registry, clock, tmp_path)
+    base = {"check_id": "spreads", "schedule": "weekdays", "grace": "3h"}
+    assert client.post("/v1/heartbeat", headers=AUTH,
+                       json={**base, "name": "Spreads"}).status_code == 200
+
+    clock.now += dt.timedelta(hours=1)
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        **base, "name": "N" * (MAX_NAME_LEN + 5), "why": "two\nlines here",
+        "steps": ["S" * (MAX_STEP_LEN + 1), "", "ok"] + ["more"] * MAX_STEPS})
+    assert r.status_code == 200
+    check = app.state.heartbeats.list_for("aitrader")[0]
+    assert check.last_seen == clock.now.isoformat(), "the ping counted"
+    assert len(check.name) == MAX_NAME_LEN and check.name.endswith("…")
+    assert check.why == "two lines here"
+    assert len(check.steps) == MAX_STEPS
+    assert len(check.steps[0]) == MAX_STEP_LEN and check.steps[1] == "ok"
+
+
+def test_a_refused_registration_names_every_problem(registry, tmp_path):
+    clock = Clock(dt.datetime(2026, 11, 19, 20, 21, tzinfo=UTC))
+    client, _, _ = make_client(registry, clock, tmp_path)
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "spreads", "schedule": "weekdays", "grace": "3h",
+        "name": "N" * (MAX_NAME_LEN + 1), "steps": ["ok", "bad\u0085step"]})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert f"name is {MAX_NAME_LEN + 1} characters, limit {MAX_NAME_LEN}" in detail
+    assert "step 2 must be one line" in detail
+
+
+@pytest.mark.parametrize("extra", [
+    {"why": "line separator"},
+    {"why": "paragraph separator"},
+    {"description": "c1\u0085control"},
+])
+def test_unicode_line_breaks_are_refused_on_registration(registry, tmp_path, extra):
+    clock = Clock(dt.datetime(2026, 11, 19, 20, 21, tzinfo=UTC))
+    client, _, _ = make_client(registry, clock, tmp_path)
+    r = client.post("/v1/heartbeat", headers=AUTH, json={
+        "check_id": "spreads", "schedule": "weekdays", "grace": "3h", **extra})
+    assert r.status_code == 422
+
+
+def test_app_text_is_escaped_in_the_card_and_plain_in_the_info_messages():
+    """The alert renders as a card, whose `textParagraph` reads HTML; the root
+    and the all-clear render as plain text and must show the text as is."""
+    odd = _spreads_check(description="The <b>sort</b> job", why="A & B",
+                         steps=["Run sort < input.txt"])
+    _, body = alert_message(odd, SPREADS_NOW)
+    assert body.startswith("The &lt;b&gt;sort&lt;/b&gt; job last checked in")
+    assert "Why it matters: A &amp; B" in body
+    assert "1. Run sort &lt; input.txt" in body
+    assert "&#x27;" not in alert_message(_spreads_check(), SPREADS_NOW)[1], "apostrophes stay"
+    assert thread_root_message(odd)[1].startswith("The <b>sort</b> job should")
+    assert recovery_message(odd, SPREADS_NOW)[1].startswith("The <b>sort</b> job checked")
+
+
+def test_an_etc_zone_keeps_its_full_name():
+    """`Etc/GMT+5` is five hours BEHIND UTC; its last segment alone misleads."""
+    check = _spreads_check(tz="Etc/GMT+5", schedule="daily")
+    assert "Thu 19 Nov 15:21 (Etc/GMT+5)" in alert_message(check, SPREADS_NOW)[1]

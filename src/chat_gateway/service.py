@@ -19,13 +19,13 @@ from __future__ import annotations
 import datetime as dt
 import os
 import re
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, StringConstraints, field_validator
+from pydantic import BaseModel, Field
 
 from . import __version__
 # No cycle: `admin` imports delivery / registry / auth / the store, never this.
@@ -35,9 +35,8 @@ from .delivery import DeliveryLog, Dispatcher
 from .envelope import CG_ACTION_KEY, DeliveryResult, OutboundMessage
 from .errors import describe_exception
 from .heartbeat import (
-    DEFAULT_TZ, MAX_DESCRIPTION_LEN, MAX_NAME_LEN, MAX_STEP_LEN, MAX_STEPS,
-    MAX_WHY_LEN, HeartbeatError, HeartbeatMonitor, HeartbeatStore,
-    recovery_message,
+    DEFAULT_TZ, HeartbeatError, HeartbeatMonitor, HeartbeatStore,
+    display_problems, recovery_message, repair_display,
 )
 from .inbox import Inbox
 from .mcp import TOOL_NAMES as MCP_TOOL_NAMES, build_router as build_mcp_router
@@ -308,9 +307,6 @@ async def _admin_refusal_handler(request: Request, exc: AdminRefusal):
                         headers=getattr(exc, "headers", None))
 
 
-_HeartbeatStep = Annotated[str, StringConstraints(min_length=1, max_length=MAX_STEP_LEN)]
-
-
 class HeartbeatIn(BaseModel):
     check_id: str = Field(min_length=1, max_length=100)
     schedule: str = Field(description="weekdays | daily | every:<N><s|m|h|d>")
@@ -321,37 +317,24 @@ class HeartbeatIn(BaseModel):
     # in a fixed layout, and never reads meaning out of it (hard rule #1). A
     # request without them is exactly as valid as before — aitrader is frozen
     # and will never send them. Each refresh replaces all four.
-    name: str | None = Field(default=None, min_length=1, max_length=MAX_NAME_LEN,
+    #
+    # ⚠ THE LIMITS ARE DELIBERATELY NOT pydantic CONSTRAINTS. A constraint here
+    # would 422 every call, refreshes included, and a refused refresh freezes
+    # `last_seen` and fabricates an outage. `refresh_heartbeat` applies them
+    # instead: refused on registration, repaired on refresh
+    # (`heartbeat.display_problems` / `repair_display`). Limits:
+    # `heartbeat.MAX_NAME_LEN`, `MAX_DESCRIPTION_LEN`, `MAX_WHY_LEN`,
+    # `MAX_STEPS`, `MAX_STEP_LEN`.
+    name: str | None = Field(default=None,
                              description="short human name, e.g. 'Stock spreads job'")
     description: str | None = Field(
-        default=None, min_length=1, max_length=MAX_DESCRIPTION_LEN,
+        default=None,
         description="noun phrase that can start a sentence: what it is and where "
                     "it runs, e.g. 'The stock-spreads job on the appserver'")
-    why: str | None = Field(default=None, min_length=1, max_length=MAX_WHY_LEN,
-                            description="why a missed check-in matters")
-    steps: list[_HeartbeatStep] | None = Field(
-        default=None, max_length=MAX_STEPS,
+    why: str | None = Field(default=None, description="why a missed check-in matters")
+    steps: list[str] | None = Field(
+        default=None,
         description="what the reader should do, in order; one short line each")
-
-    @field_validator("name", "description", "why")
-    @classmethod
-    def _one_line(cls, v: str | None) -> str | None:
-        if v is not None:
-            _require_one_line(v)
-        return v
-
-    @field_validator("steps")
-    @classmethod
-    def _steps_one_line(cls, v: list[str] | None) -> list[str] | None:
-        for step in v or ():
-            _require_one_line(step)
-        return v
-
-
-def _require_one_line(text: str) -> None:
-    """Display text is one line: a control character would break the layout."""
-    if any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
-        raise ValueError("must be one line of text, with no control characters")
 
 
 def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
@@ -630,7 +613,18 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
         #
         # `str(exc)` is safe: `RegistryError`'s message is authored in
         # `registry.py` and names identities, never URLs (hard rule #2).
-        if not any(c.check_id == h.check_id for c in checks.list_for(app_id)):
+        is_new = not any(c.check_id == h.check_id for c in checks.list_for(app_id))
+        # Display-field limits: the same registration/refresh split, for the
+        # same reason (`heartbeat.display_problems`). A new check is refused
+        # with every problem named; an existing check's ping is always accepted
+        # and its display text repaired to fit.
+        problems = display_problems(h.name, h.description, h.why, h.steps)
+        if is_new and problems:
+            raise HTTPException(
+                status_code=422,
+                detail="cannot register a dead-man check: " + "; ".join(problems))
+        display = repair_display(h.name, h.description, h.why, h.steps)
+        if is_new:
             try:
                 registry.route_for(app_id, "alert")
             except RegistryError as exc:
@@ -643,9 +637,7 @@ def create_app(registry: Registry, inbox: Inbox, adapters: dict[str, Any],
                 ) from exc
         try:
             check, previous = checks.refresh_seen(
-                app_id, h.check_id, h.schedule, h.grace, h.tz,
-                name=h.name or "", description=h.description or "",
-                why=h.why or "", steps=h.steps or [])
+                app_id, h.check_id, h.schedule, h.grace, h.tz, **display)
         except (HeartbeatError, Exception) as exc:
             if isinstance(exc, HeartbeatError):
                 raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -113,8 +113,15 @@ out and every request behaves exactly as before.
 | `why` | string, 1 to 500 characters | A `Why it matters:` line in the alert |
 | `steps` | list of up to 8 strings, each 1 to 160 characters | The alert's numbered `What to do:` list, in order |
 
-Each is one line: a newline or other control character is a **422**, and so is
-anything over its limit. **Each refresh replaces all four** with what that
+Each must be one line, with no newline, control character or Unicode line
+separator. **Breaking a limit is refused only when you register a new
+check:** the 422 names every problem. On a refresh of a check that already
+exists, the ping is always accepted, because a refused refresh would freeze the
+check and report your running job as silent. The text is repaired instead: line
+breaks become spaces, over-long text is cut with `…`, empty steps are dropped,
+and only the first 8 steps are kept. The text is shown exactly as you write it,
+so start `description` the way a sentence should start. In the alert card it is
+HTML-escaped, so `<` and `&` show as written. **Each refresh replaces all four** with what that
 request sent, like `schedule` and `grace`: a refresh that leaves them out
 clears them, so send them on every call. With no `name` the title uses the
 check id; with no `steps` the alert says *Look at the job's log on the machine

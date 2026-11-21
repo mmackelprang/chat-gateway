@@ -44,9 +44,11 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import html
 import json
 import re
 import threading
+import unicodedata
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Callable
@@ -233,7 +235,7 @@ def _title(source: str, subject: str, delta: str) -> str:
 
     ⚠ THE CAP IS A DROPPED-ALERT GUARD, not cosmetic. `MAX_TITLE_LEN` says
     what an overflow costs. Truncation takes the TAIL because the head is the
-    identifying half — `[source] heartbeat <check_id>` — and losing the
+    identifying half — `[source] <name or check_id>` — and losing the
     elapsed delta from a title still leaves the body, which carries it in
     full and is four thousand characters wide.
     """
@@ -262,12 +264,15 @@ def _zone(tz: str) -> tuple[dt.tzinfo, str]:
     The label is the IANA name's last segment with underscores as spaces:
     `America/New_York` -> `New York`, `UTC` -> `UTC`. `refresh_seen` validates
     `tz` on the way in, so the fallback covers only a hand-edited state file or
-    an image without that zone's data.
+    an image without that zone's data. An `Etc/` zone keeps its full name,
+    because its last segment misleads: `Etc/GMT+5` is five hours BEHIND UTC.
     """
     try:
         zone = ZoneInfo(tz)
     except Exception:  # noqa: BLE001 — never strand an alert on a display value
         return dt.timezone.utc, "UTC"
+    if str(tz).startswith("Etc/"):
+        return zone, str(tz)
     return zone, str(tz).rsplit("/", 1)[-1].replace("_", " ")
 
 
@@ -297,11 +302,6 @@ def _steps(value: object) -> list[str]:
     return [s.strip() for s in value if isinstance(s, str) and s.strip()]
 
 
-def _sentence_start(text: str) -> str:
-    """`text` with its first character upper-cased, for the start of a sentence."""
-    return text[:1].upper() + text[1:]
-
-
 def _schedule_phrase(schedule: str) -> str:
     """`weekdays` -> `on weekdays`, `daily` -> `every day`, `every:15m` -> `every 15m`."""
     s = str(schedule).strip().lower()
@@ -312,6 +312,71 @@ def _schedule_phrase(schedule: str) -> str:
     if s.startswith("every:"):
         return f"every {s.removeprefix('every:')}"
     return f"on schedule {schedule}"
+
+
+# --- display-field limits: refuse on registration, repair on refresh ---------
+#
+# ⚠ A BAD DISPLAY FIELD MUST NEVER REFUSE A LIVENESS PING. Registering and
+# refreshing are the same call, so a 422 on a refresh freezes `last_seen` and
+# the gateway then reports a job that is running as silent — the fabricated
+# outage `service.refresh_heartbeat` is written never to cause. The split is
+# CG-76's: a NEW check with bad display text is a mistake being made now, by
+# the party who can fix it, and is refused with the reasons; an EXISTING
+# check's refresh is accepted and its display text repaired to fit.
+
+def _is_line_break_or_control(ch: str) -> bool:
+    """Control characters (C0, DEL, C1) and Unicode line/paragraph separators."""
+    return unicodedata.category(ch) in ("Cc", "Zl", "Zp")
+
+
+def display_problems(name: str | None, description: str | None, why: str | None,
+                     steps: list[str] | None) -> list[str]:
+    """Every way these display fields break their limits, in plain words.
+
+    Empty when they are fine. Absent fields (`None`) are always fine.
+    """
+    problems: list[str] = []
+    for label, value, limit in (("name", name, MAX_NAME_LEN),
+                                ("description", description, MAX_DESCRIPTION_LEN),
+                                ("why", why, MAX_WHY_LEN)):
+        if value is None:
+            continue
+        if not value.strip():
+            problems.append(f"{label} is empty")
+        if len(value) > limit:
+            problems.append(f"{label} is {len(value)} characters, limit {limit}")
+        if any(_is_line_break_or_control(ch) for ch in value):
+            problems.append(f"{label} must be one line, with no control characters")
+    if steps is not None:
+        if len(steps) > MAX_STEPS:
+            problems.append(f"steps has {len(steps)} items, limit {MAX_STEPS}")
+        for n, step in enumerate(steps, 1):
+            if not step.strip():
+                problems.append(f"step {n} is empty")
+            if len(step) > MAX_STEP_LEN:
+                problems.append(f"step {n} is {len(step)} characters, limit {MAX_STEP_LEN}")
+            if any(_is_line_break_or_control(ch) for ch in step):
+                problems.append(f"step {n} must be one line, with no control characters")
+    return problems
+
+
+def _repair_line(value: str, limit: int) -> str:
+    one_line = "".join(" " if _is_line_break_or_control(ch) else ch for ch in value)
+    return _cap(one_line.strip(), limit)
+
+
+def repair_display(name: str | None, description: str | None, why: str | None,
+                   steps: list[str] | None) -> dict:
+    """The display fields made to fit: one line each, cut to their limits,
+    empty steps dropped and only the first `MAX_STEPS` kept. Keyword arguments
+    for `HeartbeatStore.refresh_seen`."""
+    return {
+        "name": _repair_line(name or "", MAX_NAME_LEN),
+        "description": _repair_line(description or "", MAX_DESCRIPTION_LEN),
+        "why": _repair_line(why or "", MAX_WHY_LEN),
+        "steps": [r for r in (_repair_line(s, MAX_STEP_LEN) for s in steps or [])
+                  if r][:MAX_STEPS],
+    }
 
 
 @dataclass
@@ -365,14 +430,13 @@ class Check:
     def subject(self) -> str:
         """Who the lead sentence is about: description, else name, else check id.
 
-        App-written text gets a capital first letter, since it opens a
-        sentence. A bare check id never does: `daily-run` is an identifier and
-        is shown exactly as registered, as `The check daily-run`.
+        App-written text is used exactly as written (hard rule #1): the
+        contract asks for a phrase that can start a sentence, and re-casing it
+        would turn `eBay sync job` into `EBay sync job`. A bare check id is an
+        identifier, so it is shown as registered, as `The check daily-run`.
         """
-        text = _text(self.description) or _text(self.name)
-        if text:
-            return _sentence_start(text)
-        return f"The check {self.check_id}"
+        return (_text(self.description) or _text(self.name)
+                or f"The check {self.check_id}")
 
     def next_due(self) -> dt.datetime:
         kind, period = parse_schedule(self.schedule)
@@ -523,7 +587,14 @@ def alert_message(check: Check, now: dt.datetime,
     # that means something else.
     extra = [] if first else [f"reminder {check.alert_count}"]
     lines.append(_details(check, *extra, _utc_stamp(now)))
-    return title, _cap("\n".join(lines), MAX_BODY_LEN)
+    # ⚠ ESCAPED, AND ONLY HERE. The alert renders as a card, and a Cards v2
+    # `textParagraph` reads a subset of HTML, so app text such as
+    # `sort < input.txt` would be mangled or stripped. The thread root and the
+    # all-clear render `info`, as plain text, and must NOT be escaped or they
+    # would show `&lt;` literally. Every other byte here is the gateway's own
+    # and holds no `<` or `&`, so escaping the whole body is the same as
+    # escaping the app's fields.
+    return title, _cap(html.escape("\n".join(lines), quote=False), MAX_BODY_LEN)
 
 
 def recovery_message(previous: Check, now: dt.datetime) -> tuple[str, str]:
